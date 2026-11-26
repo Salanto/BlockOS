@@ -287,4 +287,140 @@ function ui.menu(menu)
   end
 end
 
+------------------------------------------------------------------------------
+-- Widgets for full-screen tools (e.g. dsa). Each draws into rows it is given
+-- and keeps its state in a plain table, so callers own the event loop.
+------------------------------------------------------------------------------
+
+--- Draw a row of tabs. The selected tab is highlighted; tabs are numbered so
+-- they can be picked with number keys.
+-- @tparam number y Row.
+-- @tparam {string...} labels
+-- @tparam number selected Index of the active tab.
+function ui.tabs(y, labels, selected)
+  local width = ui.size()
+  term.setCursorPos(1, y)
+  ui.use("text")
+  term.clearLine()
+  local x = 1
+  for index, label in ipairs(labels) do
+    local text = " " .. index .. " " .. label .. " "
+    if x + #text - 1 > width then
+      break
+    end
+    if index == selected then
+      ui.use("selected_text", "selected")
+    else
+      ui.use("dim")
+    end
+    term.setCursorPos(x, y)
+    term.write(text)
+    x = x + #text
+  end
+  ui.reset()
+end
+
+--- Create the state of a scrolling list.
+-- @treturn table { selected = 1, scroll = 0 }
+function ui.new_list()
+  return { selected = 1, scroll = 0 }
+end
+
+--- Draw a scrolling list of lines between two rows.
+-- @tparam table list State from ui.new_list.
+-- @tparam {string...} lines
+-- @tparam number top First row.
+-- @tparam number bottom Last row.
+function ui.draw_list(list, lines, top, bottom)
+  local width = ui.size()
+  local rows = bottom - top + 1
+  list.selected = math.max(1, math.min(list.selected, #lines))
+  if list.selected <= list.scroll then
+    list.scroll = list.selected - 1
+  elseif list.selected > list.scroll + rows then
+    list.scroll = list.selected - rows
+  end
+
+  for row = 0, rows - 1 do
+    local index = list.scroll + row + 1
+    local y = top + row
+    term.setCursorPos(1, y)
+    ui.use("text")
+    term.clearLine()
+    local line = lines[index]
+    if line and index == list.selected then
+      ui.use("selected_text", "selected")
+      term.clearLine()
+      term.write(ui.fit(" " .. line, width))
+    elseif line then
+      term.write(ui.fit(" " .. line, width))
+    end
+  end
+  if #lines == 0 then
+    ui.line(top, " (empty)", "dim")
+  end
+  ui.reset()
+end
+
+--- Move a list's selection for a key press.
+-- @tparam table list
+-- @tparam number key A keys.* code.
+-- @tparam number count Number of lines.
+-- @tparam number page_size Rows visible.
+-- @treturn boolean True if the key was handled.
+function ui.list_key(list, key, count, page_size)
+  if key == keys.up then
+    list.selected = math.max(1, list.selected - 1)
+  elseif key == keys.down then
+    list.selected = math.min(math.max(count, 1), list.selected + 1)
+  elseif key == keys.pageUp then
+    list.selected = math.max(1, list.selected - page_size)
+  elseif key == keys.pageDown then
+    list.selected = math.min(math.max(count, 1), list.selected + page_size)
+  elseif key == keys.home then
+    list.selected = 1
+  elseif key == keys["end"] then
+    list.selected = math.max(count, 1)
+  else
+    return false
+  end
+  return true
+end
+
+--- Ask a yes/no question on the bottom row.
+-- @tparam string question
+-- @treturn boolean
+function ui.confirm(question)
+  local _, height = ui.size()
+  ui.line(height, question .. " [y/N]", "warn")
+  while true do
+    local event, value = os.pullEventRaw()
+    if event == "char" then
+      return value:lower() == "y"
+    elseif event == "key" and (value == keys.enter or value == keys.backspace) then
+      return false
+    end
+  end
+end
+
+--- Ask for one or more values on a cleared screen. An empty first answer cancels.
+-- @tparam string title
+-- @tparam {table...} fields { label = "Name: ", mask = "*"? }
+-- @treturn {string...}|nil The answers, or nil when cancelled.
+function ui.form(title, fields)
+  ui.clear()
+  ui.bar(1, title)
+  ui.line(2, "Leave the first field empty to cancel.", "dim")
+  term.setCursorPos(1, 4)
+  local answers = {}
+  for index, field in ipairs(fields) do
+    local ok, answer = pcall(ui.prompt, field.label, { mask = field.mask })
+    if not ok or (index == 1 and answer == "") then
+      return nil
+    end
+    answers[index] = answer
+  end
+  return answers
+end
+
 return ui

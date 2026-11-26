@@ -1,6 +1,7 @@
--- net service: opens modems, registers the hostname with rednet and keeps the
--- peer table fresh. Modems can come and go at any time (turtles swap upgrades),
--- so being offline is a normal state, not an error.
+-- net service: opens modems, registers the hostname with rednet and, without a
+-- domain, keeps the peer table fresh with announces (joined computers report to
+-- the domain controller instead). Modems can come and go at any time (turtles
+-- swap upgrades), so being offline is a normal state, not an error.
 
 local function is_modem(side)
   return peripheral.getType(side) == "modem"
@@ -64,7 +65,11 @@ local function run(ctx)
     log.info("hostname is %s", name)
   end
 
+  -- Joined computers report to the domain controller instead of broadcasting.
   local function announce(is_hello)
+    if net.directory() then
+      return
+    end
     if net.is_online() and net.hostname() then
       rednet.broadcast(net.build_announce(is_hello), net.ANNOUNCE_PROTOCOL)
     end
@@ -89,7 +94,7 @@ local function run(ctx)
     end
     local is_valid = net.handle_announce(sender, message)
     -- A newcomer says hello: answer directly so it learns about us right away.
-    if is_valid and message.hello and net.is_online() then
+    if is_valid and message.hello and net.is_online() and not net.directory() then
       rednet.send(sender, net.build_announce(), net.ANNOUNCE_PROTOCOL)
     end
   end

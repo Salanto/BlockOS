@@ -1,0 +1,68 @@
+-- domain-client service: plugs the domain into the login screen and name
+-- lookups, and reports this computer's status to the controller.
+--
+-- The report is one direct message to the controller at boot, after a rename,
+-- and every few minutes; no broadcasts.
+
+local HEARTBEAT_EVENT = "blockos_net_rename"
+
+local function run(ctx)
+  local auth = import("auth")
+  local domain = import("domain")
+  local rpc = import("rpc")
+
+  auth.register_provider("domain", domain.login_provider())
+  rpc.set_user_validator(domain.validate)
+  rpc.set_computer_validator(domain.validate_computer)
+
+  if not domain.is_joined() then
+    ctx.log.info("not in a domain")
+    return
+  end
+  ctx.log.info("member of domain %s", domain.name())
+
+  local function report()
+    local net = blockos.net
+    if not net or not net.hostname() then
+      return
+    end
+    local announce = net.build_announce()
+    local ok, err = domain.report({
+      hostname = net.hostname(),
+      info = announce.info,
+      kind = announce.kind,
+      version = announce.version,
+    })
+    if not ok then
+      ctx.log.warn("status report failed: %s", tostring(err))
+    end
+  end
+
+  -- Wait for the net service to come up, then use the controller for lookups.
+  while not blockos.net do
+    sleep(1)
+  end
+  blockos.net.set_directory(domain.net_directory())
+  report()
+
+  local interval = ctx.config.get("blockos.domain.heartbeat_interval", 300)
+  local timer = os.startTimer(interval)
+  while true do
+    local event, id = os.pullEvent()
+    if event == "timer" and id == timer then
+      report()
+      timer = os.startTimer(interval)
+    elseif event == HEARTBEAT_EVENT then
+      sleep(3) -- let the net service register the new name first
+      report()
+    end
+  end
+end
+
+return {
+  name = "domain-client",
+  description = "Domain logins, name lookups and status reports",
+  after = { "net" },
+  restart = "on-failure",
+  run = run,
+}

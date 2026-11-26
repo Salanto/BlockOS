@@ -64,15 +64,19 @@ return function(t)
     end
   end)
 
-  t.it("finds a second computer over rednet (CraftOS-PC only)", function()
+  -- Start the second emulated computer (see tests/fixtures/peer_startup.lua) and
+  -- open our modem. Safe to call more than once.
+  local function start_peer_computer()
     if not periphemu then
       t.skip("needs CraftOS-PC's periphemu")
     end
-    -- tools/craftos-run.sh prepares computer 1 with tests/fixtures/peer_startup.lua.
     periphemu.create("top", "modem")
     rednet.open("top")
     periphemu.create(1, "computer")
+  end
 
+  t.it("finds a second computer over rednet (CraftOS-PC only)", function()
+    start_peer_computer()
     local sender, message = rednet.receive("blockos.announce", 15)
     t.eq(sender, 1, "no announce from the peer computer")
 
@@ -84,8 +88,29 @@ return function(t)
 
     local hosted = pcall(rednet.host, "blockos", "peer-one")
     t.ok(not hosted, "hosting a name in use should fail")
+  end)
 
-    rednet.close("top")
-    periphemu.remove("top")
+  t.it("joins a real domain controller and logs in over rednet (CraftOS-PC only)", function()
+    start_peer_computer()
+    local domain = t.fresh_import()("domain")
+    t.ok(not domain.join("test", "it-host", "admin", "wrong"), "a wrong password must not join")
+    local ok, err = domain.join("test", "it-host", "admin", "secret")
+    t.ok(ok, err)
+    t.eq(domain.membership().controller_id, 1)
+
+    local session = assert(domain.login("admin", "secret"))
+    local user = domain.validate(session.token)
+    t.eq(user.name, "admin")
+    t.ok(domain.report({ hostname = "it-host", info = {}, kind = "computer", version = "test" }))
+    t.eq(domain.resolve("it-host"), os.getComputerID())
+  end)
+
+  t.it("carries a package-sized message over rednet (CraftOS-PC only)", function()
+    start_peer_computer()
+    local rpc = t.fresh_import()("rpc")
+    local payload = string.rep("0123456789", 8000) -- 80KB, larger than any package
+    local echoed, err = rpc.call(1, "blockos.echo", "echo", payload, { timeout = 10 })
+    t.ok(echoed, err)
+    t.eq(#echoed, #payload)
   end)
 end

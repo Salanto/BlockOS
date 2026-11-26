@@ -461,11 +461,50 @@ local function plan_tree(new_packages, current, root, removed)
       end
     end
     table.sort(files)
-    db[manifest.name] = { version = manifest.version, depends = manifest.depends, files = files }
+    db[manifest.name] = {
+      version = manifest.version,
+      depends = manifest.depends,
+      optional = manifest.optional,
+      exclusive = manifest.exclusive,
+      files = files,
+    }
     manifests[manifest.name] = manifest
   end
 
   return tree, outside, db, manifests
+end
+
+-- Names a package depends on, directly or indirectly.
+local function dependency_closure(name, manifests)
+  local found = {}
+  local function visit(current)
+    for dependency in pairs((manifests[current] or {}).depends or {}) do
+      if not found[dependency] then
+        found[dependency] = true
+        visit(dependency)
+      end
+    end
+  end
+  visit(name)
+  return found
+end
+
+-- An exclusive package (e.g. the domain controller) must run alone: no other
+-- optional packages next to it, except its own dependencies.
+local function check_exclusive(manifests)
+  for name, manifest in pairs(manifests) do
+    if manifest.exclusive then
+      local allowed = dependency_closure(name, manifests)
+      for other, other_manifest in pairs(manifests) do
+        if other ~= name and other_manifest.optional and not allowed[other] then
+          return nil, string.format(
+            "%s must run alone on its computer, but %s is also installed. "
+              .. "Use --force to allow it anyway.", name, other)
+        end
+      end
+    end
+  end
+  return true
 end
 
 local function check_space(tree, root)
@@ -552,6 +591,7 @@ end
 -- @tparam[opt] table options
 --   progress (function) called with status text
 --   remove   ({string...}) names of installed packages to remove
+--   force    (boolean) allow other packages next to an exclusive one
 -- @treturn[1] true
 -- @treturn[2] nil
 -- @treturn[2] string error message
@@ -574,6 +614,12 @@ function pkg.apply(new_packages, options)
   local ok, err = pkg.check_depends(manifests)
   if not ok then
     return nil, err
+  end
+  if not options.force then
+    ok, err = check_exclusive(manifests)
+    if not ok then
+      return nil, err
+    end
   end
   ok, err = check_space(tree, root)
   if not ok then

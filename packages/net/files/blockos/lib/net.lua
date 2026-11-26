@@ -33,7 +33,7 @@ config.define("blockos.net.hostname", {
 })
 config.define("blockos.net.announce_interval", {
   description = "Seconds between peer announcements.",
-  default = 30,
+  default = 300,
   type = "number",
 })
 
@@ -42,6 +42,8 @@ local state = {
   is_online = false,
   peers = {}, -- [computer id] = peer record
   info = {},  -- extra fields for our own announcements
+  directory = nil,
+  resolve_cache = {},
 }
 
 local function copy_table(source)
@@ -52,14 +54,15 @@ local function copy_table(source)
   return copy
 end
 
---- Normalise a hostname: lower case, letters, digits, "-", "_" and "." only.
+--- Normalise a hostname: lower case, letters, digits, "-" and "_" only. "." is
+-- reserved for the domain suffix (e.g. storage.home).
 -- @param name
 -- @treturn string|nil nil if nothing usable is left.
 function net.sanitize(name)
   if type(name) ~= "string" then
     return nil
   end
-  local clean = name:lower():gsub("[^%w%-_%.]", "-"):sub(1, MAX_HOSTNAME_LENGTH)
+  local clean = name:lower():gsub("[^%w%-_]", "-"):sub(1, MAX_HOSTNAME_LENGTH)
   if clean == "" or clean == "localhost" then
     return nil
   end
@@ -229,31 +232,98 @@ function net.peers(now)
   return peers
 end
 
---- Find the computer ID for a hostname.
+------------------------------------------------------------------------------
+-- Directory (domain controller)
 --
--- Checks the peer table first, then falls back to rednet.lookup (which waits
--- about two seconds for answers).
+-- When the computer has joined a domain, the domain package sets a directory:
+--   name()             the domain name, e.g. "home"
+--   resolve(hostname)  -> computer ID, or nil and an error message
+--   list_hosts()       -> { { hostname, id, kind, version, info, age }, ... }
+-- Lookups then ask the controller instead of broadcasting, and periodic
+-- announces stop.
+------------------------------------------------------------------------------
+
+local RESOLVE_CACHE_SECONDS = 60
+
+--- @tparam table|nil directory
+function net.set_directory(directory)
+  state.directory = directory
+  state.resolve_cache = {}
+end
+
+--- @treturn table|nil The directory, when joined to a domain.
+function net.directory()
+  return state.directory
+end
+
+--- This device's full name, with the domain suffix when joined (e.g. storage.home).
+-- @treturn string|nil
+function net.full_hostname()
+  if state.hostname and state.directory then
+    return state.hostname .. "." .. state.directory.name()
+  end
+  return state.hostname
+end
+
+-- "storage.home" -> "storage" when "home" is our domain.
+local function short_name(name)
+  local lowered = name:lower()
+  local directory = state.directory
+  if directory then
+    local suffix = "." .. directory.name()
+    if #lowered > #suffix and lowered:sub(-#suffix) == suffix then
+      lowered = lowered:sub(1, -#suffix - 1)
+    end
+  end
+  return net.sanitize(lowered) or lowered
+end
+
+--- Find the computer ID for a hostname (short, or full with the domain suffix).
+--
+-- Asks the domain controller when joined (answers are cached for a minute),
+-- then the local peer table, then rednet.lookup (a broadcast that waits about
+-- two seconds).
 -- @tparam string name
 -- @treturn number|nil
 function net.resolve(name)
-  name = net.sanitize(name) or name
-  if name == state.hostname then
+  local short = short_name(name)
+  if short == state.hostname then
     return os.getComputerID()
   end
+
+  local cached = state.resolve_cache[short]
+  if cached and os.clock() - cached.time < RESOLVE_CACHE_SECONDS then
+    return cached.id
+  end
+  if state.directory then
+    local id = state.directory.resolve(short)
+    if id then
+      state.resolve_cache[short] = { id = id, time = os.clock() }
+      return id
+    end
+  end
+
   for _, peer in ipairs(net.peers()) do
-    if peer.hostname == name then
+    if peer.hostname == short then
       return peer.id
     end
   end
   if not rednet.isOpen() then
     return nil
   end
-  return rednet.lookup(net.HOST_PROTOCOL, name)
+  return rednet.lookup(net.HOST_PROTOCOL, short)
 end
 
 --- Forget all state (tests).
 function net.reset()
-  state = { hostname = nil, is_online = false, peers = {}, info = {} }
+  state = {
+    hostname = nil,
+    is_online = false,
+    peers = {},
+    info = {},
+    directory = nil,
+    resolve_cache = {},
+  }
 end
 
 return net

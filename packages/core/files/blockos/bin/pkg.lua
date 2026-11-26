@@ -1,14 +1,18 @@
 -- pkg: manage optional BlockOS packages (an homage to apt/zypper).
 --
 --   pkg installed                       list installed packages
---   pkg list [--disk | --tag <tag>]     list packages available from a source
---   pkg install <name...> [--disk | --tag <tag>]
+--   pkg list [source]                   list packages available from a source
+--   pkg install <name...> [source] [--force]
 --   pkg remove <name...>
---   pkg make-disk <name...> [--tag <tag>]   write an add-on disk
+--   pkg make-disk <name...> [source]    write an add-on disk
+--   pkg publish <file.pkg> [--server[=name]]   upload to a package server
 --
--- Sources: the latest GitHub release by default, a specific release with --tag,
--- or a package disk in an attached drive with --disk. A future central package
--- server on the network would be one more source.
+-- Sources: the latest GitHub release by default; --tag <tag> for a specific
+-- release; --disk for a package disk in an attached drive; --server[=name] for
+-- a package server (without a name: the domain's "pkg" service record). When the
+-- blockos.pkg.server setting is set, that server is the default.
+--
+-- --force allows packages next to an exclusive one (e.g. the domain controller).
 local args = { ... }
 
 local ui = blockos.ui
@@ -16,10 +20,11 @@ local pkg = blockos.pkg
 
 local function print_usage()
   print("Usage: pkg installed")
-  print("       pkg list [--disk | --tag <tag>]")
-  print("       pkg install <name...> [--disk | --tag <tag>]")
+  print("       pkg list [--disk | --tag <tag> | --server[=name]]")
+  print("       pkg install <name...> [source] [--force]")
   print("       pkg remove <name...>")
-  print("       pkg make-disk <name...> [--tag <tag>]")
+  print("       pkg make-disk <name...> [source]")
+  print("       pkg publish <file.pkg> [--server[=name]]")
 end
 
 local function parse_args()
@@ -33,6 +38,13 @@ local function parse_args()
       i = i + 1
     elseif flag == "--disk" then
       options.from_disk = true
+    elseif flag == "--force" then
+      options.force = true
+    elseif flag == "--server" then
+      options.from_server = true
+    elseif flag:match("^%-%-server=") then
+      options.from_server = true
+      options.server_name = flag:match("^%-%-server=(.+)$")
     else
       options.names[#options.names + 1] = flag
     end
@@ -66,15 +78,34 @@ local function is_admin()
   return false
 end
 
+-- The package server client lives in the net package (base install).
+local function server_source(name)
+  local ok, pkg_remote = pcall(import, "pkg_remote")
+  if not ok then
+    return nil, "package servers need the net package"
+  end
+  local id, label = pkg_remote.find_server(name)
+  if not id then
+    return nil, label
+  end
+  return pkg_remote.source(id, label), id
+end
+
 local function choose_source(options)
-  if not options.from_disk then
-    return pkg.github_source(options.tag)
+  if options.from_disk then
+    local dir = find_disk(true)
+    if not dir then
+      return nil, "no package disk found in an attached drive"
+    end
+    return pkg.disk_source(dir)
   end
-  local dir = find_disk(true)
-  if not dir then
-    return nil, "no package disk found in an attached drive"
+  local default_server = blockos.config.get("blockos.pkg.server")
+  local has_default_server = default_server ~= nil and default_server ~= ""
+  local use_server = options.from_server or (not options.tag and has_default_server)
+  if use_server then
+    return server_source(options.server_name)
   end
-  return pkg.disk_source(dir)
+  return pkg.github_source(options.tag)
 end
 
 local function apply_and_reboot(packages, apply_options)
@@ -126,7 +157,7 @@ local function show_available(source)
   end
 end
 
-local function install(source, names)
+local function install(source, names, force)
   local index, err = source.index()
   if not index then
     ui.print(err, "error")
@@ -142,7 +173,7 @@ local function install(source, names)
     ui.print(packages, "error")
     return
   end
-  apply_and_reboot(packages, {})
+  apply_and_reboot(packages, { force = force })
 end
 
 local function remove(names)
@@ -175,9 +206,37 @@ local function make_disk(source, names)
   ui.print("Wrote " .. table.concat(names, ", ") .. " to " .. dir, "ok")
 end
 
+local function publish(options)
+  local path = options.names[1]
+  local full_path = path and shell.resolve(path)
+  local raw = full_path and blockos.import("fsx").read_raw(full_path)
+  if not raw then
+    ui.print("No such package file: " .. tostring(path), "error")
+    return
+  end
+  local ok, pkg_remote = pcall(import, "pkg_remote")
+  if not ok then
+    ui.print("Package servers need the net package.", "error")
+    return
+  end
+  local id, label = pkg_remote.find_server(options.server_name)
+  if not id then
+    ui.print(label, "error")
+    return
+  end
+  local result, err = pkg_remote.publish(id, raw)
+  if not result then
+    ui.print("Publish failed: " .. tostring(err), "error")
+    return
+  end
+  ui.print("Published " .. tostring(result.name) .. " " .. tostring(result.version)
+    .. " to " .. label .. ".", "ok")
+end
+
 local options = parse_args()
 local command = options.command
-local needs_names = command == "install" or command == "remove" or command == "make-disk"
+local needs_names = command == "install" or command == "remove"
+  or command == "make-disk" or command == "publish"
 
 if command == "installed" then
   show_installed()
@@ -194,6 +253,10 @@ if command == "remove" then
   remove(options.names)
   return
 end
+if command == "publish" then
+  publish(options)
+  return
+end
 
 local source, source_error = choose_source(options)
 if not source then
@@ -203,7 +266,7 @@ end
 if command == "list" then
   show_available(source)
 elseif command == "install" then
-  install(source, options.names)
+  install(source, options.names, options.force)
 else
   make_disk(source, options.names)
 end

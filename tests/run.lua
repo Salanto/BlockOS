@@ -14,12 +14,19 @@ local repo_dir = args[2] or "/repo"
 local SANDBOX = "/sandbox"
 local REPORT_FILE = "/test-report.txt"
 
-local MODULE_DIRS = {
-  "packages/core/files/blockos/kernel",
-  "packages/core/files/blockos/lib",
-  "packages/net/files/blockos/kernel",
-  "packages/net/files/blockos/lib",
-}
+-- Every package's kernel/ and lib/ directory, like /blockos/kernel and /blockos/lib
+-- on an installed computer.
+local function module_dirs()
+  local dirs = {}
+  for _, package_name in ipairs(fs.list(fs.combine(repo_dir, "packages"))) do
+    for _, kind in ipairs({ "kernel", "lib" }) do
+      dirs[#dirs + 1] = "packages/" .. package_name .. "/files/blockos/" .. kind
+    end
+  end
+  return dirs
+end
+
+local MODULE_DIRS = module_dirs()
 
 local results = { passed = 0, failed = 0, skipped = 0, lines = {} }
 
@@ -136,7 +143,8 @@ end
 
 --- Run `fn` while feeding it events, as if the user typed them.
 -- @tparam function fn
--- @tparam {table...} events e.g. { { "paste", "admin" }, { "key", keys.enter } }
+-- @tparam {table...} events e.g. { { "paste", "admin" }, { "key", keys.enter } };
+--   { "wait", seconds } pauses the script.
 -- @return Whatever fn returns.
 function t.with_input(fn, events)
   -- Must ignore `terminate`: tests send it on purpose to check Ctrl+T handling.
@@ -155,8 +163,12 @@ function t.with_input(fn, events)
     function() result = table.pack(fn()) end,
     function()
       for _, event in ipairs(events) do
-        os.queueEvent(table.unpack(event))
-        raw_sleep(0)
+        if event[1] == "wait" then
+          raw_sleep(event[2]) -- let network calls finish before the next key
+        else
+          os.queueEvent(table.unpack(event))
+          raw_sleep(0)
+        end
       end
       raw_sleep(5) -- the code under test should have finished by now
       error("input script finished but the code under test is still waiting", 0)

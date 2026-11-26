@@ -3,6 +3,7 @@
 --   update                 upgrade from the latest release
 --   update --tag <tag>     use a specific release (e.g. a prerelease)
 --   update --disk          upgrade from a BlockOS disk in an attached drive
+--   update --server[=name] upgrade from a package server (default: the domain's pkg record)
 --   update --check         only show the installed and available versions
 --   update --make-disk     write an install disk to the floppy in an attached drive
 --   update -y              do not ask for confirmation
@@ -12,7 +13,7 @@ local ui = blockos.ui
 local pkg = blockos.pkg
 
 local function print_usage()
-  print("Usage: update [--tag <tag>] [--disk] [--check] [-y]")
+  print("Usage: update [--tag <tag>] [--disk] [--server[=name]] [--check] [-y]")
   print("       update --make-disk [--tag <tag>]")
 end
 
@@ -24,6 +25,11 @@ local function parse_args()
     if flag == "--tag" then
       options.tag = args[i + 1]
       i = i + 1
+    elseif flag == "--server" then
+      options.from_server = true
+    elseif flag:match("^%-%-server=") then
+      options.from_server = true
+      options.server_name = flag:match("^%-%-server=(.+)$")
     elseif flag == "--disk" then
       options.from_disk = true
     elseif flag == "--make-disk" then
@@ -134,6 +140,15 @@ if options.from_disk then
   source = pkg.disk_source(dir)
 else
   source = pkg.github_source(options.tag)
+end
+if options.from_server then
+  local pkg_remote = import("pkg_remote")
+  local id, label = pkg_remote.find_server(options.server_name)
+  if not id then
+    ui.print(label, "error")
+    return
+  end
+  source = pkg_remote.source(id, label)
 end
 
 if options.make_disk then

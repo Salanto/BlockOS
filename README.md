@@ -44,6 +44,23 @@ as optional packages, installed from a release (`pkg install <name>`) or from an
 (`pkg install <name> --disk`). `pkg make-disk <name>` writes an add-on disk for other
 computers.
 
+## A domain (one login for all computers)
+
+1. On a computer that will do nothing else: `pkg install domain-controller`, then `dcpromo`
+   (choose a domain name like `home` and the first domain admin).
+2. On every other computer or turtle: `pkg install domain`, then `domain join home` and log in
+   with a domain admin when asked.
+3. Log in with domain accounts from then on. Local accounts still work as `.\name`, for example
+   when the controller is down.
+4. Manage users, groups, computers and service records with `dsa` (full screen) or `domain`.
+
+## A package server
+
+On a computer with disk drives (attach as many as you like with wired modems):
+`pkg install pkg-server`, then `pkgserver import --latest`. Register it once with
+`domain dns add pkg <hostname>`; other computers then install with `pkg install <name> --server`.
+`pkgserver allow <name> <group>` limits a package to a group.
+
 ## Recovery
 
 If BlockOS keeps failing to start, it rolls back to the previous version by itself. You can
@@ -53,6 +70,6 @@ disk from a running BlockOS computer.
 
 ## Development
 
-See [CLAUDE.md](CLAUDE.md) for the architecture, code style and conventions. Tests run inside
-the [CraftOS-PC](https://www.craftos-pc.cc) emulator: `tools/test.sh` (Linux) or
-`tools\test.ps1` (Windows). Pushing a `v*` tag builds and publishes a release.
+See [CLAUDE.md](CLAUDE.md) for the architecture, code style and conventions. Tests run in CI
+inside the [CraftOS-PC](https://www.craftos-pc.cc) emulator (`tools/test.sh`). Pushing a `v*` tag
+builds and publishes a release.

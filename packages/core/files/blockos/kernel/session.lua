@@ -34,25 +34,33 @@ local function draw_login_screen(message)
   ui.clear()
   ui.bar(1, "BlockOS " .. version)
   ui.line(3, describe_device(), "dim")
+  local hint = auth.login_hint()
+  if hint then
+    ui.line(4, hint, "dim")
+  end
   if message then
     ui.line(height, message, "error")
   end
-  term.setCursorPos(1, 5)
+  term.setCursorPos(1, 6)
 end
 
--- Returns the user record, false for wrong credentials, or raises on Ctrl+T.
+-- Returns the user record, or false and a message; raises on Ctrl+T.
 local function ask_credentials()
   local name = ui.prompt("Username: ")
   local password = ui.prompt("Password: ", { mask = "*" })
-  return auth.check(name, password) or false
+  local user, err = auth.login(name, password)
+  if not user then
+    return false, err
+  end
+  return user
 end
 
 --- Show the login screen until valid credentials are entered.
 --
--- Runs first-boot setup if there are no accounts. Ctrl+T restarts the prompt
--- instead of escaping.
+-- Runs first-boot setup if there are no local accounts. Ctrl+T restarts the
+-- prompt instead of escaping.
 -- @tparam[opt] function on_ready Called once the screen is up.
--- @treturn table The user record { name, is_admin }.
+-- @treturn table The user record { name, source, groups, is_admin, token? }.
 function session.login(on_ready)
   local function ready()
     if on_ready then
@@ -71,13 +79,13 @@ function session.login(on_ready)
   while true do
     draw_login_screen(message)
     ready()
-    local ok, result = pcall(ask_credentials)
+    local ok, result, err = pcall(ask_credentials)
     if ok and result then
-      log.info("session", "%s logged in", result.name)
+      log.info("session", "%s logged in (%s)", result.name, result.source or "local")
       return result
     elseif ok then
-      message = "Login incorrect."
-      log.info("session", "failed login")
+      message = err or "Login incorrect."
+      log.info("session", "failed login: %s", tostring(message))
     elseif result ~= "Terminated" then
       error(result, 0)
     end
@@ -123,6 +131,7 @@ function session.run_user(user, user_shell)
 
   -- Every coroutine of the session (shell, tabs, programs) has now been dropped.
   term.redirect(terminal_before)
+  auth.logout(user)
   if blockos then
     blockos.user = nil
   end
