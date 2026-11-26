@@ -205,7 +205,9 @@ minutes marks the service `failed`. `condition` returning false marks it `n/a`.
 - Lay out from `term.getSize()`; never assume 51x19 (turtles are 39x13).
 - One session code path: advanced devices get a nested multishell and basic ones a plain
   shell; logout drops the whole session, including tabs.
-- Turtle services only use read-only turtle functions (never move, dig or select).
+- Turtle services only use read-only turtle functions (never move, dig or select). The one
+  exception is `turtle-remote`: driving is its purpose, and it only acts on a logged-in domain
+  user's request.
 
 ### Wire protocols
 
@@ -216,6 +218,7 @@ minutes marks the service `failed`. `condition` returning false marks it `n/a`.
 | `blockos.domain`   | rpc. join, leave, login, validate, logout, validate_computer, host_update, resolve, list_hosts, service_find/add/del/register/unregister, list_users/groups/computers/services, user_add/del/passwd/enable, group_add/del/addmember/rmmember, computer_remove, dc_status. The controller also hosts this protocol under the domain name, so `rednet.lookup("blockos.domain", "home")` finds it. |
 | `blockos.pkg`      | rpc. index (filtered by the caller's groups), fetch `{ name }` (raw .pkg), publish `{ raw }` (domain-admins). |
 | `blockos.stock`    | rpc. status, alerts (viewers, admins or listed computers); catalog, watches (viewers, admins); outputs, watch, unwatch, watch_all, settings, test_sound, access, set_access (admins). Found via the domain service record `stock` / `stock-<name>`. |
+| `blockos.remote`   | rpc, served by the `turtle-remote` service on joined turtles. info, act `{ action, slot? }` (domain users; only the actions listed in `turtle_remote.ACTIONS`, plus select). Never retried by the driver, so a lost answer cannot move a turtle twice. |
 | `blockos.stock.alert` | event `stock_alert` `{ server, item, label, count, limit, is_low }`, sent directly to each computer on the stock computer's access list, only when an item goes low or recovers. |
 
 **Wire format** (`net/lib/wire.lua`): every message uses one envelope, so nothing is parsed by
@@ -297,7 +300,8 @@ Peer liveness uses the local receive time, never the sender's clock.
   Create Display Board boards, alerts to listed computers, a per-computer access list, refill
   targets and reactions on other computers (level-triggered: they poll status, alerts only
   speed them up); the shared wire format.
-- **Next:** remote control for PCs and turtles, built on rpc, wire and domain logins. More
+- **Next:** remote control for PCs (turtles done: `turtle-remote` package, `remote <turtle>`),
+  built on rpc, wire and domain logins. More
   storage sources (e.g. an ME/RS bridge) as separate packages adding
   `lib/storage_sources/<kind>.lua`.
 - **Later:** uninstall of BlockOS itself, local IPC via custom events, tab completion,
