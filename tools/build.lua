@@ -38,11 +38,38 @@ local function load_manifest(package_dir)
   return manifest
 end
 
+-- Shrink a Lua file so the base install fits on a floppy, without changing line
+-- numbers: comment-only lines become empty and indentation is dropped, so an
+-- error on a computer still points at the right line of the readable source in
+-- the repository. Line 1 is kept as is (the loader is recognised by it).
+local function shrink_lua(path, source)
+  if source:find("[[", 1, true) then
+    error(path .. ": long strings/comments ([[ ]]) are not supported by the build", 0)
+  end
+  local lines = {}
+  for line in (source .. "\n"):gmatch("(.-)\r?\n") do
+    if #lines == 0 then
+      lines[1] = line
+    else
+      local trimmed = line:match("^%s*(.-)%s*$")
+      if trimmed:sub(1, 2) == "--" then
+        trimmed = ""
+      end
+      lines[#lines + 1] = trimmed
+    end
+  end
+  return table.concat(lines, "\n")
+end
+
 local function collect_files(package_dir)
   local files_dir = fs.combine(package_dir, "files")
   local files = {}
   for _, relative in ipairs(fsx.walk(files_dir)) do
-    files[relative] = fsx.read_raw(fs.combine(files_dir, relative))
+    local content = fsx.read_raw(fs.combine(files_dir, relative))
+    if relative:match("%.lua$") then
+      content = shrink_lua(relative, content)
+    end
+    files[relative] = content
   end
   return files
 end

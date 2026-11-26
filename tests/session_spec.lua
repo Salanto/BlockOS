@@ -107,14 +107,14 @@ return function(t)
     }
   end
 
-  t.it("bare names use the domain once joined; .\name stays local", function()
+  t.it("bare names use the domain once joined; local names start with .\\", function()
     local auth = t.fresh_import()("auth")
     auth.add_user("admin", "local-pw", true)
     auth.register_provider("domain", fake_domain_provider(true))
     t.eq(auth.login("alice", "domain-pw").source, "domain")
-    t.eq(auth.login("home\alice", "domain-pw").source, "domain")
-    t.eq(auth.login(".\admin", "local-pw").source, "local")
-    t.ok(not auth.login("other\alice", "domain-pw"), "unknown domains are refused")
+    t.eq(auth.login("home\\alice", "domain-pw").source, "domain")
+    t.eq(auth.login(".\\admin", "local-pw").source, "local")
+    t.ok(not auth.login("other\\alice", "domain-pw"), "unknown domains are refused")
     t.ok(auth.login_hint():find("Domain: home"))
   end)
 

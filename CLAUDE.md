@@ -237,6 +237,10 @@ fields, and drop messages with a newer major version. Peer liveness uses the loc
   restricts a package. Clients use `--server[=name]`, the domain's `pkg` service record, or the
   `blockos.pkg.server` setting.
 - Manifest flags: `optional` (not in the base install), `exclusive` (must run alone).
+- **Floppy budget:** core + net must fit on one 125KB install disk (the build fails otherwise).
+  The build shrinks packaged Lua files (comment-only lines emptied, indentation dropped) without
+  changing line numbers, so keep writing fully commented source. `[[ ]]` long strings are not
+  allowed in package files (the shrinker would break them).
 - Releases: push a tag `vX.Y.Z` (or `vX.Y.Z-rcN` for a prerelease). CI tests, builds
   (`tools/build.sh`) and publishes `index.lua`, `*.pkg`, `install.lua`, `blockos-disk.zip`
   and `blockos-addon-<name>.zip` per optional package. Online installs use

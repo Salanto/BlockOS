@@ -60,11 +60,15 @@ return function(t)
     }
     with_server(rpc, handlers, function()
       local order = {}
+      local function call(op)
+        local result, err = rpc.call(ME, PROTOCOL, op)
+        order[#order + 1] = result or ("error: " .. tostring(err))
+      end
       parallel.waitForAll(
-        function() order[#order + 1] = rpc.call(ME, PROTOCOL, "slow") end,
+        function() call("slow") end,
         function()
           sleep(0.1)
-          order[#order + 1] = rpc.call(ME, PROTOCOL, "fast")
+          call("fast")
         end
       )
       t.eq(table.concat(order, ","), "fast,slow")
