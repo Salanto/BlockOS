@@ -238,8 +238,9 @@ local function draw(view)
   local layout = view.layout
   local is_colour = device.is_advanced()
   ui.clear()
+  local user = blockos and blockos.user
   ui.header(1, "Network " .. ui.GLYPHS.dot .. " " .. view.connection.describe,
-    blockos.user and blockos.user.name)
+    user and user.name)
   draw_lines(layout)
   draw_hub(layout, is_colour)
   for index, node in ipairs(layout.nodes) do
