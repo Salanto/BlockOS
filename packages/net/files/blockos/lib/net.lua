@@ -7,20 +7,19 @@
 -- * The peer table adds what rednet lacks, liveness and metadata, from regular
 --   "blockos.announce" broadcasts.
 --
--- Wire messages are tables with a `v` field (wire version). Unknown fields are
--- ignored and messages with a newer major version are dropped.
+-- Announces are wire events (see wire.lua) with topic "announce".
 -- @module net
 
 local config = import("config")
 local device = import("device")
 local log = import("log")
+local wire = import("wire")
 
 local net = {}
 
 net.HOST_PROTOCOL = "blockos"
 net.ANNOUNCE_PROTOCOL = "blockos.announce"
 net.RENAME_EVENT = "blockos_net_rename"
-net.WIRE_VERSION = 1
 
 --- Seconds without an announce before a peer is forgotten.
 net.PEER_EXPIRY_SECONDS = 90
@@ -128,54 +127,43 @@ function net.set_info(key, value)
   state.info[key] = value
 end
 
---- Build this device's announce message.
+--- Payload of an announce event (see wire.lua).
+net.ANNOUNCE_SCHEMA = {
+  hostname = { type = "string", max = MAX_HOSTNAME_LENGTH },
+  kind = { type = "string", optional = true },
+  version = { type = "string", optional = true },
+  services = { type = "table", optional = true },
+  info = { type = "table", optional = true },
+  hello = { type = "boolean", optional = true },
+}
+
+--- Build this device's announce event.
 -- @tparam[opt] boolean is_hello Ask receivers to answer straight away.
--- @treturn table
+-- @treturn table A wire event with topic "announce".
 function net.build_announce(is_hello)
   local running = {}
   if blockos and blockos.services then
     running = blockos.services.running()
   end
-  return {
-    v = net.WIRE_VERSION,
+  return wire.event("announce", {
     hostname = state.hostname,
     kind = device.kind(),
     version = blockos and blockos.version,
     services = running,
     info = copy_table(state.info),
     hello = is_hello or nil,
-  }
+  })
 end
 
---- Check that a message is an announce this version understands.
+--- The announce payload of a message, if it is a valid announce event.
 -- @param message
--- @treturn boolean
-function net.is_valid_announce(message)
-  if type(message) ~= "table" then
-    return false
+-- @treturn table|nil
+function net.parse_announce(message)
+  local event = wire.parse(message, "event", net.ANNOUNCE_SCHEMA)
+  if not event or event.topic ~= "announce" or event.data.hostname == "" then
+    return nil
   end
-  local version = message.v
-  if type(version) ~= "number" or version < 1 or math.floor(version) > net.WIRE_VERSION then
-    return false
-  end
-  local hostname = message.hostname
-  if type(hostname) ~= "string" or #hostname == 0 or #hostname > MAX_HOSTNAME_LENGTH then
-    return false
-  end
-  if message.info ~= nil and type(message.info) ~= "table" then
-    return false
-  end
-  if message.services ~= nil and type(message.services) ~= "table" then
-    return false
-  end
-  return true
-end
-
-local function text_or_unknown(value)
-  if type(value) == "string" then
-    return value
-  end
-  return "?"
+  return event.data
 end
 
 --- Record an announce. Liveness uses the local receive time; the sender's
@@ -183,26 +171,27 @@ end
 -- @tparam number sender Computer ID.
 -- @param message
 -- @tparam[opt] number now Defaults to os.clock().
--- @treturn boolean False if the message was invalid.
+-- @treturn table|nil The announce payload, or nil if the message was invalid.
 function net.handle_announce(sender, message, now)
-  if not net.is_valid_announce(message) then
-    return false
+  local announce = net.parse_announce(message)
+  if not announce then
+    return nil
   end
   for id, peer in pairs(state.peers) do
-    if id ~= sender and peer.hostname == message.hostname then
+    if id ~= sender and peer.hostname == announce.hostname then
       log.warn("net", "duplicate hostname %s used by #%d and #%d", peer.hostname, id, sender)
     end
   end
   state.peers[sender] = {
     id = sender,
-    hostname = message.hostname,
-    kind = text_or_unknown(message.kind),
-    version = text_or_unknown(message.version),
-    services = message.services or {},
-    info = message.info or {},
+    hostname = announce.hostname,
+    kind = announce.kind or "?",
+    version = announce.version or "?",
+    services = announce.services or {},
+    info = announce.info or {},
     last_seen = now or os.clock(),
   }
-  return true
+  return announce
 end
 
 --- Forget peers that have not announced recently.

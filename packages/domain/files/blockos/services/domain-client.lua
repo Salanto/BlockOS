@@ -26,7 +26,7 @@ local function run(ctx)
     if not net or not net.hostname() then
       return
     end
-    local announce = net.build_announce()
+    local announce = net.build_announce().data
     local ok, err = domain.report({
       hostname = net.hostname(),
       info = announce.info,

@@ -70,12 +70,34 @@ local GREYSCALE_THEME = {
   logo_side = colours.lightGrey,
 }
 
---- @treturn table The theme for this device.
+--- Set while drawing on another screen (e.g. a monitor) whose colour support
+-- differs from the computer's own: true, false, or nil to follow the device.
+ui.colour_override = nil
+
+--- @treturn table The theme for this device (or for the screen being drawn on).
 function ui.theme()
-  if device.is_advanced() then
+  local is_colour = ui.colour_override
+  if is_colour == nil then
+    is_colour = device.is_advanced()
+  end
+  if is_colour then
     return COLOUR_THEME
   end
   return GREYSCALE_THEME
+end
+
+--- Draw on another screen with its own colour support, then switch back.
+-- @tparam table target A terminal object, e.g. a wrapped monitor.
+-- @tparam function draw Called with no arguments while redirected.
+function ui.draw_on(target, draw)
+  local previous = term.redirect(target)
+  ui.colour_override = target.isColour()
+  local ok, err = pcall(draw)
+  ui.colour_override = nil
+  term.redirect(previous)
+  if not ok then
+    error(err, 0)
+  end
 end
 
 --- Set the text (and optionally background) colour by role.

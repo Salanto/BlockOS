@@ -76,6 +76,9 @@ _G.blockos = {
   services = import("services"),
   user = nil,
   net = nil, -- set by the net service when installed
+  -- Short messages for the welcome screen, keyed by who set them, e.g.
+  -- notices.stock = "2 item(s) low on stock". Services set or clear their own.
+  notices = {},
 }
 
 --- End the current session and return to the login screen.

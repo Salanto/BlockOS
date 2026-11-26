@@ -177,6 +177,62 @@ function t.with_input(fn, events)
   return table.unpack(result, 1, result.n)
 end
 
+--- A stand-in for the `peripheral` API over fake devices.
+-- @tparam table devices [name] = { types = {...}, methods = {...} }
+-- @treturn table With getNames, hasType, wrap, isPresent.
+function t.fake_peripherals(devices)
+  return {
+    getNames = function()
+      local names = {}
+      for name in pairs(devices) do
+        names[#names + 1] = name
+      end
+      table.sort(names)
+      return names
+    end,
+    hasType = function(name, wanted)
+      local device = devices[name]
+      if not device then
+        return nil
+      end
+      for _, kind in ipairs(device.types) do
+        if kind == wanted then
+          return true
+        end
+      end
+      return false
+    end,
+    wrap = function(name)
+      return devices[name] and devices[name].methods
+    end,
+    isPresent = function(name)
+      return devices[name] ~= nil
+    end,
+  }
+end
+
+--- A fake chest for t.fake_peripherals.
+-- @tparam table slots [slot] = { name, count, label }
+-- @treturn table
+function t.fake_chest(slots)
+  return {
+    types = { "inventory" },
+    methods = {
+      list = function()
+        local listed = {}
+        for slot, stack in pairs(slots) do
+          listed[slot] = { name = stack.name, count = stack.count }
+        end
+        return listed
+      end,
+      getItemDetail = function(slot)
+        local stack = slots[slot]
+        return stack and { name = stack.name, count = stack.count, displayName = stack.label }
+      end,
+    },
+  }
+end
+
 --- Register a test.
 function t.it(name, fn)
   t.reset_sandbox()

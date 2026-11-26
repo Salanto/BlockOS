@@ -3,19 +3,18 @@
 -- rednet.send / rednet_message events carry the messages. Rednet itself has no
 -- request/response, so this module only adds what is missing: matching a reply
 -- to its request, timeouts and retries, and a server loop that can handle
--- several requests at once.
+-- several requests at once. Messages use the shared envelope from wire.lua.
 --
--- Request:  { v = 1, id, op, args, token?, computer_token? }
--- Response: { v = 1, reply_to = id, ok = true, result }
---       or  { v = 1, reply_to = id, ok = false, error }
---
+-- A handler is a function(request_ctx, args); wrap it with rpc.with_args(schema,
+-- handler) to have its arguments checked against a wire schema before it runs.
 -- Handlers return a result, or nil and an error message. A handler that has
 -- nothing to return should return true.
 -- @module rpc
 
+local wire = import("wire")
+
 local rpc = {}
 
-rpc.WIRE_VERSION = 1
 rpc.DEFAULT_TIMEOUT = 3
 rpc.DEFAULT_RETRIES = 1
 rpc.LOGIN_REQUIRED = "login required"
@@ -93,20 +92,13 @@ end
 --- @param message
 -- @treturn boolean True if `message` is a request this version understands.
 function rpc.is_request(message)
-  return type(message) == "table"
-    and message.v == rpc.WIRE_VERSION
-    and type(message.id) == "string"
-    and type(message.op) == "string"
-    and message.reply_to == nil
+  return wire.parse(message, "request") ~= nil
 end
 
 --- @param message
 -- @treturn boolean True if `message` is a response this version understands.
 function rpc.is_response(message)
-  return type(message) == "table"
-    and message.v == rpc.WIRE_VERSION
-    and type(message.reply_to) == "string"
-    and type(message.ok) == "boolean"
+  return wire.parse(message, "response") ~= nil
 end
 
 local function wait_for_reply(request_id, protocol, timeout)
@@ -138,14 +130,9 @@ function rpc.call(server_id, protocol, op, args, options)
   options = options or {}
   local timeout = options.timeout or rpc.DEFAULT_TIMEOUT
   local attempts = 1 + (options.retries or rpc.DEFAULT_RETRIES)
-  local request = {
-    v = rpc.WIRE_VERSION,
-    id = new_request_id(),
-    op = op,
-    args = args,
-    token = options.token or current_user_token(),
-    computer_token = options.computer_token or computer_token_provider(),
-  }
+  local request = wire.request(new_request_id(), op, args,
+    options.token or current_user_token(),
+    options.computer_token or computer_token_provider())
 
   for _ = 1, attempts do
     transport.send(server_id, request, protocol)
@@ -178,6 +165,24 @@ function rpc.find(protocol, name)
   return (rednet.lookup(protocol))
 end
 
+--- Wrap a handler so its arguments are checked against a wire schema first.
+--
+--   handlers.resolve = rpc.with_args({ hostname = "string" }, function(ctx, args)
+--     ...  -- args.hostname is a string here
+--   end)
+-- @tparam table schema See wire.validate.
+-- @tparam function handler function(request_ctx, args)
+-- @treturn function
+function rpc.with_args(schema, handler)
+  return function(request_ctx, args)
+    local ok, problem = wire.validate(args or {}, schema)
+    if not ok then
+      return nil, "bad request: " .. problem
+    end
+    return handler(request_ctx, args)
+  end
+end
+
 --- Run one request through a handler table and build the response.
 -- @tparam table handlers { [op] = function(request_ctx, args) }
 -- @tparam number sender
@@ -185,25 +190,20 @@ end
 -- @treturn table The response.
 function rpc.handle(handlers, sender, request)
   local function respond(ok, value)
-    local response = { v = rpc.WIRE_VERSION, reply_to = request.id, ok = ok }
-    if ok then
-      response.result = value
-    else
-      response.error = value
-    end
-    return response
+    return wire.response(request.id, ok, value)
   end
 
   local handler = handlers[request.op]
   if type(handler) ~= "function" then
-    return respond(false, "unknown operation: " .. request.op)
+    return respond(false, "unknown operation: " .. tostring(request.op))
   end
+
   local request_ctx = {
     sender = sender,
     token = request.token,
     computer_token = request.computer_token,
   }
-  local ran, result, err = pcall(handler, request_ctx, request.args)
+  local ran, result, err = pcall(handler, request_ctx, request.args or {})
   if not ran then
     return respond(false, tostring(result))
   end
@@ -233,10 +233,7 @@ function rpc.serve(protocol, handlers)
 
   local function start_worker(sender, request)
     if #workers >= MAX_WORKERS then
-      local busy = {
-        v = rpc.WIRE_VERSION, reply_to = request.id, ok = false, error = "server busy",
-      }
-      transport.send(sender, busy, protocol)
+      transport.send(sender, wire.response(request.id, false, "server busy"), protocol)
       return
     end
     local worker = {
