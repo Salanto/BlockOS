@@ -341,7 +341,8 @@ function Directory:remove_computer(hostname)
 end
 
 --- A computer reports its status. It may only change its own record; a rename
--- moves the record to the new hostname if that name is free.
+-- moves the record, and the service records pointing at it, to the new
+-- hostname if that name is free.
 --
 -- Only the account (ID, token) and the day it was last seen are saved; the
 -- reported info and the exact time stay in memory, so reports rarely cause a
@@ -371,6 +372,13 @@ function Directory:update_host(token, report, now, today)
     self.data.computers[wanted] = computer
     self.data.computers[current] = nil
     self.status[current] = nil
+    -- Service records name a host, so they would point at nothing after the
+    -- rename (e.g. "stock" or "pkg" could no longer be found).
+    for _, service in pairs(self.data.services) do
+      if service.host == current then
+        service.host = wanted
+      end
+    end
     current = wanted
     needs_save = true
   end

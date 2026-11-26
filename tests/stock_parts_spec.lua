@@ -183,4 +183,20 @@ return function(t)
     t.ok(#written[2] <= 24)
     t.ok(not written[3]:find("LOW"))
   end)
+
+  t.it("a board that is turned off is blanked", function()
+    local board = t.fresh_import()("stock_board")
+    local calls = {}
+    local link = {
+      clear = function() calls[#calls + 1] = "clear" end,
+      update = function() calls[#calls + 1] = "update" end,
+    }
+    local fake_peripheral = {
+      wrap = function() return link end,
+      hasType = function(_, kind) return kind == board.DISPLAY_LINK_TYPE end,
+    }
+    board.clear(fake_peripheral, "display_link_0")
+    t.eq(calls[1], "clear")
+    t.eq(calls[2], "update", "a Display Link only shows changes after update()")
+  end)
 end

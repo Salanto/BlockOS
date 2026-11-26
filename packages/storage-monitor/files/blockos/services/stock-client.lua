@@ -85,6 +85,7 @@ local function run(ctx)
   end
 
   local page = 1
+  local shown_board = nil -- the peripheral the board was last drawn on
   local function draw_board(data)
     local board = config.get("blockos.stock.board")
     if not board or board == "" then
@@ -92,12 +93,27 @@ local function run(ctx)
     end
     local pages = stock_board.show(peripheral, board, data, page)
     page = (pages and page < pages) and (page + 1) or 1
+    shown_board = board
+  end
+
+  -- A board turned off or moved would otherwise keep its last picture forever.
+  local function clear_old_board(board)
+    if shown_board and shown_board ~= board then
+      pcall(stock_board.clear, peripheral, shown_board)
+      shown_board = nil
+    end
   end
 
   -- One status request feeds both the board and the reactions.
   local function refresh()
-    local has_board = (config.get("blockos.stock.board") or "") ~= ""
+    local board = config.get("blockos.stock.board") or ""
+    clear_old_board(board ~= "" and board or nil)
+    local has_board = board ~= ""
     local has_reactions = #config.get("blockos.stock.reactions", {}) > 0
+    if not has_reactions then
+      -- Switches off outputs of reactions that were just removed.
+      apply_reactions()
+    end
     if not has_board and not has_reactions then
       return
     end
