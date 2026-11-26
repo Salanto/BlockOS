@@ -1,7 +1,7 @@
 --- Package source backed by a BlockOS package server (protocol "blockos.pkg").
 --
 -- Implements the same interface as the sources in pkg.lua (describe, index,
--- fetch), so `pkg` and `update` can install from a server like from a disk.
+-- fetch), so `pkg` can install and update from a server like from a disk.
 -- @module pkg_remote
 
 local config = import("config")
@@ -45,8 +45,10 @@ end
 
 --- Find a package server.
 --
--- With a name, it is resolved like any hostname. Without one, the domain's
--- "pkg" service record is used, then the blockos.pkg.server setting.
+-- With a name, it is resolved like any hostname. Without one: the
+-- blockos.pkg.server setting, then the domain's "pkg" service record, then any
+-- server answering rednet.lookup (computers without a domain; costs a
+-- broadcast and about two seconds, only when nothing else is configured).
 -- @tparam[opt] string name
 -- @treturn[1] number Computer ID.
 -- @treturn[1] string Label for messages.
@@ -73,7 +75,11 @@ function pkg_remote.find_server(name)
       return service.id, service.host
     end
   end
-  return nil, "no package server known: register one with 'domain dns add pkg <host>' "
+  local found = rpc.find(pkg_remote.PROTOCOL)
+  if found then
+    return found, "#" .. found
+  end
+  return nil, "no package server found: register one with 'domain dns add pkg <host>' "
     .. "or set blockos.pkg.server"
 end
 

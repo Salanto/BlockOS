@@ -74,7 +74,7 @@ local ui = import("ui")
 
 if pkg.is_installed() and not options.force then
   ui.print("BlockOS " .. tostring(pkg.installed_version()) .. " is already installed.", "warn")
-  print("Use 'update' to upgrade, or run this installer with --force to reinstall.")
+  print("Use 'pkg update' to upgrade, or run this installer with --force to reinstall.")
   return
 end
 

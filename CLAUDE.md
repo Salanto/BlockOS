@@ -255,8 +255,11 @@ Peer liveness uses the local receive time, never the sender's clock.
   `describe()`, `index()`, `fetch(name)`.
 - Package server (`pkg-server`): stores packages in `<drive>/blockos-repo/` across every mounted
   drive (wired-modem drives included) plus the local disk; `pkgserver allow <name> <group...>`
-  restricts a package. Clients use `--server[=name]`, the domain's `pkg` service record, or the
-  `blockos.pkg.server` setting.
+  restricts a package. Every `pkg` command (including `pkg update`, which replaced `update`;
+  `update` stays as an alias) uses a package server when one is found: `--server[=name]`, else
+  the `blockos.pkg.server` setting, the domain's `pkg` service record, then `rednet.lookup` of
+  `blockos.pkg` (the server hosts it, for computers without a domain). Otherwise GitHub;
+  `--github` / `--tag` force it.
 - Manifest flags: `optional` (not in the base install), `exclusive` (must run alone),
   `media_only` (path prefixes kept in the package for building disks but not installed).
 - **Storage housekeeping:** `blockos status` shows where disk space goes; `blockos cleanup`

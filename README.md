@@ -35,7 +35,8 @@ Either way, the first boot asks you to create an administrator account.
 | `peers` | Other BlockOS devices on the network |
 | `hostname [name]` | Show or change this device's network name |
 | `pkg list` / `pkg install <name>` / `pkg remove <name>` | Manage optional packages |
-| `update` | Upgrade from the latest release (`--tag`, `--disk`, `--check`, `--make-disk`) |
+| `pkg update` | Upgrade BlockOS and installed packages (`--check`, `-y`; `update` is a short alias) |
+| `pkg make-disk` | Write an install disk (with names: an add-on disk) |
 | `useradd`, `userdel`, `passwd` | Manage local accounts |
 | `logout` | Log out (closes all tabs) |
 | `msg <host> <text>` / `msg * <text>` / `msg` | Chat with other computers; `msg` shows your messages |
@@ -63,7 +64,8 @@ computers.
 
 On a computer with disk drives (attach as many as you like with wired modems):
 `pkg install pkg-server`, then `pkgserver import --latest`. It registers itself in the domain,
-so other computers can install from it right away with `pkg install <name> --server`.
+so other computers install and update from it right away: `pkg` uses a package server when it
+finds one (setting, domain record or the network) and GitHub otherwise (`--github` forces it).
 `pkgserver allow <name> <group>` limits a package to a group.
 
 ## Watching stock
@@ -102,7 +104,7 @@ works without a domain too.
 
 If BlockOS keeps failing to start, it rolls back to the previous version by itself. You can
 also put the install disk in and reboot: the menu offers **Boot**, **Upgrade/Reinstall**,
-**Safe mode** (a plain CraftOS shell) and **Roll back**. `update --make-disk` writes an install
+**Safe mode** (a plain CraftOS shell) and **Roll back**. `pkg make-disk` writes an install
 disk from a running BlockOS computer.
 
 ## Development
