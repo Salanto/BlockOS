@@ -3,7 +3,8 @@
 -- On the stock computer itself the handlers are called directly; a local
 -- administrator there always counts as an admin (so a broken access list can
 -- be fixed at the keyboard). Elsewhere the stock computer is found through the
--- domain service record "stock" (or "stock-<name>") and called over rpc.
+-- domain service record "stock" (or "stock-<name>"), or by its rednet name when
+-- there is no domain, and called over rpc.
 -- @module stock_client
 
 local config = import("config")
@@ -66,28 +67,38 @@ end
 
 --- Connect to a stock computer.
 -- @tparam[opt] string name Which one, when there are several.
+-- @tparam[opt] table options { interactive = true } for programs: an expired
+--   login then asks for the password once instead of failing.
 -- @treturn[1] table connection { is_local, describe, call(op, args) }
 -- @treturn[2] nil
 -- @treturn[2] string error message
-function stock_client.connect(name)
+function stock_client.connect(name, options)
   local server = blockos and blockos.stock_server
   if server and (name == nil or name == server.config.name) then
     return local_connection(server)
   end
 
+  -- In a domain, ask the controller; otherwise look the stock computer up by
+  -- its rednet name.
+  local service_type = stock_client.service_type(name)
+  local server_id, label = nil, service_type
   local found_domain, domain = pcall(import, "domain")
-  if not found_domain or not domain.is_joined() then
-    return nil, "this computer is not in a domain"
+  if found_domain and domain.is_joined() then
+    local service = domain.find_service(service_type)
+    if service then
+      server_id, label = service.id, service.host
+    end
   end
-  local service = domain.find_service(stock_client.service_type(name))
-  if not service then
+  server_id = server_id or rpc.find(stock_client.PROTOCOL, service_type)
+  if not server_id then
     return nil, "no stock computer found; run 'stock setup' on it first"
   end
+  local call_options = { relogin = options and options.interactive }
   return {
     is_local = false,
-    describe = service.host,
+    describe = label,
     call = function(op, args)
-      return rpc.call(service.id, stock_client.PROTOCOL, op, args)
+      return rpc.call(server_id, stock_client.PROTOCOL, op, args, call_options)
     end,
   }
 end

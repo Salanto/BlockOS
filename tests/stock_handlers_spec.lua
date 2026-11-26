@@ -26,6 +26,7 @@ return function(t)
       saves = 0,
     }
     monitor.config.access.viewers = { "kitchen" }
+    monitor.config.access.computers = {} -- closed, so the checks below mean something
     function monitor.save()
       monitor.saves = monitor.saves + 1
       return true
@@ -116,5 +117,15 @@ return function(t)
     local watch = monitor.config.watches["minecraft:iron_ingot"]
     t.ok(watch, "iron was not watched")
     t.eq(watch.limit, 12)
+  end)
+
+  t.it("open lists let anyone look, even without a domain", function()
+    local monitor, handlers = new_monitor()
+    monitor.config.access.viewers = { "*" }
+    monitor.config.access.computers = { "*" }
+    t.ok(handlers.status({ sender = 3 }), "anonymous viewers")
+    t.ok(handlers.catalog({ sender = 3 }))
+    local _, err = handlers.watch({ sender = 3 }, { item = "x", limit = 1 })
+    t.ok(err, "but changing still needs an admin")
   end)
 end

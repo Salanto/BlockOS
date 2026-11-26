@@ -13,6 +13,7 @@ pkg_remote.PROTOCOL = "blockos.pkg"
 pkg_remote.SERVICE_TYPE = "pkg"
 
 local FETCH_TIMEOUT = 10
+-- Only programs use this module, so an expired login may ask for the password.
 
 config.define("blockos.pkg.server", {
   description = "Package server to use by default (hostname). Empty: GitHub releases.",
@@ -31,12 +32,12 @@ function pkg_remote.source(server_id, label)
   end
 
   function source.index()
-    return rpc.call(server_id, pkg_remote.PROTOCOL, "index")
+    return rpc.call(server_id, pkg_remote.PROTOCOL, "index", nil, { relogin = true })
   end
 
   function source.fetch(name)
     return rpc.call(server_id, pkg_remote.PROTOCOL, "fetch", { name = name },
-      { timeout = FETCH_TIMEOUT })
+      { timeout = FETCH_TIMEOUT, relogin = true })
   end
 
   return source
@@ -81,7 +82,7 @@ end
 -- @tparam string raw The .pkg file contents.
 function pkg_remote.publish(server_id, raw)
   return rpc.call(server_id, pkg_remote.PROTOCOL, "publish", { raw = raw },
-    { timeout = FETCH_TIMEOUT })
+    { timeout = FETCH_TIMEOUT, relogin = true })
 end
 
 return pkg_remote

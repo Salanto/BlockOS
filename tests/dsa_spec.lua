@@ -67,11 +67,11 @@ return function(t)
     with_screen(39, 13, function()
       run_dsa(rpc, handlers, steps(
         { { "wait", 0.5 }, { "char", "2" }, { "wait", 0.5 } },
-        -- Groups are sorted: computer-joiners is first.
+        -- Groups are sorted: domain-admins is first.
         { { "char", "m" } },
         type_line("dave"),
         { { "wait", 0.5 }, { "char", "q" } }))
     end)
-    t.ok(dir:is_member("computer-joiners", "dave"))
+    t.ok(dir:is_member("domain-admins", "dave"))
   end)
 end

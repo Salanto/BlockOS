@@ -45,6 +45,30 @@ rpc.set_computer_token_provider(function()
   return membership and membership.computer_token
 end)
 
+-- When a program finds the login expired (e.g. after 24 hours), ask for the
+-- password once instead of failing.
+rpc.set_relogin_handler(function()
+  local user = blockos and blockos.user
+  if not (user and user.source == "domain") then
+    return nil
+  end
+  local ui = blockos.ui
+  ui.print("Your login has expired.", "warn")
+  local ok, password = pcall(ui.prompt, "Password for " .. user.name .. ": ", { mask = "*" })
+  if not ok then
+    return nil
+  end
+  local session = domain.login(user.name, password)
+  if not session then
+    ui.print("Login incorrect.", "error")
+    return nil
+  end
+  user.token = session.token
+  user.groups = session.groups
+  user.is_admin = domain.is_admin(user)
+  return session.token
+end)
+
 -- Call the controller. If it stops answering (for example it was moved and now
 -- has another computer ID), look it up again by domain name once.
 local function call(op, args, options)
@@ -73,10 +97,10 @@ end
 -- @treturn[2] nil
 -- @treturn[2] string error message
 function domain.call(op, args)
-  return call(op, args)
+  return call(op, args, { relogin = true })
 end
 
---- Join a domain. Needs a member of domain-admins or computer-joiners.
+--- Join a domain. Needs the name and password of any domain user.
 -- @tparam string domain_name
 -- @tparam string hostname This computer's hostname.
 -- @tparam string admin_name
@@ -169,6 +193,17 @@ function domain.resolve(hostname)
     return result.id
   end
   return nil
+end
+
+--- Register a service record pointing at this computer (needs no admin: the
+-- computer's own token is enough). Services call this when they start.
+-- @tparam string service_type e.g. "pkg", "stock"
+-- @tparam[opt] string protocol
+-- @treturn[1] true
+-- @treturn[2] nil
+-- @treturn[2] string error message
+function domain.register_service(service_type, protocol)
+  return call("service_register", { type = service_type, protocol = protocol })
 end
 
 --- @tparam string service_type e.g. "pkg"

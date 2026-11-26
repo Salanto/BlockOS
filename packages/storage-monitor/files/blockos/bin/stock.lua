@@ -51,7 +51,7 @@ local function fail(message)
 end
 
 local function connect(options)
-  local connection, err = stock_client.connect(options.server)
+  local connection, err = stock_client.connect(options.server, { interactive = true })
   if not connection then
     fail(err)
   end
@@ -77,27 +77,6 @@ local function split_names(text)
     names[#names + 1] = name
   end
   return names
-end
-
-local function register_service(name)
-  local ok, domain = pcall(import, "domain")
-  if not ok or not domain.is_joined() then
-    ui.print("Not in a domain: other computers cannot find this one yet.", "warn")
-    return
-  end
-  local record = {
-    type = stock_client.service_type(name),
-    host = blockos.net.hostname(),
-    protocol = stock_client.PROTOCOL,
-  }
-  local result, err = domain.call("service_add", record)
-  if result then
-    ui.status("Registered as '" .. record.type .. "' in the domain.", "ok")
-  else
-    ui.print("Could not register the service record: " .. tostring(err), "warn")
-    print("A domain admin can do it later with:")
-    print("  domain dns add " .. record.type .. " " .. record.host .. " " .. record.protocol)
-  end
 end
 
 local function setup(options)
@@ -137,9 +116,10 @@ local function setup(options)
   end
 
   fsx.write_table(path, config)
-  register_service(options.name)
   blockos.services.start("storage-monitor")
   ui.status("Stock computer ready. Run 'stock' to adjust limits and alarms.", "ok")
+  ui.print("Everyone can look at it and every computer gets its alerts.", "dim")
+  ui.print("To limit that, use the Access tab in 'stock'.", "dim")
 end
 
 ------------------------------------------------------------------------------
@@ -222,10 +202,23 @@ local function find_item(connection, typed)
   if not data then
     return nil, err
   end
+  -- Exact ID or label first, then any single label containing the text
+  -- ("iron" finds "Iron Ingot"), so nobody has to type minecraft:iron_ingot.
+  local wanted = typed:lower()
+  local partial = {}
   for _, row in ipairs(data.rows) do
-    if row.item == typed or tostring(row.label):lower() == typed:lower() then
+    local label = tostring(row.label):lower()
+    if row.item == typed or label == wanted then
       return row
     end
+    if label:find(wanted, 1, true) or row.item:find(wanted, 1, true) then
+      partial[#partial + 1] = row
+    end
+  end
+  if #partial == 1 then
+    return partial[1]
+  elseif #partial > 1 then
+    return nil, "\"" .. typed .. "\" matches several items; be more specific"
   end
   return nil, "no watched item called " .. typed
 end

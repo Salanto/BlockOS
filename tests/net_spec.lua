@@ -82,4 +82,14 @@ return function(t)
     t.ok(message.data.hello)
     t.ok(net.parse_announce(message))
   end)
+
+  t.it("chat messages are wire events with a sender and capped text", function()
+    local import = t.fresh_import()
+    local messages = import("messages")
+    _G.blockos = { user = { name = "alice" } }
+    local event = messages.event(string.rep("x", 500))
+    t.ok(import("wire").parse(event, "event", messages.SCHEMA))
+    t.eq(event.data.from, "alice@#" .. os.getComputerID())
+    t.eq(#event.data.text, messages.MAX_LENGTH)
+  end)
 end

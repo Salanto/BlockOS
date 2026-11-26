@@ -134,4 +134,23 @@ return function(t)
     t.ok(domain.is_admin({ groups = { "domain-users", "domain-admins" } }))
     t.ok(not domain.is_admin({ groups = { "domain-users" } }))
   end)
+
+  t.it("autologin picks an existing local user, and nobody otherwise", function()
+    local import = t.fresh_import()
+    import("auth").add_user("farm", "pw", false)
+    local session = import("session")
+    local previous = settings.get("blockos.autologin")
+    settings.set("blockos.autologin", "farm")
+    local user = session.autologin_user()
+    settings.set("blockos.autologin", "ghost")
+    local missing = session.autologin_user()
+    if previous == nil then
+      settings.unset("blockos.autologin")
+    else
+      settings.set("blockos.autologin", previous)
+    end
+    t.eq(user.name, "farm")
+    t.eq(user.source, "local")
+    t.eq(missing, nil, "an unknown user is never logged in")
+  end)
 end

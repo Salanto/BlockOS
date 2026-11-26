@@ -74,9 +74,12 @@ return function(t)
     t.eq(watch.limit, 5)
   end)
 
-  t.it("access is closed by default; domain admins are always admins", function()
+  t.it("access is open by default and can be narrowed", function()
     local stock = t.fresh_import()("stock")
     local config = stock.new_config({ "alice", "stock-admins" })
+    t.eq(stock.access_level(config, { name = "anyone", groups = {} }), "viewer", "open default")
+    t.ok(stock.is_computer_allowed(config, "any-pc"), "every computer by default")
+    config.access.computers = {}
     config.access.viewers = { "kitchen-staff" }
     t.eq(stock.access_level(config, { name = "alice", groups = {} }), "admin")
     t.eq(stock.access_level(config, { name = "bob", groups = { "stock-admins" } }), "admin")

@@ -2,11 +2,13 @@
 --
 -- The directory is saved to /etc/blockos/directory after every change, but only
 -- when the disk has room for it; otherwise changes are refused and logged. User
--- sessions and status reports are kept in memory only. Every few minutes the
+-- sessions are saved to /etc/blockos/sessions so logins survive a restart;
+-- status reports stay in memory. Every few minutes the
 -- service drops expired sessions and warns when the disk is getting full.
 -- Only runs once `dcpromo` has created the domain.
 
 local DIRECTORY_FILE = "etc/blockos/directory"
+local SESSIONS_FILE = "etc/blockos/sessions"
 local SAVE_MARGIN_BYTES = 8 * 1024
 local LOW_SPACE_FRACTION = 0.2
 local HOUSEKEEPING_SECONDS = 300
@@ -31,7 +33,14 @@ local function run(ctx)
   if fs.exists(path) and fs.exists(path .. ".tmp") then
     fs.delete(path .. ".tmp")
   end
-  local dir = directory.load(data)
+  local sessions_path = import("paths").top(SESSIONS_FILE)
+  local dir = directory.load(data, fsx.read_table(sessions_path))
+
+  -- Real seconds, so session lifetimes survive restarts.
+  local function now()
+    return math.floor(os.epoch("utc") / 1000)
+  end
+  dir:prune_sessions(now())
   local disk_dir = fs.getDir(path)
 
   local function disk_status()
@@ -57,7 +66,16 @@ local function run(ctx)
     return true
   end
 
-  local storage = { save = save, has_room = has_room, disk_status = disk_status }
+  local function save_sessions()
+    pcall(fsx.write_table, sessions_path, dir:saved_sessions())
+  end
+
+  local storage = {
+    save = save,
+    has_room = has_room,
+    disk_status = disk_status,
+    save_sessions = save_sessions,
+  }
 
   -- The controller can check tokens itself, without a network round trip.
   rpc.set_computer_validator(function(computer_token)
@@ -65,15 +83,16 @@ local function run(ctx)
     return hostname and { hostname = hostname }
   end)
   rpc.set_user_validator(function(token)
-    return dir:validate(token, os.clock())
+    return dir:validate(token, now())
   end)
 
   local was_low = false
   local function housekeeping()
     while true do
-      local removed = dir:prune_sessions(os.clock())
+      local removed = dir:prune_sessions(now())
       if removed > 0 then
         log.info("dropped %d expired sessions", removed)
+        save_sessions()
       end
       local disk = disk_status()
       local is_low = disk.capacity and disk.free < disk.capacity * LOW_SPACE_FRACTION

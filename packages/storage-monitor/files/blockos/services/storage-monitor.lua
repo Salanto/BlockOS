@@ -9,8 +9,11 @@ local function config_path()
   return import("paths").top(import("stock_client").CONFIG_FILE)
 end
 
--- Computer IDs of the computers allowed to receive alerts.
-local function alert_recipients(config)
+-- Who gets alerts: everyone (the default), or the IDs of the listed computers.
+local function alert_recipients(config, stock, stock_alarms)
+  if stock.is_open(config.access.computers) then
+    return stock_alarms.EVERYONE
+  end
   local ids = {}
   local net = blockos.net
   for _, hostname in ipairs(config.access.computers) do
@@ -76,7 +79,8 @@ local function run(ctx)
     end
 
     local hostname = blockos.net and blockos.net.hostname() or ("#" .. os.getComputerID())
-    local sent = stock_alarms.send_alerts(hostname, states, changes, alert_recipients(config))
+    local recipients = alert_recipients(config, stock, stock_alarms)
+    local sent = stock_alarms.send_alerts(hostname, states, changes, recipients)
     for _, alert in ipairs(sent) do
       monitor.alerts[#monitor.alerts + 1] = alert
       if #monitor.alerts > MAX_ALERTS then
@@ -92,6 +96,21 @@ local function run(ctx)
     end
     return count
   end)(), #sources)
+
+  -- Be findable: by rednet name (works without a domain) and, in a domain, as
+  -- the "stock" (or "stock-<name>") service record.
+  local stock_client = import("stock_client")
+  local service_type = stock_client.service_type(config.name)
+  if rednet.isOpen() then
+    pcall(rednet.host, stock_client.PROTOCOL, service_type)
+  end
+  local found, domain = pcall(import, "domain")
+  if found and domain.is_joined() then
+    local ok, err = domain.register_service(service_type, stock_client.PROTOCOL)
+    if not ok then
+      log.warn("could not register the %s service record: %s", service_type, tostring(err))
+    end
+  end
 
   parallel.waitForAny(
     function() rpc.serve(import("stock_client").PROTOCOL, handlers) end,

@@ -1,7 +1,7 @@
 --- Request handlers of a stock computer (protocol "blockos.stock").
 --
--- Every stock computer decides who may reach it (its access list, closed by
--- default):
+-- Every stock computer decides who may reach it (its access list; open to
+-- everyone by default, "*" meaning everyone):
 --   viewers          status, catalog, alerts
 --   admins           everything, including watches, alarms and the access list
 --   computers        status and alerts, headless (e.g. a board elsewhere)
@@ -57,6 +57,10 @@ function stock_handlers.new(monitor)
       return "admin"
     end
     if not ctx.token then
+      -- No login (or no domain at all): fine for looking, if viewers are open.
+      if stock.is_open(monitor.config.access.viewers) then
+        return "viewer"
+      end
       return nil, rpc.LOGIN_REQUIRED
     end
     local user, err = rpc.require_user(ctx)
@@ -91,6 +95,9 @@ function stock_handlers.new(monitor)
   local function require_viewer_or_computer(ctx)
     if ctx.token or ctx.local_admin then
       return require_viewer(ctx)
+    end
+    if stock.is_open(monitor.config.access.computers) then
+      return true
     end
     local computer, err = rpc.require_computer(ctx)
     if not computer then
