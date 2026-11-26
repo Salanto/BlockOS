@@ -53,7 +53,7 @@ end
 
 term.clear()
 draw_bar()
-local reason = nil
+local reason
 local ping = os.startTimer(remote_shell.PING_SECONDS)
 while true do
   local event = table.pack(os.pullEventRaw())
