@@ -4,7 +4,8 @@
 --   1-4 / Tab   switch tab        Up/Down/PgUp/PgDn   move
 --   r           refresh           q                   quit
 --   Tab actions are shown on the bottom row.
--- Everyone in the domain can look; changes need a domain admin.
+-- Everyone in the domain can look; changes need a domain admin, or for a module's roles
+-- a member of the module's admin role (e.g. logistics-admins).
 local ui = blockos.ui
 local domain = import("domain")
 
@@ -27,9 +28,12 @@ local tabs = {
     title = "Groups",
     load = "list_groups",
     describe = function(group)
-      return string.format("%-18s %s", group.name, table.concat(group.members, ","))
+      local members = group.everyone and "everyone" or table.concat(group.members, ",")
+      local manager = group.managed_by and (" (by " .. group.managed_by .. ")") or ""
+      return string.format("%-20s %s%s", group.name, members, manager)
     end,
-    hints = { { "a", "Add" }, { "d", "Delete" }, { "m", "Add member" }, { "x", "Remove" } },
+    hints = { { "a", "Add" }, { "d", "Delete" }, { "m", "Member+" }, { "x", "Member-" },
+      { "e", "Everyone" } },
   },
   {
     title = "Computers",
@@ -188,6 +192,14 @@ actions[2] = {
     local answers = ui.form("Remove member from " .. group.name, { { label = "User: " } })
     if answers then
       run("group_rmmember", { group = group.name, user = answers[1] }, "Member removed.")
+    end
+  end,
+  -- Everyone in the domain, now and later, or only the listed members.
+  e = function(group)
+    if group then
+      local everyone = not group.everyone
+      run("group_set_everyone", { group = group.name, everyone = everyone },
+        group.name .. (everyone and " now includes everyone." or " now lists its members."))
     end
   end,
 }

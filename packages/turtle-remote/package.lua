@@ -6,4 +6,8 @@ return {
   -- Every request is checked with the domain controller, so it needs a domain.
   depends = { net = ">=0.1.0-0", domain = ">=0.1.0-0" },
   optional = true,
+  -- Managed mode: who may drive turtles (open to everyone until a domain admin sets it up).
+  roles = {
+    { name = "turtle-drivers", default = "everyone", description = "May drive turtles remotely." },
+  },
 }

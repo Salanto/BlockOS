@@ -45,6 +45,13 @@ local function run(ctx)
   blockos.net.set_directory(domain.net_directory())
   report()
 
+  -- Packages with roles that no domain admin set up yet: still open, but say so.
+  local pending = import("roles").pending()
+  if #pending > 0 and blockos.notices then
+    blockos.notices.roles = table.concat(pending, ", ") ..
+      " not set up for the domain yet: a domain admin can run 'domain setup'"
+  end
+
   local interval = ctx.config.get("blockos.domain.heartbeat_interval", 300)
   local timer = os.startTimer(interval)
   while true do

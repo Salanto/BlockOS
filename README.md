@@ -58,6 +58,13 @@ as optional packages, installed from a release (`pkg install <name>`) or from an
    when the controller is down.
 4. Manage users, groups, computers and service records with `dsa` (full screen) or `domain`.
 
+**Managed mode.** Every package works on its own and open. In a domain, packages that have roles
+(for example turtle-remote's `turtle-drivers`) stay open until a domain admin runs
+`domain setup <package>`; the login screen reminds you. The setup creates the roles with friendly
+defaults (everyone may use it, you administer it). Narrow them later in `dsa` (Groups tab: `e`
+switches "everyone" on or off) or with `domain group`. A module's admins (e.g. `logistics-admins`)
+manage its roles themselves, without a domain admin. `domain setup` lists what is set up.
+
 ## A package server
 
 On a computer with disk drives (attach as many as you like with wired modems):

@@ -10,6 +10,8 @@ local function print_usage()
   print("       domain user add|del|passwd|enable|disable <name> | user list")
   print("       domain group add|del <name> | group list")
   print("       domain group addmember|rmmember <group> <user>")
+  print("       domain group everyone <group> on|off | group manager <group> [group]")
+  print("       domain setup [package]   set a package up for the domain (roles)")
   print("       domain computer list | computer remove <hostname>")
   print("       domain dns list | dns add <type> <host> [protocol] | dns del <type>")
 end
@@ -134,6 +136,13 @@ local function user_command(action, name)
   end
 end
 
+local function describe_members(group)
+  if group.everyone then
+    return "everyone"
+  end
+  return table.concat(group.members, ", ")
+end
+
 local function group_command(action, first, second)
   if action == "list" then
     local groups, err = domain.call("list_groups")
@@ -143,8 +152,17 @@ local function group_command(action, first, second)
     ui.title("Groups")
     ui.table({
       { title = "GROUP", key = "name" },
-      { title = "MEMBERS", key = function(group) return table.concat(group.members, ", ") end },
+      { title = "MEMBERS", key = describe_members },
+      { title = "MANAGED BY", key = function(group) return group.managed_by or "" end },
     }, groups)
+  elseif action == "everyone" and (second == "on" or second == "off") then
+    local is_on = second == "on"
+    call("group_set_everyone", { group = first, everyone = is_on },
+      first .. (is_on and " now includes everyone." or " now lists its members."))
+  elseif action == "manager" and first then
+    local done = second and (second .. " now manages " .. first .. ".")
+      or ("Only domain admins manage " .. first .. ".")
+    call("group_set_manager", { group = first, managed_by = second }, done)
   elseif action == "add" and first then
     call("group_add", { name = first }, "Group " .. first .. " created.")
   elseif action == "del" and first then
@@ -200,6 +218,102 @@ local function dns_command(action, service_type, host, protocol)
   end
 end
 
+------------------------------------------------------------------------------
+-- domain setup: guided setup of a package's roles (managed mode)
+------------------------------------------------------------------------------
+
+-- A domain admin's token: the logged-in user if they are one, else a login just for this.
+local function admin_token()
+  local user = blockos.user
+  if user and user.source == "domain" and user.token and domain.is_admin(user) then
+    return user.token, user.name
+  end
+  print("Setting up roles needs a domain admin.")
+  local name = ui.prompt("Domain admin: ")
+  local password = ui.prompt("Password: ", { mask = "*" })
+  local session, err = domain.login(name, password)
+  if not session then
+    return nil, err
+  end
+  if not domain.is_admin({ groups = session.groups }) then
+    return nil, name .. " is not a domain admin"
+  end
+  return session.token, name
+end
+
+local function list_setups(roles)
+  ui.title("Packages with roles")
+  local rows = {}
+  for name, entry in pairs(import("pkg").installed()) do
+    if entry.roles and #entry.roles > 0 then
+      local names = {}
+      for _, role in ipairs(entry.roles) do
+        names[#names + 1] = role.name
+      end
+      rows[#rows + 1] = { name = name, mode = roles.mode(name), roles = table.concat(names, ", ") }
+    end
+  end
+  table.sort(rows, function(a, b) return a.name < b.name end)
+  if #rows == 0 then
+    ui.print("  (no installed package declares roles)", "faint")
+    return
+  end
+  ui.table({
+    { title = "PACKAGE", key = "name" },
+    { title = "MODE", key = "mode" },
+    { title = "ROLES", key = "roles" },
+  }, rows, function(row) return row.mode == "unconfigured" and "warn" or "text" end)
+  print("Run 'domain setup <package>' to set one up.")
+end
+
+local function setup(package)
+  local roles = import("roles")
+  if not package then
+    return list_setups(roles)
+  end
+  local declared = roles.declared(package)
+  if #declared == 0 then
+    return fail(package .. " has no roles to set up.")
+  end
+  local token, admin = admin_token()
+  if not token then
+    return fail(admin)
+  end
+  ui.title("Set up " .. package .. " for the domain")
+  print("Press Enter to keep the suggestion. Type 'everyone' or names.")
+  local answers = {}
+  for _, role in ipairs(declared) do
+    print()
+    ui.print(role.name, "title")
+    if role.description then
+      ui.print(role.description, "dim")
+    end
+    local suggestion = role.default == "everyone" and "everyone"
+      or (role.default == "installer" and admin or "nobody")
+    answers[role.name] = ui.prompt("Who? [" .. suggestion .. "] ")
+  end
+  local plan = roles.plan(declared, admin, answers)
+  print()
+  ui.title("This creates")
+  for _, entry in ipairs(plan) do
+    local who = entry.everyone and "everyone" or table.concat(entry.members, ", ")
+    print("  " .. entry.name .. ": " .. (who ~= "" and who or "nobody yet"))
+  end
+  if ui.prompt("Create these roles? [Y/n] "):lower() == "n" then
+    return ui.print("Nothing changed.", "dim")
+  end
+  local report = roles.apply(plan, function(op, call_args)
+    return domain.call_as(token, op, call_args)
+  end)
+  for _, line in ipairs(report) do
+    ui.status(line, line:find(": no such user") and "warn" or "ok")
+  end
+  ui.print(package .. " is now managed by the domain.", "ok")
+  if blockos.notices then
+    blockos.notices.roles = nil
+  end
+end
+
 local command = args[1]
 if command == "status" or command == nil then
   show_status()
@@ -217,6 +331,8 @@ elseif command == "computer" then
   computer_command(args[2], args[3])
 elseif command == "dns" then
   dns_command(args[2], args[3], args[4], args[5])
+elseif command == "setup" then
+  setup(args[2])
 else
   print_usage()
 end

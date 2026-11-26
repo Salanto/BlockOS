@@ -32,11 +32,13 @@ return function(t)
     return stub
   end
 
-  local function new_handlers()
+  -- `allows` stands in for the turtle-drivers role check (open unless a test says no).
+  local function new_handlers(allows)
     local import = t.fresh_import()
     import("rpc").set_user_validator(function(token) return USERS[token] end)
     local turtle_api = stub_turtle()
-    return import("turtle_remote").handlers(turtle_api), turtle_api
+    allows = allows or function() return true end
+    return import("turtle_remote").handlers(turtle_api, nil, allows), turtle_api
   end
 
   local ALICE = { sender = 3, token = "alice-token" }
@@ -77,5 +79,13 @@ return function(t)
     t.ok(not handlers.act(ALICE, { action = "getFuelLevel" }), "only listed actions run")
     t.ok(not handlers.act(ALICE, { action = "shutdown" }))
     t.eq(turtle_api.selected, 4)
+  end)
+
+  t.it("in managed mode a user without the turtle-drivers role can't drive", function()
+    local handlers, turtle_api = new_handlers(function() return nil, "permission denied" end)
+    local ok, err = handlers.act(ALICE, { action = "forward" })
+    t.ok(not ok)
+    t.eq(err, "permission denied")
+    t.eq(#turtle_api.calls, 0)
   end)
 end

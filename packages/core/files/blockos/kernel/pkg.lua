@@ -481,6 +481,7 @@ local function plan_tree(new_packages, current, root, removed)
       depends = manifest.depends,
       optional = manifest.optional,
       exclusive = manifest.exclusive,
+      roles = manifest.roles, -- directory roles for managed mode (see the domain's roles.lua)
       files = files,
     }
     manifests[manifest.name] = manifest

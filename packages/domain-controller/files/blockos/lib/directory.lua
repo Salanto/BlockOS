@@ -7,7 +7,9 @@
 -- Data layout (saved to /etc/blockos/directory):
 --   domain    "home"
 --   users     [name] = { salt, hash, is_enabled }
---   groups    [name] = { members = { [user] = true } }
+--   groups    [name] = { members = { [user] = true }, everyone?, managed_by? }
+--             (everyone: every domain user is a member; managed_by: a group whose
+--             members may manage this one; module roles use both, see roles.lua)
 --   computers [hostname] = { id, token, last_seen_day }
 --   services  [type] = { host, protocol }
 -- User sessions are saved separately (/etc/blockos/sessions), so logins survive
@@ -197,15 +199,100 @@ local function is_builtin(group)
   return false
 end
 
-function Directory:add_group(name)
+--- Create a group.
+-- @tparam string name
+-- @tparam[opt] table options { everyone = true (every domain user is a member, now and
+--   later), managed_by = group whose members may manage this one (may be the group itself) }
+-- @treturn[1] true
+-- @treturn[2] nil
+-- @treturn[2] string error message
+function Directory:add_group(name, options)
+  options = options or {}
   if not is_valid_name(name) then
     return nil, "invalid group name"
   end
   if self.data.groups[name] then
     return nil, "group already exists"
   end
-  self.data.groups[name] = { members = {} }
+  local manager = options.managed_by
+  if manager ~= nil and manager ~= name and not self.data.groups[manager] then
+    return nil, "no such group: " .. tostring(manager)
+  end
+  self.data.groups[name] = {
+    members = {},
+    everyone = options.everyone == true or nil,
+    managed_by = manager,
+  }
   return true
+end
+
+--- Make every domain user a member (now and later), or go back to listed members.
+function Directory:set_everyone(name, everyone)
+  local group = self.data.groups[name]
+  if not group then
+    return nil, "no such group"
+  end
+  if is_builtin(name) then
+    return nil, "built-in groups cannot be changed this way"
+  end
+  group.everyone = everyone == true or nil
+  return true
+end
+
+--- Set (or clear) the group whose members may manage this one.
+function Directory:set_manager(name, manager)
+  local group = self.data.groups[name]
+  if not group then
+    return nil, "no such group"
+  end
+  if manager ~= nil and manager ~= name and not self.data.groups[manager] then
+    return nil, "no such group: " .. tostring(manager)
+  end
+  group.managed_by = manager
+  return true
+end
+
+--- May this user change the group's members and its everyone flag? Domain admins may
+-- change any group; members of the group's `managed_by` group may change that group.
+-- @tparam string group
+-- @tparam string user
+-- @treturn boolean
+function Directory:can_manage(group, user)
+  if self:is_member(directory.ADMINS, user) then
+    return true
+  end
+  local entry = self.data.groups[group]
+  return entry ~= nil and entry.managed_by ~= nil and self:is_member(entry.managed_by, user)
+end
+
+--- May this user create a group with this name, managed by `manager`? Domain admins may
+-- create any group. A module's admins (`<module>-admins`) may create further roles of their
+-- module (`<module>-...`) managed by themselves, e.g. one per storage node.
+-- @tparam string name
+-- @tparam string|nil manager
+-- @tparam string user
+-- @treturn boolean
+function Directory:can_create(name, manager, user)
+  if self:is_member(directory.ADMINS, user) then
+    return true
+  end
+  if type(manager) ~= "string" or not self:is_member(manager, user) then
+    return false
+  end
+  local module = manager:match("^(.+)%-admins$")
+  return module ~= nil and name:sub(1, #module + 1) == module .. "-"
+end
+
+--- What modules need to know about a role (no member list).
+-- @tparam string name
+-- @treturn table|nil { name, everyone, managed_by }
+function Directory:group_info(name)
+  local group = self.data.groups[name]
+  if not group then
+    return nil
+  end
+  local everyone = group.everyone == true or name == directory.USERS
+  return { name = name, everyone = everyone, managed_by = group.managed_by }
 end
 
 function Directory:remove_group(name)
@@ -248,7 +335,14 @@ function Directory:is_member(group, user)
     return self.data.users[user] ~= nil
   end
   local entry = self.data.groups[group]
-  return entry ~= nil and entry.members[user] == true
+  if entry == nil then
+    return false
+  end
+  -- "everyone" groups include every domain user, also ones added later.
+  if entry.everyone and self.data.users[user] ~= nil then
+    return true
+  end
+  return entry.members[user] == true
 end
 
 function Directory:count_members(group)
@@ -271,7 +365,7 @@ function Directory:groups_of(user)
   return groups
 end
 
---- @treturn {table...} { name, members = {...}, is_builtin } sorted by name.
+--- @treturn {table...} { name, members = {...}, everyone, managed_by, is_builtin } sorted by name.
 function Directory:list_groups()
   local groups = {}
   for name, group in pairs(self.data.groups) do
@@ -280,7 +374,13 @@ function Directory:list_groups()
       members[#members + 1] = member
     end
     table.sort(members)
-    groups[#groups + 1] = { name = name, members = members, is_builtin = is_builtin(name) }
+    groups[#groups + 1] = {
+      name = name,
+      members = members,
+      everyone = group.everyone == true or name == directory.USERS,
+      managed_by = group.managed_by,
+      is_builtin = is_builtin(name),
+    }
   end
   table.sort(groups, function(a, b) return a.name < b.name end)
   return groups

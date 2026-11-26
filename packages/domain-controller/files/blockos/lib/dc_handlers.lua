@@ -10,6 +10,12 @@
 --   service_unregister            and removes only those)
 --   resolve, service_find,        anyone
 --   list_hosts
+--   group_get                     a joined computer or a logged-in user (role info for
+--                                 modules: does it exist, is it open to everyone)
+--   group_addmember, group_rmmember, group_set_everyone, group_del
+--                                 domain-admins, or members of the group's managed_by
+--   group_add                     domain-admins, or a module's admins creating
+--                                 <module>-... roles managed by themselves
 --   list_users, list_groups,      any logged-in domain user (read only)
 --   list_computers, list_services,
 --   dc_status
@@ -47,6 +53,13 @@ local ARGS = {
   user_password = { name = NAME, password = "string" },
   user_enable = { name = NAME, is_enabled = "boolean" },
   membership = { group = NAME, user = NAME },
+  group_add = {
+    name = NAME,
+    everyone = { type = "boolean", optional = true },
+    managed_by = { type = "string", max = 32, optional = true },
+  },
+  group_everyone = { group = NAME, everyone = "boolean" },
+  group_manager = { group = NAME, managed_by = { type = "string", max = 32, optional = true } },
 }
 
 local dc_handlers = {}
@@ -328,17 +341,8 @@ function dc_handlers.new(dir, storage, clock)
     user_enable = { ARGS.user_enable, function(args)
       return dir:set_enabled(args.name, args.is_enabled)
     end },
-    group_add = { ARGS.name, function(args)
-      return dir:add_group(args.name)
-    end },
-    group_del = { ARGS.name, function(args)
-      return dir:remove_group(args.name)
-    end },
-    group_addmember = { ARGS.membership, function(args)
-      return dir:add_member(args.group, args.user)
-    end },
-    group_rmmember = { ARGS.membership, function(args)
-      return dir:remove_member(args.group, args.user)
+    group_set_manager = { ARGS.group_manager, function(args)
+      return dir:set_manager(args.group, args.managed_by)
     end },
     computer_remove = { ARGS.hostname, function(args)
       return dir:remove_computer(args.hostname)
@@ -354,6 +358,68 @@ function dc_handlers.new(dir, storage, clock)
       return change(function() return apply(args) end)
     end)
   end
+
+  -- Groups and module roles -------------------------------------------------
+
+  --- Role info for modules (any joined computer or logged-in user): whether the role
+  -- exists (the module is set up) and whether it is open to everyone.
+  handlers.group_get = with_args(ARGS.name, function(ctx, args)
+    if not computer_of(ctx) and not dir:validate(ctx.token, now()) then
+      return nil, "this computer is not a member of the domain"
+    end
+    local info = dir:group_info(args.name)
+    if not info then
+      return nil, "no such group"
+    end
+    return info
+  end)
+
+  -- A change to one group by a domain admin or one of the group's managers.
+  local function manager_change(ctx, group, apply)
+    local user, err = require_user(ctx)
+    if not user then
+      return nil, err
+    end
+    if not dir:can_manage(group, user.name) then
+      return nil, "permission denied"
+    end
+    return change(apply)
+  end
+
+  handlers.group_add = with_args(ARGS.group_add, function(ctx, args)
+    local user, err = require_user(ctx)
+    if not user then
+      return nil, err
+    end
+    if not dir:can_create(args.name, args.managed_by, user.name) then
+      return nil, "permission denied"
+    end
+    return change(function()
+      return dir:add_group(args.name, { everyone = args.everyone, managed_by = args.managed_by })
+    end)
+  end)
+
+  handlers.group_del = with_args(ARGS.name, function(ctx, args)
+    return manager_change(ctx, args.name, function() return dir:remove_group(args.name) end)
+  end)
+
+  handlers.group_addmember = with_args(ARGS.membership, function(ctx, args)
+    return manager_change(ctx, args.group, function()
+      return dir:add_member(args.group, args.user)
+    end)
+  end)
+
+  handlers.group_rmmember = with_args(ARGS.membership, function(ctx, args)
+    return manager_change(ctx, args.group, function()
+      return dir:remove_member(args.group, args.user)
+    end)
+  end)
+
+  handlers.group_set_everyone = with_args(ARGS.group_everyone, function(ctx, args)
+    return manager_change(ctx, args.group, function()
+      return dir:set_everyone(args.group, args.everyone)
+    end)
+  end)
 
   -- Users may change their own password; admins may change anyone's.
   handlers.user_passwd = with_args(ARGS.user_password, function(ctx, args)
