@@ -90,6 +90,9 @@ log.info("kernel", "BlockOS %s booting from %s on a %s %s", blockos.version, roo
   blockos.device.is_advanced() and "advanced" or "basic", blockos.device.kind())
 
 add_bin_to_path(env.shell)
+-- The boot shell, so services can start a shell with BlockOS's path and aliases (the remote
+-- shell of remote admin uses it as the new shell's parent).
+blockos.boot_shell = env.shell
 if env.multishell then
   env.multishell.setTitle(env.multishell.getCurrent(), "BlockOS")
 end

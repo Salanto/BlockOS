@@ -44,7 +44,8 @@ local tabs = {
       local roles = has_roles and ("  [" .. table.concat(host.roles, ",") .. "]") or ""
       return string.format("%-16s %-8s %s%s", host.hostname, host.kind, seen, roles)
     end,
-    hints = { { "o", "Roles" }, { "d", "Remove" } },
+    hints = { { "c", "Shell" }, { "i", "Info" }, { "o", "Roles" }, { "u", "Update" },
+      { "b", "Reboot" }, { "s", "Service" }, { "l", "Log" }, { "d", "Remove" } },
   },
   {
     title = "Roles",
@@ -223,7 +224,134 @@ local function split_words(text)
   return words
 end
 
+-- Remote admin: ask the computer itself (protocol blockos.manage, domain admins only).
+local function manage_call(host, op, call_args)
+  local rpc = import("rpc")
+  return rpc.call(host.id, "blockos.manage", op, call_args, { relogin = true, retries = 0 })
+end
+
+local function wait_key(text)
+  ui.print("")
+  ui.print(text or "Press any key to go back.", "dim")
+  os.pullEvent("key")
+end
+
+local function show_info(host)
+  local status, err = manage_call(host, "status")
+  if not status then
+    return set_message(host.hostname .. ": " .. tostring(err), "error")
+  end
+  ui.clear()
+  term.setCursorPos(1, 1)
+  ui.title(status.hostname .. " (" .. status.kind .. ")")
+  ui.field("Version", status.version, nil, 10)
+  ui.field("Up", math.floor(status.uptime / 60) .. " min", nil, 10)
+  ui.field("User", status.user or "nobody logged in", nil, 10)
+  if status.disk and status.disk.capacity then
+    local used = 100 - math.floor(100 * status.disk.free / math.max(1, status.disk.capacity))
+    local disk_role = used > 90 and "error" or nil
+    ui.field("Disk", used .. "% used, " .. status.disk.free .. " bytes free", disk_role, 10)
+  end
+  if status.fuel then
+    ui.field("Fuel", tostring(status.fuel), nil, 10)
+  end
+  if status.position then
+    local pos = status.position
+    ui.field("Position", pos.x .. " " .. pos.y .. " " .. pos.z, nil, 10)
+  end
+  ui.field("Services", #status.services .. " (" .. status.failed .. " failed)",
+    status.failed > 0 and "error" or "ok", 10)
+  for _, service in ipairs(status.services) do
+    if service.state == "failed" or service.state == "crashed" then
+      ui.status(service.name .. ": " .. tostring(service.last_error), "error")
+    end
+  end
+  for _, notice in ipairs(status.notices or {}) do
+    ui.status(notice, "warn")
+  end
+  wait_key()
+end
+
+local function show_log(host)
+  local lines, err = manage_call(host, "log", { lines = 15 })
+  if not lines then
+    return set_message(host.hostname .. ": " .. tostring(err), "error")
+  end
+  ui.clear()
+  term.setCursorPos(1, 1)
+  ui.title("Log of " .. host.hostname)
+  for _, line in ipairs(lines) do
+    ui.print(line, line:find(" ERROR ") and "error" or (line:find(" WARN ") and "warn" or "text"))
+  end
+  wait_key()
+end
+
+local function control_service(host)
+  local status, err = manage_call(host, "status")
+  if not status then
+    return set_message(host.hostname .. ": " .. tostring(err), "error")
+  end
+  local names = {}
+  for index, service in ipairs(status.services) do
+    names[index] = service.name .. "  [" .. tostring(service.state) .. "]"
+  end
+  names[#names + 1] = "Cancel"
+  local choice = ui.menu({ title = "Service on " .. host.hostname, items = names })
+  local service = status.services[choice]
+  if not service then
+    return
+  end
+  local verbs = { "restart", "start", "stop", "cancel" }
+  local items = { "Restart", "Start", "Stop", "Cancel" }
+  local verb = verbs[ui.menu({ title = service.name, items = items })]
+  if verb == "cancel" then
+    return
+  end
+  local result, call_error = manage_call(host, "service", { name = service.name, action = verb })
+  if result then
+    set_message(service.name .. " on " .. host.hostname .. ": " .. tostring(result.state), "ok")
+  else
+    set_message(tostring(call_error), "error")
+  end
+end
+
 actions[3] = {
+  c = function(host)
+    if host then
+      shell.run("rsh", host.hostname)
+      refresh()
+    end
+  end,
+  i = function(host)
+    if host then
+      show_info(host)
+    end
+  end,
+  l = function(host)
+    if host then
+      show_log(host)
+    end
+  end,
+  s = function(host)
+    if host then
+      control_service(host)
+    end
+  end,
+  u = function(host)
+    if not host then
+      return
+    end
+    local ok, err = manage_call(host, "update")
+    local done = host.hostname .. " is checking its roles and updates now."
+    set_message(ok and done or tostring(err), ok and "ok" or "error")
+  end,
+  b = function(host)
+    if host and ui.confirm("Reboot " .. host.hostname .. "?") then
+      local ok, err = manage_call(host, "reboot")
+      local done = host.hostname .. " is rebooting."
+      set_message(ok and done or tostring(err), ok and "ok" or "error")
+    end
+  end,
   -- Give a computer its computer roles; it installs and sets what they say by itself.
   o = function(host)
     if not host then

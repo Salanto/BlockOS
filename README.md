@@ -72,6 +72,12 @@ computer installs what its roles list and keeps all its packages up to date from
 server by itself: within 30 minutes, at boot, or right away with `domain update` on it. Updates
 apply when nobody is logged in; otherwise you get a notice and it happens after you log out.
 
+**Remote admin.** Domain admins manage any joined computer from `dsa` (Computers tab): `i` shows
+its health (version, services, disk, turtle fuel and position), `u` updates it now, `b` reboots
+it, `s` starts or stops a service, `l` reads its log, and `c` opens a **remote shell**: its
+screen on yours, your keys on it, like ssh. `rsh <computer>` does the same from any shell. Hold
+Ctrl+T to leave; F12 sends Ctrl+T to the remote computer.
+
 ## A package server
 
 On a computer with disk drives (attach as many as you like with wired modems):
