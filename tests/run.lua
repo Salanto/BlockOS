@@ -205,6 +205,13 @@ function t.fake_peripherals(devices)
     wrap = function(name)
       return devices[name] and devices[name].methods
     end,
+    getType = function(name)
+      local device = devices[name]
+      if device then
+        return table.unpack(device.types)
+      end
+      return nil
+    end,
     isPresent = function(name)
       return devices[name] ~= nil
     end,

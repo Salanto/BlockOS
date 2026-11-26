@@ -7,6 +7,8 @@
 local MAX_ALERTS = 20
 -- Recent item moves, for the network map's animations.
 local MAX_MOVES = 50
+-- Sorting pauses while someone finds a chest, at most this long.
+local FIND_PAUSE_SECONDS = 60
 
 local function config_path()
   return import("paths").top(import("stock_client").CONFIG_FILE)
@@ -50,9 +52,12 @@ local function run(ctx)
     states = {},
     alerts = {},
     sources = nil,
-    inventories = {}, -- from the last read: { handle, role, source, items? }
+    inventories = {}, -- from the last read: { handle, role, source, items?, fill? }
     moves = {}, -- recent moves, oldest first: { seq, from, to, item, label, count }
     move_seq = 0,
+    -- Changes whenever the service starts, so maps notice that seqs began again.
+    move_log = os.epoch("utc"),
+    sort_paused_until = 0,
   }
 
   -- Note a move for the map (the map asks for moves newer than a seq).
@@ -91,45 +96,86 @@ local function run(ctx)
   monitor.list_outputs = stock_alarms.list_outputs
 
   --- Deliver items to an output chest (see stock_logistics.request).
+  -- The counts drop at once, so the Catalog and a second request do not see
+  -- items that already left (the next read corrects any difference).
   function monitor.request(item, count, output)
-    return stock_logistics.request(monitor.inventories, item, count, output, record_move)
+    local result, err = stock_logistics.request(monitor.inventories, item, count, output,
+      record_move)
+    local found = monitor.totals[item]
+    if result and found then
+      found.count = math.max(0, found.count - result.moved)
+    end
+    return result, err
   end
 
-  -- How full one inventory is right now, for the Storage tab.
-  local function fill_of(inventory)
-    local source = inventory.source
-    if type(source.list) ~= "function" or type(source.size) ~= "function" then
-      return nil
-    end
-    local ok_size, size = pcall(source.size, inventory.handle)
-    local ok_list, slots = pcall(source.list, inventory.handle)
-    if not (ok_size and ok_list) then
-      return nil
-    end
-    local used, total = 0, 0
-    for _, stack in pairs(slots) do
-      used = used + 1
-      total = total + stack.count
-    end
-    return { size = size, used = used, total = total }
-  end
-
-  --- Every inventory found, with role, label and how full it is.
+  --- Every inventory found, with role, label and fill from the last read (no
+  -- extra calls to the blocks), plus configured ones that are gone (missing).
   function monitor.list_storages()
-    local rows = {}
+    local rows, seen = {}, {}
     for _, inventory in ipairs(monitor.inventories) do
-      local fill = fill_of(inventory) or {}
+      local fill = inventory.fill or {}
+      seen[inventory.handle] = true
       rows[#rows + 1] = {
         handle = inventory.handle,
         label = stock.storage_name(config, inventory.handle),
-        role = stock.role_of(config, inventory.handle),
+        role = inventory.role,
         size = fill.size,
         used = fill.used,
-        total = fill.total,
       }
+    end
+    -- A re-placed modem gives its chest a new name; the old entry shows up
+    -- here so it can be forgotten instead of piling up unseen.
+    for handle, entry in pairs(config.storages) do
+      if not seen[handle] then
+        rows[#rows + 1] = {
+          handle = handle,
+          label = stock.storage_name(config, handle),
+          role = entry.role or "?",
+          is_missing = true,
+        }
+      end
     end
     table.sort(rows, function(a, b) return a.label < b.label end)
     return rows
+  end
+
+  -- Item totals of every block right now (only for finding a chest).
+  local function live_totals()
+    local totals = {}
+    for _, inventory in ipairs(monitor.inventories) do
+      local source = inventory.source
+      if type(source.list) == "function" then
+        local ok, slots = pcall(source.list, inventory.handle)
+        local total = 0
+        for _, stack in pairs(ok and slots or {}) do
+          total = total + stack.count
+        end
+        totals[inventory.handle] = total
+      end
+    end
+    return totals
+  end
+
+  --- Find a chest, step 1: pause sorting (so only the player changes chests)
+  -- and remember what is in every block.
+  function monitor.find_start()
+    monitor.sort_paused_until = os.clock() + FIND_PAUSE_SECONDS
+    monitor.find_before = live_totals()
+    return true
+  end
+
+  --- Find a chest, step 2: the blocks whose contents changed; sorting resumes.
+  function monitor.find_finish()
+    local before = monitor.find_before or {}
+    local changed = {}
+    for handle, total in pairs(live_totals()) do
+      if before[handle] and before[handle] ~= total then
+        changed[#changed + 1] = { handle = handle, label = stock.storage_name(config, handle) }
+      end
+    end
+    monitor.find_before = nil
+    monitor.sort_paused_until = 0
+    return changed
   end
 
   local handlers = stock_handlers.new(monitor)
@@ -149,17 +195,20 @@ local function run(ctx)
     failing = now_failing
   end
 
-  local function role_of(handle)
-    return stock.role_of(config, handle)
+  local function role_of(handle, source)
+    local default = source.default_role and source.default_role(handle) or nil
+    return stock.role_of(config, handle, default)
   end
 
   local applied_outputs = {}
   local function check_stock()
     local totals, blocks, failures, inventories = stock_sources.read_all(sources, role_of)
     monitor.inventories = inventories
-    local _, sort_failures = stock_logistics.sort_inputs(inventories, record_move)
-    for _, failure in ipairs(sort_failures) do
-      failures[#failures + 1] = failure
+    if os.clock() >= monitor.sort_paused_until then
+      local _, sort_failures = stock_logistics.sort_inputs(inventories, record_move)
+      for _, failure in ipairs(sort_failures) do
+        failures[#failures + 1] = failure
+      end
     end
     log_failures(failures)
     monitor.totals, monitor.sources = totals, blocks

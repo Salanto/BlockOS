@@ -71,7 +71,14 @@ function stock_map.layout(storages, width, height)
   -- Left: inputs, a gap, then outputs. Right: storage. Ignored: only counted.
   local left_rows, right_rows, ignored = {}, {}, 0
   local outputs = {}
+  -- Configured chests that are gone are listed in the Storage tab, not here.
+  local present = {}
   for _, row in ipairs(storages) do
+    if not row.is_missing then
+      present[#present + 1] = row
+    end
+  end
+  for _, row in ipairs(present) do
     if row.role == "input" then
       left_rows[#left_rows + 1] = row
     elseif row.role == "output" then
@@ -292,6 +299,11 @@ end
 local function poll_moves(view)
   local result = view.connection.call("moves", { since = view.seq })
   if not result then
+    return
+  end
+  if result.log ~= view.log then
+    -- The stock computer restarted: its seqs began again. Start over quietly.
+    view.log, view.seq = result.log, result.seq
     return
   end
   if view.seq then

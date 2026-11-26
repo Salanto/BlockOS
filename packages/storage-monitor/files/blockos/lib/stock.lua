@@ -13,7 +13,8 @@
 --   access           { admins = {...}, viewers = {...}, computers = {...} }
 --   name             optional: this stock computer's name ("kitchen")
 --   storages         [handle] = { role?, label? } per inventory (peripheral name);
---                    no entry or no role means "storage"
+--                    no role means the block's default (containers: storage,
+--                    anything else: ignore)
 -- @module stock
 
 local stock = {}
@@ -130,13 +131,15 @@ function stock.is_role(role)
   return VALID_ROLES[role] == true
 end
 
---- The role of an inventory; new inventories count as storage.
+--- The role of an inventory: the one set for it, else the block's default.
 -- @tparam table config
 -- @tparam string handle Peripheral name.
+-- @tparam[opt] string default The block's default role (see the source's
+--   default_role); "storage" when not given.
 -- @treturn string
-function stock.role_of(config, handle)
+function stock.role_of(config, handle, default)
   local entry = config.storages[handle]
-  return entry and entry.role or stock.DEFAULT_ROLE
+  return entry and entry.role or default or stock.DEFAULT_ROLE
 end
 
 --- The name to show for an inventory: its label, else its peripheral name.
@@ -165,8 +168,8 @@ function stock.set_storage(config, handle, role, label)
   end
   local entry = config.storages[handle] or {}
   if role ~= nil then
-    -- The default is not stored, so a renamed default stays the default.
-    entry.role = role ~= stock.DEFAULT_ROLE and role or nil
+    -- Stored even when it equals the default: defaults depend on the block.
+    entry.role = role
   end
   if label ~= nil then
     entry.label = label ~= "" and label or nil

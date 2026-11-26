@@ -48,12 +48,13 @@ end
 -- is skipped, not an error; it is listed in the failures so the caller can
 -- log it.
 -- @tparam {table...} sources
--- @tparam[opt] function role_of function(handle) -> role; default: all storage
+-- @tparam[opt] function role_of function(handle, source) -> role; default: all storage
 -- @treturn table [item] = { count, label }
 -- @treturn number How many storage blocks were read.
 -- @treturn {table...} failures: { handle, error } per block that could not be read
--- @treturn {table...} inventories: { handle, role, source, items? } per block
---   found (items only for storage blocks that were read)
+-- @treturn {table...} inventories: { handle, role, source, items?, fill? } per
+--   block found (items only for storage blocks; fill { used, size } when the
+--   source reports it, read here so screens never have to ask the blocks)
 function stock_sources.read_all(sources, role_of)
   local totals = {}
   local blocks = 0
@@ -61,11 +62,14 @@ function stock_sources.read_all(sources, role_of)
   local inventories = {}
   for _, source in ipairs(sources) do
     for _, handle in ipairs(source.detect()) do
-      local role = role_of and role_of(handle) or "storage"
+      local role = role_of and role_of(handle, source) or "storage"
       local inventory = { handle = handle, role = role, source = source }
       inventories[#inventories + 1] = inventory
-      if role == "storage" then
-        local ok, items = pcall(source.read, handle)
+      if (role == "input" or role == "output") and type(source.fill) == "function" then
+        local ok, fill = pcall(source.fill, handle)
+        inventory.fill = ok and fill or nil
+      elseif role == "storage" then
+        local ok, items, fill = pcall(source.read, handle)
         if not ok or type(items) ~= "table" then
           failures[#failures + 1] = {
             handle = tostring(handle),
@@ -74,6 +78,7 @@ function stock_sources.read_all(sources, role_of)
         else
           blocks = blocks + 1
           inventory.items = items
+          inventory.fill = fill
           for item, found in pairs(items) do
             local total = totals[item] or { count = 0, label = found.label }
             total.count = total.count + found.count

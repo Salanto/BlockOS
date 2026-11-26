@@ -161,6 +161,57 @@ return function(t)
     t.eq(stock.role_of(config, "new_chest"), "storage", "new chests count as storage")
   end)
 
+  t.it("containers default to storage, machines to ignore", function()
+    local import = t.fresh_import()
+    local inventory = import("storage_sources/inventory")
+    inventory.peripheral = t.fake_peripherals({
+      ["minecraft:chest_0"] = { types = { "minecraft:chest", "inventory" }, methods = {} },
+      ["minecraft:furnace_0"] = { types = { "minecraft:furnace", "inventory" }, methods = {} },
+      ["sophisticatedstorage:barrel_2"] = { types = { "inventory" }, methods = {} },
+      ["create:item_vault_0"] = { types = { "create:item_vault", "inventory" }, methods = {} },
+    })
+    t.eq(inventory.default_role("minecraft:chest_0"), "storage")
+    t.eq(inventory.default_role("sophisticatedstorage:barrel_2"), "storage", "by name too")
+    t.eq(inventory.default_role("create:item_vault_0"), "storage")
+    t.eq(inventory.default_role("minecraft:furnace_0"), "ignore", "never sort into machines")
+    local stock = import("stock")
+    local config = stock.new_config({ "alice" })
+    t.eq(stock.role_of(config, "minecraft:furnace_0", "ignore"), "ignore")
+    stock.set_storage(config, "minecraft:furnace_0", "storage")
+    t.eq(stock.role_of(config, "minecraft:furnace_0", "ignore"), "storage", "a set role wins")
+  end)
+
+  t.it("reads report how full each block is", function()
+    local _, read = setup()
+    local _, _, _, inventories = read()
+    local by_handle = {}
+    for _, inventory in ipairs(inventories) do
+      by_handle[inventory.handle] = inventory
+    end
+    t.eq(by_handle.storage_a.fill.used, 1)
+    t.eq(by_handle.storage_a.fill.size, 4)
+    t.eq(by_handle.pickup.fill.used, 2, "inputs report their fill too")
+    t.eq(by_handle.furnace.fill, nil, "ignored blocks are not read at all")
+  end)
+
+  t.it("a missing chest's entry can be forgotten", function()
+    local import = t.fresh_import()
+    local stock = import("stock")
+    local monitor = {
+      config = stock.new_config({ "alice" }),
+      totals = {},
+      states = {},
+      alerts = {},
+      inventories = {},
+      save = function() return true end,
+    }
+    stock.set_storage(monitor.config, "minecraft:chest_9", "input", "Old pickup")
+    local handlers = import("stock_handlers").new(monitor)
+    local ctx = { local_admin = true }
+    t.ok(handlers.set_storage(ctx, { storage = "old pickup", forget = true }))
+    t.eq(monitor.config.storages["minecraft:chest_9"], nil)
+  end)
+
   t.it("items and chests are found by id, label or part of it", function()
     local _, _, _, stock, config = setup()
     local totals = {

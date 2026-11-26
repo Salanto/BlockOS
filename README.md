@@ -97,14 +97,17 @@ alert (an unloaded chunk) never leaves the farm running.
 **Item logistics.** Every chest on the stock computer's wired network has a role, set in the
 **Storage** tab (or `stock storage role <chest> <role>`):
 
-- **storage** (the default): counted, and where items are sorted into and taken from.
+- **storage** (the default for chests, barrels, drawers, vaults and crates): counted, and where
+  items are sorted into and taken from.
 - **input**: a dump chest, emptied into storage automatically (next to the same item first).
 - **output**: where requested items arrive: `g` in the Catalog tab, or `stock request iron 64`
   from any computer.
-- **ignore**: furnaces, machines, trash cans: never counted or touched.
+- **ignore** (the default for everything else: furnaces, machines, trash cans): never counted
+  or touched, so sorting never fills a machine by accident.
 
 Give chests labels with `l`. To find out which chest is which, press `f` and drop any item into
-it. Everyone who can look at the stock may take items out.
+it (sorting pauses meanwhile). A chest whose modem was re-placed gets a new name; its old entry
+shows as **missing**, and `d` forgets it. Everyone who can look at the stock may take items out.
 
 `stock map` (or `m` in the Storage tab) shows the network as a map: inputs and outputs on the
 left, storage on the right with fill bars, and items flying along the lines as they are sorted

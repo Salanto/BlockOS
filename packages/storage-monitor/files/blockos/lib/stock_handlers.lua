@@ -2,7 +2,8 @@
 --
 -- Every stock computer decides who may reach it (its access list; open to
 -- everyone by default, "*" meaning everyone):
---   viewers          status, catalog, alerts, storages, moves, request (taking items
+--   viewers          status, catalog, alerts, storages, moves, find_start,
+--                    find_finish, request (taking items
 --                    out is for everyone who may look: friends only)
 --   admins           everything, including watches, alarms, storage roles and
 --                    the access list
@@ -43,6 +44,7 @@ local ARGS = {
     storage = { type = "string", max = 64 },
     role = { type = "string", optional = true, max = 16 },
     label = { type = "string", optional = true, max = 64 },
+    forget = { type = "boolean", optional = true }, -- drop the entry (missing chests)
   },
   moves = { since = { type = "number", optional = true } },
   -- `item` is an item id or (part of) its name.
@@ -62,8 +64,10 @@ local ARGS = {
 --   alerts        recent alert payloads, newest last
 --   list_outputs()  redstone targets that can be chosen
 --   inventories   from the last read: { handle, role, source, items? }
---   list_storages()  every inventory with role, label and fill
+--   list_storages()  every inventory with role, label and fill, plus missing ones
 --   request(item, count, output?)  deliver items (see stock_logistics)
+--   find_start(), find_finish()  find a chest by its changed contents
+--   moves, move_seq, move_log  the recent move log, its newest seq and its id
 -- @treturn table
 function stock_handlers.new(monitor)
   local handlers = {}
@@ -306,10 +310,17 @@ function stock_handlers.new(monitor)
 
   -- Logistics ------------------------------------------------------------
 
+  -- Blocks found now, plus configured ones that are missing (to forget them).
   local function inventory_handles()
-    local handles = {}
+    local handles, seen = {}, {}
     for _, inventory in ipairs(monitor.inventories or {}) do
       handles[#handles + 1] = inventory.handle
+      seen[inventory.handle] = true
+    end
+    for handle in pairs(monitor.config.storages) do
+      if not seen[handle] then
+        handles[#handles + 1] = handle
+      end
     end
     return handles
   end
@@ -335,14 +346,35 @@ function stock_handlers.new(monitor)
         newer[#newer + 1] = move
       end
     end
-    return { seq = monitor.move_seq or 0, moves = newer }
+    -- `log` changes when the service restarts: seqs then start again at 1.
+    return { log = monitor.move_log, seq = monitor.move_seq or 0, moves = newer }
   end)
+
+  function handlers.find_start(ctx)
+    local ok, err = require_viewer(ctx)
+    if not ok then
+      return nil, err
+    end
+    return monitor.find_start()
+  end
+
+  function handlers.find_finish(ctx)
+    local ok, err = require_viewer(ctx)
+    if not ok then
+      return nil, err
+    end
+    return monitor.find_finish()
+  end
 
   handlers.set_storage = with_args(ARGS.set_storage, function(ctx, args)
     return admin_change(ctx, function()
       local handle, err = stock.find_storage(monitor.config, inventory_handles(), args.storage)
       if not handle then
         return nil, err
+      end
+      if args.forget then
+        monitor.config.storages[handle] = nil
+        return { storage = handle }
       end
       local ok, set_error = stock.set_storage(monitor.config, handle, args.role, args.label)
       if not ok then
