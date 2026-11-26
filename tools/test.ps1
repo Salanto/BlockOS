@@ -30,6 +30,7 @@ try {
     $isColor = if ($ComputerType -eq "basic") { "false" } else { "true" }
     Set-Content (Join-Path $data "config\0.json") "{ `"isColor`": $isColor }"
     Set-Content (Join-Path $computer "harness-args") "/repo/tests/run.lua`n$ComputerType"
+    Set-Content (Join-Path $computer "harness-computer-type") $ComputerType
     Set-Content (Join-Path $computer "startup.lua") 'shell.run("/repo/tools/harness.lua")'
 
     & $craftos --headless --directory $data --id 0

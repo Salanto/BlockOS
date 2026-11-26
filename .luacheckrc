@@ -15,7 +15,7 @@ read_globals = {
   "read", "rednet", "settings", "shell", "sleep", "term", "textutils", "turtle",
   "vector", "window", "write",
   -- CraftOS-PC only (used by tests).
-  "periphemu",
+  "config", "periphemu",
 }
 
 exclude_files = { "dist/**" }

@@ -239,3 +239,9 @@ fields, and drop messages with a newer major version. Peer liveness uses the loc
   requiring a domain login token.
 - **Later:** uninstall of BlockOS itself, local IPC via custom events, tab completion,
   pocket computer support.
+
+## Git
+
+- Commit messages: one short summary sentence, then short bullet points.
+- No Claude attribution in commits or PRs: no `Co-Authored-By`, no session URL, no
+  "Generated with" lines.

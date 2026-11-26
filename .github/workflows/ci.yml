@@ -9,7 +9,7 @@ jobs:
   lint:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: lunarmodules/luacheck@v1
 
   test:
@@ -21,7 +21,7 @@ jobs:
       matrix:
         computer: [advanced, basic]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - name: Install CraftOS-PC
         run: |
           sudo add-apt-repository -y ppa:jackmacwindows/ppa

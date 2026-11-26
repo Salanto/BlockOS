@@ -38,6 +38,7 @@ fi
 printf '{ "isColor": %s }\n' "$is_color" > "$data_dir/config/0.json"
 
 printf '%s\n' "$@" > "$computer_dir/harness-args"
+printf '%s\n' "$computer_type" > "$computer_dir/harness-computer-type"
 
 # A second computer for multi-computer tests (started by tests via periphemu).
 mkdir -p "$data_dir/computer/1"
@@ -54,6 +55,9 @@ fi
 if [ -f "$computer_dir/test-report.txt" ]; then
   cat "$computer_dir/test-report.txt"
 fi
+
+echo "Computer config after the run:"
+cat "$data_dir/config/0.json" 2>/dev/null || echo "(none)"
 
 result=$(cat "$computer_dir/harness-result" 2>/dev/null || echo "no result")
 if [ "$result" != "ok" ]; then
