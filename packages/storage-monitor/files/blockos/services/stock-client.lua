@@ -110,9 +110,12 @@ local function run(ctx)
       ctx.log.warn("stock status: %s", tostring(err))
       return
     end
+    -- Replace, not merge: an item no longer in the status (unwatched) is not low.
+    local fresh = {}
     for _, row in ipairs(data.rows) do
-      item_low[row.item] = row.is_low
+      fresh[row.item] = row.is_low
     end
+    item_low = fresh
     apply_reactions()
     draw_board(data)
   end

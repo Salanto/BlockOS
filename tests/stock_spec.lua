@@ -34,6 +34,21 @@ return function(t)
     t.ok(states["minecraft:gold_ingot"].is_low)
   end)
 
+  t.it("an item unwatched while low recovers once", function()
+    local stock, config = config_with({ gold = { label = "Gold", limit = 10 } })
+    local states = stock.evaluate(config, { gold = { count = 2 } })
+    t.ok(states.gold.is_low)
+    config.watches.gold = nil
+    local changes
+    states, changes = stock.evaluate(config, { gold = { count = 2 } }, states)
+    t.eq(states.gold, nil, "no longer shown")
+    t.eq(changes.recovered[1], "gold")
+    t.eq(changes.cleared.gold.is_low, false)
+    t.eq(changes.cleared.gold.label, "Gold")
+    states, changes = stock.evaluate(config, { gold = { count = 2 } }, states)
+    t.eq(#changes.recovered, 0, "only once")
+  end)
+
   t.it("an output is on while any item mapped to it is low", function()
     local lamp = { target = "redstone_relay_0", side = "top" }
     local stock, config = config_with({

@@ -129,6 +129,12 @@ return function(t)
     local went_low = { went_low = { "iron" }, recovered = {} }
     alarms.send_alerts("stock-pc", states, went_low, alarms.EVERYONE)
     t.eq(sent[3].recipient, "everyone", "open access: one broadcast")
+
+    local cleared = { label = "Gold", count = 2, limit = 10, is_low = false }
+    local unwatched = { went_low = {}, recovered = { "gold" }, cleared = { gold = cleared } }
+    local final = alarms.send_alerts("stock-pc", {}, unwatched, { 12 })
+    t.eq(final[1].item, "gold")
+    t.eq(final[1].is_low, false, "an unwatched item gets a final all-clear")
   end)
 
   local BOARD_DATA = {
