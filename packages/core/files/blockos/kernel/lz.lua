@@ -29,12 +29,17 @@ local MIN_MATCH = 4
 local MAX_MATCH = 1024
 local MAX_OFFSET = 65535
 local MAX_CANDIDATES = 16
-local YIELD_EVERY = 16384
+local SECONDS_BETWEEN_YIELDS = 0.5
 
--- Let other coroutines run during long work ("Too long without yielding").
-local function take_a_breath()
-  os.queueEvent("blockos_lz")
-  os.pullEvent("blockos_lz")
+-- Let other coroutines run during long work: CC stops code that runs too long
+-- without yielding. Time-based, because the work per step varies a lot.
+local last_yield = os.clock()
+local function take_a_breath_if_needed()
+  if os.clock() - last_yield >= SECONDS_BETWEEN_YIELDS then
+    os.queueEvent("blockos_lz")
+    os.pullEvent("blockos_lz")
+    last_yield = os.clock()
+  end
 end
 
 local function encode_u32(value)
@@ -79,7 +84,6 @@ function lz.compress(data)
   local latest = {}   -- [4-byte string] = most recent position
   local previous = {} -- [position] = earlier position with the same 4 bytes
   local literal_start = 1
-  local work_done = 0
   local position = 1
 
   local function remember(at)
@@ -117,11 +121,7 @@ function lz.compress(data)
       position = position + 1
     end
 
-    work_done = work_done + 1
-    if work_done >= YIELD_EVERY then
-      work_done = 0
-      take_a_breath()
-    end
+    take_a_breath_if_needed()
   end
 
   put_length(parts, size - literal_start + 1)
@@ -142,7 +142,6 @@ function lz.decompress(data)
   local output = {}
   local count = 0
   local position = 9
-  local bytes_since_yield = 0
 
   local function read_length()
     local total = 0
@@ -186,11 +185,7 @@ function lz.decompress(data)
         count = count + 1
         output[count] = output[count - offset]
       end
-      bytes_since_yield = bytes_since_yield + literals + length
-      if bytes_since_yield >= YIELD_EVERY then
-        bytes_since_yield = 0
-        take_a_breath()
-      end
+      take_a_breath_if_needed()
     end
   end)
   if not ok then
