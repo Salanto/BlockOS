@@ -21,7 +21,7 @@ return function(t)
 
   local function with_screen(width, height, fn)
     local original = term.current()
-    term.redirect(window.create(term.native(), 1, 1, width, height))
+    term.redirect(window.create(term.current(), 1, 1, width, height))
     local ok, err = pcall(fn)
     term.redirect(original)
     if not ok then

@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
 # Run a Lua program inside a fresh, headless CraftOS-PC computer.
+# Headless CraftOS-PC always reports a colour terminal; for "basic", the test
+# runner simulates a basic terminal itself (see tests/run.lua).
 #
 #   tools/craftos-run.sh <advanced|basic> <copy-out dir or ""> <program> [args...]
 #
@@ -26,19 +28,12 @@ timeout_seconds=${CRAFTOS_TIMEOUT:-600}
 data_dir=$(mktemp -d)
 trap 'rm -rf "$data_dir"' EXIT
 computer_dir="$data_dir/computer/0"
-mkdir -p "$computer_dir/repo" "$data_dir/config"
+mkdir -p "$computer_dir/repo"
 
 cp -r "$repo_dir/packages" "$repo_dir/installer" "$repo_dir/tools" "$repo_dir/tests" \
   "$computer_dir/repo/"
 
-is_color=true
-if [ "$computer_type" = "basic" ]; then
-  is_color=false
-fi
-printf '{ "isColor": %s }\n' "$is_color" > "$data_dir/config/0.json"
-
 printf '%s\n' "$@" > "$computer_dir/harness-args"
-printf '%s\n' "$computer_type" > "$computer_dir/harness-computer-type"
 
 # A second computer for multi-computer tests (started by tests via periphemu).
 mkdir -p "$data_dir/computer/1"
@@ -56,8 +51,6 @@ if [ -f "$computer_dir/test-report.txt" ]; then
   cat "$computer_dir/test-report.txt"
 fi
 
-echo "Computer config after the run:"
-cat "$data_dir/config/0.json" 2>/dev/null || echo "(none)"
 
 result=$(cat "$computer_dir/harness-result" 2>/dev/null || echo "no result")
 if [ "$result" != "ok" ]; then

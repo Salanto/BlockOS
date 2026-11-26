@@ -20,17 +20,13 @@ $data = Join-Path ([System.IO.Path]::GetTempPath()) ("blockos-test-" + [guid]::N
 $computer = Join-Path $data "computer\0"
 try {
     New-Item -ItemType Directory -Force (Join-Path $computer "repo") | Out-Null
-    New-Item -ItemType Directory -Force (Join-Path $data "config") | Out-Null
     New-Item -ItemType Directory -Force (Join-Path $data "computer\1") | Out-Null
     foreach ($dir in "packages", "installer", "tools", "tests") {
         Copy-Item -Recurse (Join-Path $repo $dir) (Join-Path $computer "repo")
     }
     Copy-Item (Join-Path $repo "tests\fixtures\peer_startup.lua") (Join-Path $data "computer\1\startup.lua")
 
-    $isColor = if ($ComputerType -eq "basic") { "false" } else { "true" }
-    Set-Content (Join-Path $data "config\0.json") "{ `"isColor`": $isColor }"
     Set-Content (Join-Path $computer "harness-args") "/repo/tests/run.lua`n$ComputerType"
-    Set-Content (Join-Path $computer "harness-computer-type") $ComputerType
     Set-Content (Join-Path $computer "startup.lua") 'shell.run("/repo/tools/harness.lua")'
 
     & $craftos --headless --directory $data --id 0

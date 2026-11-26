@@ -223,7 +223,9 @@ fields, and drop messages with a newer major version. Peer liveness uses the loc
 
 - Tests run **inside CraftOS-PC** with the real CC APIs: `tools/test.sh [advanced|basic|both]`
   (Linux/CI) or `tools\test.ps1 -ComputerType advanced|basic` (Windows). CI runs both computer
-  types on every push.
+  types on every push. Headless CraftOS-PC always reports a colour terminal, so the runner
+  simulates a basic computer with a terminal whose `isColour()` returns false; always detect
+  the device type through `device.is_advanced()` so this stays accurate.
 - Specs live in `tests/*_spec.lua` and return `function(t)`; use `t.it`, `t.ok`, `t.eq`,
   `t.fresh_import()` (modules redirected into `/sandbox`) and `t.with_input()` to type into
   prompts.

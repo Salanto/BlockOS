@@ -23,6 +23,24 @@ local MODULE_DIRS = {
 
 local results = { passed = 0, failed = 0, skipped = 0, lines = {} }
 
+-- Headless CraftOS-PC always reports a colour terminal. BlockOS only tells basic
+-- from advanced through term.isColour(), so a basic computer is simulated with a
+-- terminal that reports no colour support. Windows created on top of it inherit that.
+local function basic_terminal()
+  local width, height = term.native().getSize()
+  local screen = window.create(term.native(), 1, 1, width, height)
+  local function no_colour()
+    return false
+  end
+  return setmetatable({ isColour = no_colour, isColor = no_colour }, { __index = screen })
+end
+
+local root_terminal = term.native()
+if expected_type == "basic" then
+  root_terminal = basic_terminal()
+end
+term.redirect(root_terminal)
+
 local function report(line)
   print(line)
   results.lines[#results.lines + 1] = line
@@ -163,7 +181,7 @@ function t.it(name, fn)
     report("  FAIL  " .. name)
     report("        " .. tostring(err))
   end
-  term.redirect(term.native())
+  term.redirect(root_terminal)
   term.setTextColour(colours.white)
   term.setBackgroundColour(colours.black)
 end
@@ -200,10 +218,6 @@ end
 
 local actual_type = term.isColour() and "advanced" or "basic"
 report("BlockOS tests on a " .. actual_type .. " computer")
-if expected_type and expected_type ~= actual_type then
-  results.failed = results.failed + 1
-  report("FAIL  expected a " .. expected_type .. " computer (check the isColor config key)")
-end
 
 run_specs()
 
