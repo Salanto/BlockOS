@@ -91,4 +91,47 @@ return function(t)
       t.eq(ran, "/rom/programs/shell.lua")
     end
   end)
+
+  -- A stand-in for the domain package's login provider.
+  local function fake_domain_provider(is_available)
+    return {
+      describe = function() return "Domain: home" end,
+      is_available = function() return is_available end,
+      name = function() return "home" end,
+      login = function(name, password)
+        if password ~= "domain-pw" then
+          return nil, "Login incorrect."
+        end
+        return { name = name, source = "domain", groups = { "domain-admins" }, is_admin = true }
+      end,
+    }
+  end
+
+  t.it("bare names use the domain once joined; .\name stays local", function()
+    local auth = t.fresh_import()("auth")
+    auth.add_user("admin", "local-pw", true)
+    auth.register_provider("domain", fake_domain_provider(true))
+    t.eq(auth.login("alice", "domain-pw").source, "domain")
+    t.eq(auth.login("home\alice", "domain-pw").source, "domain")
+    t.eq(auth.login(".\admin", "local-pw").source, "local")
+    t.ok(not auth.login("other\alice", "domain-pw"), "unknown domains are refused")
+    t.ok(auth.login_hint():find("Domain: home"))
+  end)
+
+  t.it("local accounts work while the domain is unavailable", function()
+    local auth = t.fresh_import()("auth")
+    auth.add_user("admin", "local-pw", true)
+    auth.register_provider("domain", fake_domain_provider(false))
+    local user = auth.login("admin", "local-pw")
+    t.eq(user.source, "local")
+    t.ok(user.is_admin)
+    t.eq(auth.login_hint(), nil)
+  end)
+
+  t.it("domain admins are administrators on the computer", function()
+    local import = t.fresh_import()
+    local domain = import("domain")
+    t.ok(domain.is_admin({ groups = { "domain-users", "domain-admins" } }))
+    t.ok(not domain.is_admin({ groups = { "domain-users" } }))
+  end)
 end

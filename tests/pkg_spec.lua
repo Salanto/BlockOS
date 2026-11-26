@@ -168,4 +168,25 @@ return function(t)
     t.ok(fs.exists(paths.startup_backup() .. "/startup/10_thing.lua"))
     t.eq(pkg.install_loader("-- BlockOS loader\n"), nil, "reinstalling should not back up")
   end)
+
+  t.it("an exclusive package refuses other optional packages unless forced", function()
+    local import = t.fresh_import()
+    local pkg = import("pkg")
+    pkg.apply({ core_package(import, "0.1.0") })
+    local lib_files = { ["blockos/lib/dc.lua"] = "return {}" }
+    local controller = make_package(import, "controller", "0.1.0", lib_files,
+      { optional = true, exclusive = true, depends = { helper = "*" } })
+    local helper_files = { ["blockos/lib/helper.lua"] = "return {}" }
+    local helper = make_package(import, "helper", "0.1.0", helper_files,
+      { optional = true })
+    local other_files = { ["blockos/lib/other.lua"] = "return {}" }
+    local other = make_package(import, "other", "0.1.0", other_files,
+      { optional = true })
+
+    t.ok(pkg.apply({ helper, controller }), "its own dependencies are allowed")
+    local ok, err = pkg.apply({ other })
+    t.ok(not ok, "another optional package next to it")
+    t.ok(err:find("must run alone"), err)
+    t.ok(pkg.apply({ other }, { force = true }), "--force allows it")
+  end)
 end

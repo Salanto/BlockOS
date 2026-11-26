@@ -38,6 +38,7 @@ printf '%s\n' "$@" > "$computer_dir/harness-args"
 # A second computer for multi-computer tests (started by tests via periphemu).
 mkdir -p "$data_dir/computer/1"
 cp "$repo_dir/tests/fixtures/peer_startup.lua" "$data_dir/computer/1/startup.lua"
+cp -r "$computer_dir/repo" "$data_dir/computer/1/repo"
 printf 'shell.run("/repo/tools/harness.lua")\n' > "$computer_dir/startup.lua"
 
 echo "Running $* on a $computer_type computer..."

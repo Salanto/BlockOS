@@ -69,6 +69,7 @@ for _, name in ipairs(fs.list(fs.combine(repo_dir, "packages"))) do
     version = bundle.manifest.version,
     depends = bundle.manifest.depends,
     optional = bundle.manifest.optional or nil,
+    exclusive = bundle.manifest.exclusive or nil,
     size = #raw,
     sum = pkg.checksum(raw),
   }

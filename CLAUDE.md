@@ -50,22 +50,25 @@ seamlessly by name instead of by raw computer ID:
 - **Computer IDs** (`os.getComputerID()`) are stable per computer and are the underlying address
   that rednet uses; hostnames are BlockOS's layer on top.
 
-## Security and authentication (planned)
+## Security and authentication
 
-BlockOS should add a simple security layer to the OS, loosely modeled on **Active Directory**,
-using **basic auth** (decided: no NTLM-style challenge-response, no message signing). Its
-purpose is to control which programs a computer may pull into its runtime and who can access
-remote control/status panels.
+A simple security layer loosely modelled on **Active Directory**, using **basic auth**
+(decided: no NTLM-style challenge-response, no Kerberos, no message signing). It controls who
+may log in, which packages a computer may pull, and who may use services and control panels.
 
-- **Local accounts:** each computer can have local users stored on its own disk, as a
-  fallback when no central server is reachable.
-- **Central auth server (domain controller):** an optional server that holds domain accounts
-  and their roles. Computers can "join the domain" so one set of credentials works across the
-  network.
-- **Basic auth login:** the client sends username + password to the auth server over rednet;
-  the server checks them and returns a **session token** with an expiry and the user's roles.
-- **Token-based requests:** later requests (program pulls, control-panel actions) carry the
-  token, not the password. Services validate the token and check the role before acting.
+| AD | BlockOS |
+|---|---|
+| Domain / domain controller | `dcpromo` (package `domain-controller`) creates a domain such as `home`; the controller serves protocol `blockos.domain`. It is **exclusive**: no other optional packages on it unless `--force`. |
+| Users and groups | Stored on the controller. Flat groups; built in: `domain-admins`, `domain-users` (everyone), `computer-joiners`, `dns-admins`. |
+| Computer accounts | `domain join` needs a domain admin or computer-joiner login. The computer gets a long-lived **computer token** (on disk on both sides; revoked by removing the account). It authorises status reports, user logins and system-to-system calls (`rpc.require_computer`). |
+| Logging in | The password goes once, in plain text, to the controller, which returns a **session token** (fixed 8-hour lifetime, in the controller's memory only). Services check the token with the controller on **every** request (`rpc.require_user`): no cached logins, so logout and group changes apply at once. |
+| Local accounts | Always available as `.\name`, e.g. when the controller is down. A bare name means a domain user once joined. Domain admins are admins on every joined computer. |
+| AD-integrated DNS | The controller holds host records (`<host>.<domain>`, updated by each computer itself) and service records (e.g. `pkg -> storage`, created by domain-admins or dns-admins). |
+| Users and Computers tool | `dsa` (full-screen) and `domain` (command line). |
+
+Login providers: `auth.register_provider(name, provider)`; core has `local`, the `domain`
+package adds `domain`. Left out on purpose: organisational units, group policy, trusts,
+replication, cached logins.
 
 **Threat model:** the network is used only by our own players; there are no outside
 attackers. Do **not** design against man-in-the-middle, eavesdroppers, or malicious third
@@ -139,7 +142,7 @@ packages/<name>/files/...      files, at the path they are installed to (relativ
 installer/install.lua          online installer (release asset)
 tools/build.lua                builds release assets (runs in CraftOS-PC)
 tools/craftos-run.sh           runs a program in a fresh headless CraftOS-PC computer
-tools/test.sh, tools/test.ps1  run the tests (Linux/CI and Windows)
+tools/test.sh                  run the tests in CraftOS-PC (used by CI)
 tools/build.sh                 builds dist/ for a release
 tests/run.lua, tests/*_spec.lua  test runner and specs (run inside CraftOS-PC)
 ```
@@ -203,7 +206,22 @@ minutes marks the service `failed`. `condition` returning false marks it `n/a`.
 | Protocol           | Message                                                        |
 |--------------------|----------------------------------------------------------------|
 | `blockos`          | rednet's built-in `rednet.host` / `rednet.lookup` hostname records |
-| `blockos.announce` | `{ v = 1, hostname, kind, version, services = {...}, info = {...}, hello = true? }` broadcast at boot and every 30s; a `hello` gets a direct reply |
+| `blockos.announce` | `{ v = 1, hostname, kind, version, services = {...}, info = {...}, hello = true? }` broadcast at boot and every 5 min, **only by computers not in a domain**; a `hello` gets a direct reply |
+| `blockos.domain`   | rpc. join, leave, login, validate, logout, validate_computer, host_update, resolve, list_hosts, service_find/add/del, list_users/groups/computers/services, user_add/del/passwd/enable, group_add/del/addmember/rmmember, computer_remove. The controller also hosts this protocol under the domain name, so `rednet.lookup("blockos.domain", "home")` finds it. |
+| `blockos.pkg`      | rpc. index (filtered by the caller's groups), fetch `{ name }` (raw .pkg), publish `{ raw }` (domain-admins). |
+
+**rpc** (`net/lib/rpc.lua`): request `{ v = 1, id, op, args, token?, computer_token? }`,
+response `{ v = 1, reply_to, ok, result | error }`. Handlers return a result, or `nil, err`.
+Rednet has no request/response, so rpc only adds reply matching, timeouts/retries and a server
+loop that runs each request in its own coroutine.
+
+**Discovery:** joined computers resolve names and services by asking the controller (one
+direct message, answers cached 60s) instead of broadcasting; they still `rednet.host` their
+name, which costs nothing unless queried. `rednet.lookup` is only used to find the controller
+(and when it moved), and by computers without a domain. Reason (per "reuse rednet"): every
+`rednet.lookup` is a broadcast plus a 2-second wait, and rednet has no service records, access
+control or last-seen data. Short hostnames contain no "."; it is reserved for the domain
+suffix.
 
 Every BlockOS message carries `v` (wire version). Receivers validate the shape, ignore unknown
 fields, and drop messages with a newer major version. Peer liveness uses the local receive time.
@@ -212,8 +230,13 @@ fields, and drop messages with a newer major version. Peer liveness uses the loc
 
 - A `.pkg` is `textutils.serialise({ manifest, files = { [path] = content } })`.
   `index.lua` lists `{ version, depends, optional, size, sum }` per package.
-- Sources (`pkg.disk_source`, `pkg.github_source`) share one interface: `describe()`,
-  `index()`, `fetch(name)`. A future package server on the network is one more source.
+- Sources (`pkg.disk_source`, `pkg.github_source`, `pkg_remote.source`) share one interface:
+  `describe()`, `index()`, `fetch(name)`.
+- Package server (`pkg-server`): stores packages in `<drive>/blockos-repo/` across every mounted
+  drive (wired-modem drives included) plus the local disk; `pkgserver allow <name> <group...>`
+  restricts a package. Clients use `--server[=name]`, the domain's `pkg` service record, or the
+  `blockos.pkg.server` setting.
+- Manifest flags: `optional` (not in the base install), `exclusive` (must run alone).
 - Releases: push a tag `vX.Y.Z` (or `vX.Y.Z-rcN` for a prerelease). CI tests, builds
   (`tools/build.sh`) and publishes `index.lua`, `*.pkg`, `install.lua`, `blockos-disk.zip`
   and `blockos-addon-<name>.zip` per optional package. Online installs use
@@ -221,8 +244,8 @@ fields, and drop messages with a newer major version. Peer liveness uses the loc
 
 ## Testing
 
-- Tests run **inside CraftOS-PC** with the real CC APIs: `tools/test.sh [advanced|basic|both]`
-  (Linux/CI) or `tools\test.ps1 -ComputerType advanced|basic` (Windows). CI runs both computer
+- Tests run **inside CraftOS-PC** with the real CC APIs, in CI only (no local test scripts):
+  `tools/test.sh [advanced|basic|both]` on the Linux runner. CI runs both computer
   types on every push. Headless CraftOS-PC always reports a colour terminal, so the runner
   simulates a basic computer with a terminal whose `isColour()` returns false; always detect
   the device type through `device.is_advanced()` so this stays accurate.
@@ -235,10 +258,10 @@ fields, and drop messages with a newer major version. Peer liveness uses the loc
 
 ## Roadmap
 
-- **Next milestone:** domain auth server; package server (stores packages across many disk
-  drives on a wired modem network, which CC mounts as `/disk2`, `/disk3`, ..., and serves them
-  over rednet like an apt mirror); remote control for PCs (status panel) and turtles; all
-  requiring a domain login token.
+- **Done (milestone 2):** rpc layer, domain controller with DNS, package server.
+- **Next milestone:** remote control for PCs (status panel) and turtles, built on rpc and
+  domain logins. Groups may later hold computer accounts too (e.g. "only computers in
+  `factory` may read stock"), when a service needs it.
 - **Later:** uninstall of BlockOS itself, local IPC via custom events, tab completion,
   pocket computer support.
 

@@ -1,0 +1,241 @@
+--- Domain membership and the client side of the domain controller protocol.
+--
+-- The membership is stored in /etc/blockos/domain:
+--   { name, controller_id, computer_token }
+-- The computer token is long-lived: it identifies this computer to the
+-- controller (status reports, logging users in) until the computer account is
+-- removed or the computer leaves the domain.
+-- @module domain
+
+local fsx = import("fsx")
+local paths = import("paths")
+local rpc = import("rpc")
+
+local domain = {}
+
+domain.PROTOCOL = "blockos.domain"
+domain.ADMINS = "domain-admins"
+
+local function membership_path()
+  return paths.top("etc/blockos/domain")
+end
+
+--- @treturn table|nil { name, controller_id, computer_token } when joined.
+function domain.membership()
+  return fsx.read_table(membership_path())
+end
+
+--- @treturn boolean
+function domain.is_joined()
+  return domain.membership() ~= nil
+end
+
+--- @treturn string|nil The domain name.
+function domain.name()
+  local membership = domain.membership()
+  return membership and membership.name
+end
+
+local function save_membership(membership)
+  fsx.write_table(membership_path(), membership)
+end
+
+rpc.set_computer_token_provider(function()
+  local membership = domain.membership()
+  return membership and membership.computer_token
+end)
+
+-- Call the controller. If it stops answering (for example it was moved and now
+-- has another computer ID), look it up again by domain name once.
+local function call(op, args, options)
+  local membership = domain.membership()
+  if not membership then
+    return nil, "this computer is not in a domain"
+  end
+  local result, err = rpc.call(membership.controller_id, domain.PROTOCOL, op, args, options)
+  if result or not tostring(err):find("no answer") then
+    return result, err
+  end
+
+  local found = rpc.find(domain.PROTOCOL, membership.name)
+  if not found or found == membership.controller_id then
+    return nil, "the domain controller for " .. membership.name .. " is unreachable"
+  end
+  membership.controller_id = found
+  save_membership(membership)
+  return rpc.call(found, domain.PROTOCOL, op, args, options)
+end
+
+--- Call any controller operation (used by the domain and dsa tools).
+-- @tparam string op
+-- @param[opt] args
+-- @treturn[1] The result.
+-- @treturn[2] nil
+-- @treturn[2] string error message
+function domain.call(op, args)
+  return call(op, args)
+end
+
+--- Join a domain. Needs a member of domain-admins or computer-joiners.
+-- @tparam string domain_name
+-- @tparam string hostname This computer's hostname.
+-- @tparam string admin_name
+-- @tparam string admin_password
+-- @treturn[1] true
+-- @treturn[2] nil
+-- @treturn[2] string error message
+function domain.join(domain_name, hostname, admin_name, admin_password)
+  if domain.is_joined() then
+    return nil, "already in domain " .. domain.name() .. "; leave it first"
+  end
+  local controller_id = rpc.find(domain.PROTOCOL, domain_name)
+  if not controller_id then
+    return nil, "no domain controller for " .. domain_name .. " answered"
+  end
+  local result, err = rpc.call(controller_id, domain.PROTOCOL, "join", {
+    hostname = hostname,
+    admin_name = admin_name,
+    admin_password = admin_password,
+  })
+  if not result then
+    return nil, err
+  end
+  save_membership({
+    name = domain_name,
+    controller_id = controller_id,
+    computer_token = result.computer_token,
+  })
+  return true
+end
+
+--- Write the membership directly (used by dcpromo on the controller itself).
+-- @tparam table membership { name, controller_id, computer_token }
+function domain.set_membership(membership)
+  save_membership(membership)
+end
+
+--- Leave the domain. Needs the same rights as joining.
+-- @tparam string admin_name
+-- @tparam string admin_password
+-- @tparam[opt] boolean force Leave locally even if the controller is unreachable.
+function domain.leave(admin_name, admin_password, force)
+  local result, err = call("leave", { admin_name = admin_name, admin_password = admin_password })
+  if not result and not force then
+    return nil, err
+  end
+  fsx.delete(membership_path())
+  return true
+end
+
+--- Log a domain user in through the controller.
+-- @treturn[1] table { token, name, groups, expires }
+-- @treturn[2] nil
+-- @treturn[2] string error message
+function domain.login(name, password)
+  return call("login", { name = name, password = password })
+end
+
+--- Who is behind a user token? Asks the controller every time (no cache).
+-- @tparam string token
+-- @treturn table|nil { name, groups }
+function domain.validate(token)
+  return call("validate", { token = token })
+end
+
+--- Which domain computer does a computer token belong to?
+-- @tparam string computer_token
+-- @treturn table|nil { hostname }
+function domain.validate_computer(computer_token)
+  return call("validate_computer", { computer_token = computer_token })
+end
+
+--- End a user session at the controller.
+function domain.logout(token)
+  return call("logout", { token = token })
+end
+
+--- Report this computer's status (host record heartbeat).
+-- @tparam table report { hostname, info, kind, version }
+function domain.report(report)
+  report.id = os.getComputerID()
+  return call("host_update", report)
+end
+
+--- @tparam string hostname Short hostname.
+-- @treturn number|nil Computer ID.
+function domain.resolve(hostname)
+  local result = call("resolve", { hostname = hostname })
+  if type(result) == "table" then
+    return result.id
+  end
+  return nil
+end
+
+--- @tparam string service_type e.g. "pkg"
+-- @treturn table|nil { host, id, protocol }
+function domain.find_service(service_type)
+  local result = call("service_find", { type = service_type })
+  if type(result) == "table" and result.id then
+    return result
+  end
+  return nil
+end
+
+--- @treturn {table...}|nil Host records { hostname, id, kind, version, info, age }.
+function domain.list_hosts()
+  return call("list_hosts")
+end
+
+--- @tparam table user A user record.
+-- @treturn boolean True if the user is a domain admin.
+function domain.is_admin(user)
+  for _, group in ipairs(user.groups or {}) do
+    if group == domain.ADMINS then
+      return true
+    end
+  end
+  return false
+end
+
+--- The login provider for the session (see auth.register_provider).
+-- @treturn table
+function domain.login_provider()
+  return {
+    describe = function() return "Domain: " .. tostring(domain.name()) end,
+    is_available = domain.is_joined,
+    name = domain.name,
+    login = function(name, password)
+      local session, err = domain.login(name, password)
+      if not session then
+        if tostring(err):find("unreachable") then
+          return nil, "Domain controller unreachable; use .\\name for local accounts."
+        end
+        return nil, err
+      end
+      local user = {
+        name = session.name,
+        source = "domain",
+        domain = domain.name(),
+        groups = session.groups,
+        token = session.token,
+      }
+      user.is_admin = domain.is_admin(user)
+      return user
+    end,
+    logout = function(user)
+      domain.logout(user.token)
+    end,
+  }
+end
+
+--- The directory for net (name lookups and the host list).
+-- @treturn table
+function domain.net_directory()
+  return {
+    name = domain.name,
+    resolve = domain.resolve,
+    list_hosts = domain.list_hosts,
+  }
+end
+
+return domain
