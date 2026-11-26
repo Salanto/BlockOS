@@ -1,0 +1,31 @@
+name: CI
+
+on:
+  push:
+  pull_request:
+  workflow_call:
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: lunarmodules/luacheck@v1
+
+  test:
+    # The CraftOS-PC PPA lists Ubuntu releases up to 23.04; 22.04 is the newest
+    # GitHub runner it supports.
+    runs-on: ubuntu-22.04
+    strategy:
+      fail-fast: false
+      matrix:
+        computer: [advanced, basic]
+    steps:
+      - uses: actions/checkout@v5
+      - name: Install CraftOS-PC
+        run: |
+          sudo add-apt-repository -y ppa:jackmacwindows/ppa
+          sudo apt-get update
+          sudo apt-get install -y craftos-pc
+      - name: Run tests on a ${{ matrix.computer }} computer
+        run: tools/test.sh ${{ matrix.computer }}
