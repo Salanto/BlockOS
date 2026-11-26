@@ -5,7 +5,6 @@
 --   pkg install <name...> [source] [--force]
 --   pkg remove <name...>
 --   pkg update [source] [--check] [-y]  upgrade BlockOS and installed packages
---   pkg make-disk [name...] [source]    write an add-on disk (no names: install disk)
 --   pkg publish <file.pkg> [--server[=name]]   upload to a package server
 --
 -- Sources: a package server when one is found (the blockos.pkg.server setting,
@@ -25,7 +24,6 @@ local function print_usage()
   print("       pkg install <name...> [source] [--force]")
   print("       pkg remove <name...>")
   print("       pkg update [source] [--check] [-y]")
-  print("       pkg make-disk [name...] [source]")
   print("       pkg publish <file.pkg> [--server[=name]]")
   print("Source: --server[=name] | --github | --tag <tag> | --disk")
   print("        (default: a package server if found, else GitHub)")
@@ -63,12 +61,12 @@ local function parse_args()
   return options
 end
 
--- Mount path of a disk in an attached drive; with `needs_index`, only a package disk.
-local function find_disk(needs_index)
+-- Mount path of a package disk (one with index.lua) in an attached drive.
+local function find_package_disk()
   for _, side in ipairs(peripheral.getNames()) do
     if peripheral.getType(side) == "drive" and disk.hasData(side) then
       local mount = "/" .. disk.getMountPath(side)
-      if not needs_index or fs.exists(fs.combine(mount, "index.lua")) then
+      if fs.exists(fs.combine(mount, "index.lua")) then
         return mount
       end
     end
@@ -103,7 +101,7 @@ end
 
 local function choose_source(options)
   if options.from_disk then
-    local dir = find_disk(true)
+    local dir = find_package_disk()
     if not dir then
       return nil, "no package disk found in an attached drive"
     end
@@ -218,29 +216,6 @@ local function remove(names)
   apply_and_reboot({}, { remove = names })
 end
 
-local function make_disk(source, names)
-  local dir = find_disk(false)
-  if not dir then
-    ui.print("Insert a floppy disk into an attached disk drive.", "error")
-    return
-  end
-  local index, packages = pkg.fetch(source, show_progress, names)
-  if not index then
-    ui.print(packages, "error")
-    return
-  end
-  local ok, err = pkg.write_media(dir, index, packages)
-  if not ok then
-    ui.print(err, "error")
-    return
-  end
-  if names then
-    ui.print("Wrote " .. table.concat(names, ", ") .. " to " .. dir, "ok")
-  else
-    ui.print("Wrote the BlockOS " .. tostring(index.version) .. " installer to " .. dir, "ok")
-  end
-end
-
 ------------------------------------------------------------------------------
 -- pkg update (was the separate `update` command)
 ------------------------------------------------------------------------------
@@ -317,7 +292,6 @@ local options = parse_args()
 local command = options.command
 local needs_names = command == "install" or command == "remove" or command == "publish"
 local is_known = needs_names or command == "list" or command == "update"
-  or command == "make-disk"
 
 if command == "installed" then
   show_installed()
@@ -345,7 +319,7 @@ if not source then
   ui.print(source_error, "error")
   return
 end
-if command == "install" or command == "make-disk" then
+if command == "install" then
   -- The source is picked automatically, so say which one it is.
   ui.print("Using " .. source.describe(), "dim")
 end
@@ -353,8 +327,6 @@ if command == "list" then
   show_available(source)
 elseif command == "install" then
   install(source, options.names, options.force)
-elseif command == "update" then
-  update(source, options)
 else
-  make_disk(source, #options.names > 0 and options.names or nil)
+  update(source, options)
 end

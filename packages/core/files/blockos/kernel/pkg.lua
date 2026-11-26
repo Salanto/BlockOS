@@ -26,8 +26,6 @@ pkg.RELEASES_URL = "https://github.com/Salanto/BlockOS/releases"
 
 local SPACE_MARGIN_BYTES = 4096
 local CHECKSUM_CHUNK = 4096
-local DISK_INSTALLER = "blockos/installer/disk.lua"
-local DECOMPRESSOR = "blockos/kernel/lz.lua"
 
 ------------------------------------------------------------------------------
 -- Versions
@@ -741,56 +739,6 @@ function pkg.install_loader(loader_source)
     return nil
   end
   return "Note: " .. table.concat(notes, "; ") .. "."
-end
-
---- Write a package disk: index.lua and packages/ for the given packages.
---
--- If the packages include core, the disk installer is written as startup.lua
--- (with lz.lua next to it), which makes it a bootable install disk. Otherwise
--- it is an add-on disk for `pkg install --disk`; it has no startup, so it never
--- takes over booting.
--- @tparam string dir Mount path of the disk.
--- @tparam table index The source index (entries are copied for these packages).
--- @tparam {table...} packages As returned by pkg.fetch (with `raw`).
--- @treturn[1] true
--- @treturn[2] nil
--- @treturn[2] string error message
-function pkg.write_media(dir, index, packages)
-  local installer, decompressor = nil, nil
-  local disk_index = { version = index.version, packages = {} }
-  for _, bundle in ipairs(packages) do
-    local name = bundle.manifest.name
-    disk_index.packages[name] = index.packages[name]
-    if name == "core" then
-      installer = bundle.files[DISK_INSTALLER]
-      decompressor = bundle.files[DECOMPRESSOR]
-    end
-  end
-
-  local index_text = textutils.serialise(disk_index)
-  local needed = #index_text + (installer and #installer + #decompressor or 0)
-  for _, bundle in ipairs(packages) do
-    needed = needed + #bundle.raw
-  end
-  local packages_dir = fs.combine(dir, "packages")
-  local free = fs.getFreeSpace(dir) + fsx.tree_size(packages_dir)
-  if needed > free then
-    return nil, string.format("the disk is too small (need %d bytes, %d free)", needed, free)
-  end
-
-  if fs.exists(packages_dir) then
-    fs.delete(packages_dir)
-  end
-  for _, bundle in ipairs(packages) do
-    fsx.write_raw(fs.combine(packages_dir, bundle.manifest.name .. ".pkg"), bundle.raw)
-  end
-  fsx.write(fs.combine(dir, "index.lua"), index_text)
-  if installer then
-    fsx.write(fs.combine(dir, "startup.lua"), installer)
-    -- The installer needs the decompressor before it can open core.pkg.
-    fsx.write(fs.combine(dir, "lz.lua"), decompressor)
-  end
-  return true
 end
 
 return pkg

@@ -36,7 +36,6 @@ Either way, the first boot asks you to create an administrator account.
 | `hostname [name]` | Show or change this device's network name |
 | `pkg list` / `pkg install <name>` / `pkg remove <name>` | Manage optional packages |
 | `pkg update` | Upgrade BlockOS and installed packages (`--check`, `-y`; `update` is a short alias) |
-| `pkg make-disk` | Write an install disk (with names: an add-on disk) |
 | `useradd`, `userdel`, `passwd` | Manage local accounts |
 | `logout` | Log out (closes all tabs) |
 | `msg <host> <text>` / `msg * <text>` / `msg` | Chat with other computers; `msg` shows your messages |
@@ -47,8 +46,7 @@ Either way, the first boot asks you to create an administrator account.
 
 The base install only contains what a device needs to join the network. Extra software comes
 as optional packages, installed from a release (`pkg install <name>`) or from an add-on disk
-(`pkg install <name> --disk`). `pkg make-disk <name>` writes an add-on disk for other
-computers.
+(`pkg install <name> --disk`).
 
 ## A domain (one login for all computers)
 
@@ -104,8 +102,8 @@ works without a domain too.
 
 If BlockOS keeps failing to start, it rolls back to the previous version by itself. You can
 also put the install disk in and reboot: the menu offers **Boot**, **Upgrade/Reinstall**,
-**Safe mode** (a plain CraftOS shell) and **Roll back**. `pkg make-disk` writes an install
-disk from a running BlockOS computer.
+**Safe mode** (a plain CraftOS shell) and **Roll back**. Every release has the install disk as
+`blockos-disk.zip`.
 
 ## Development
 
