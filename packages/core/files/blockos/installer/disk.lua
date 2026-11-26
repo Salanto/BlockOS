@@ -69,7 +69,7 @@ local disk_dir = options.dir or ("/" .. fs.getDir(shell.getRunningProgram()))
 -- Packages are compressed; lz.lua sits next to this installer on the disk.
 local lz_chunk = loadfile(fs.combine(disk_dir, "lz.lua"), nil, _ENV)
 if not lz_chunk then
-  printError("This disk is missing lz.lua; write it again with 'update --make-disk'.")
+  printError("This disk is missing lz.lua; copy blockos-disk.zip from the release onto it again.")
   return
 end
 local lz = lz_chunk()

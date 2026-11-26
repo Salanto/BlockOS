@@ -4,13 +4,13 @@
 --   pkg list [source]                   list packages available from a source
 --   pkg install <name...> [source] [--force]
 --   pkg remove <name...>
---   pkg make-disk <name...> [source]    write an add-on disk
+--   pkg update [source] [--check] [-y]  upgrade BlockOS and installed packages
 --   pkg publish <file.pkg> [--server[=name]]   upload to a package server
 --
--- Sources: the latest GitHub release by default; --tag <tag> for a specific
--- release; --disk for a package disk in an attached drive; --server[=name] for
--- a package server (without a name: the domain's "pkg" service record). When the
--- blockos.pkg.server setting is set, that server is the default.
+-- Sources: a package server when one is found (the blockos.pkg.server setting,
+-- the domain's "pkg" service record, or one answering on the network), else
+-- the latest GitHub release. --server[=name], --github, --tag <tag> (a GitHub
+-- release) and --disk (a package disk in an attached drive) pick one.
 --
 -- --force allows packages next to an exclusive one (e.g. the domain controller).
 local args = { ... }
@@ -20,11 +20,13 @@ local pkg = blockos.pkg
 
 local function print_usage()
   print("Usage: pkg installed")
-  print("       pkg list [--disk | --tag <tag> | --server[=name]]")
+  print("       pkg list [source]")
   print("       pkg install <name...> [source] [--force]")
   print("       pkg remove <name...>")
-  print("       pkg make-disk <name...> [source]")
+  print("       pkg update [source] [--check] [-y]")
   print("       pkg publish <file.pkg> [--server[=name]]")
+  print("Source: --server[=name] | --github | --tag <tag> | --disk")
+  print("        (default: a package server if found, else GitHub)")
 end
 
 local function parse_args()
@@ -40,6 +42,12 @@ local function parse_args()
       options.from_disk = true
     elseif flag == "--force" then
       options.force = true
+    elseif flag == "--github" then
+      options.from_github = true
+    elseif flag == "--check" then
+      options.check_only = true
+    elseif flag == "-y" or flag == "--yes" then
+      options.assume_yes = true
     elseif flag == "--server" then
       options.from_server = true
     elseif flag:match("^%-%-server=") then
@@ -53,12 +61,12 @@ local function parse_args()
   return options
 end
 
--- Mount path of a disk in an attached drive; with `needs_index`, only a package disk.
-local function find_disk(needs_index)
+-- Mount path of a package disk (one with index.lua) in an attached drive.
+local function find_package_disk()
   for _, side in ipairs(peripheral.getNames()) do
     if peripheral.getType(side) == "drive" and disk.hasData(side) then
       local mount = "/" .. disk.getMountPath(side)
-      if not needs_index or fs.exists(fs.combine(mount, "index.lua")) then
+      if fs.exists(fs.combine(mount, "index.lua")) then
         return mount
       end
     end
@@ -93,19 +101,24 @@ end
 
 local function choose_source(options)
   if options.from_disk then
-    local dir = find_disk(true)
+    local dir = find_package_disk()
     if not dir then
       return nil, "no package disk found in an attached drive"
     end
     return pkg.disk_source(dir)
   end
-  local default_server = blockos.config.get("blockos.pkg.server")
-  local has_default_server = default_server ~= nil and default_server ~= ""
-  local use_server = options.from_server or (not options.tag and has_default_server)
-  if use_server then
+  if options.from_server then
     return server_source(options.server_name)
   end
-  return pkg.github_source(options.tag)
+  if options.tag or options.from_github then
+    return pkg.github_source(options.tag)
+  end
+  -- Nothing chosen: a package server if one can be found, else GitHub.
+  local source = server_source(nil)
+  if source then
+    return source
+  end
+  return pkg.github_source()
 end
 
 local function apply_and_reboot(packages, apply_options)
@@ -203,23 +216,49 @@ local function remove(names)
   apply_and_reboot({}, { remove = names })
 end
 
-local function make_disk(source, names)
-  local dir = find_disk(false)
-  if not dir then
-    ui.print("Insert a floppy disk into an attached disk drive.", "error")
-    return
+------------------------------------------------------------------------------
+-- pkg update (was the separate `update` command)
+------------------------------------------------------------------------------
+
+local function confirm(question, default_yes)
+  write(question .. (default_yes and " [Y/n] " or " [y/N] "))
+  local answer = read():lower()
+  if answer == "" then
+    return default_yes
   end
-  local index, packages = pkg.fetch(source, show_progress, names)
+  return answer == "y"
+end
+
+local function update(source, options)
+  ui.print("Checking " .. source.describe() .. "...", "dim")
+  local index, err = source.index()
   if not index then
-    ui.print(packages, "error")
-    return
-  end
-  local ok, err = pkg.write_media(dir, index, packages)
-  if not ok then
     ui.print(err, "error")
     return
   end
-  ui.print("Wrote " .. table.concat(names, ", ") .. " to " .. dir, "ok")
+  local available = tostring(index.version)
+  print("Installed: " .. blockos.version .. "   Available: " .. available)
+  if options.check_only then
+    return
+  end
+  if not options.assume_yes then
+    local order = pkg.compare_versions(available, blockos.version)
+    local question = "Upgrade now?"
+    if order == 0 then
+      question = "Already up to date. Reinstall?"
+    elseif order < 0 then
+      question = "That version is older. Downgrade?"
+    end
+    if not confirm(question, order > 0) then
+      return
+    end
+  end
+  local fetched, packages = pkg.fetch(source, show_progress)
+  if not fetched then
+    ui.print(packages, "error")
+    return
+  end
+  apply_and_reboot(packages, {})
 end
 
 local function publish(options)
@@ -251,18 +290,19 @@ end
 
 local options = parse_args()
 local command = options.command
-local needs_names = command == "install" or command == "remove"
-  or command == "make-disk" or command == "publish"
+local needs_names = command == "install" or command == "remove" or command == "publish"
+local is_known = needs_names or command == "list" or command == "update"
 
 if command == "installed" then
   show_installed()
   return
 end
-if not (command == "list" or needs_names) or (needs_names and #options.names == 0) then
+if not is_known or (needs_names and #options.names == 0) then
   print_usage()
   return
 end
-if command ~= "list" and not is_admin() then
+local is_read_only = command == "list" or (command == "update" and options.check_only)
+if not is_read_only and not is_admin() then
   return
 end
 if command == "remove" then
@@ -279,10 +319,14 @@ if not source then
   ui.print(source_error, "error")
   return
 end
+if command == "install" then
+  -- The source is picked automatically, so say which one it is.
+  ui.print("Using " .. source.describe(), "dim")
+end
 if command == "list" then
   show_available(source)
 elseif command == "install" then
   install(source, options.names, options.force)
 else
-  make_disk(source, options.names)
+  update(source, options)
 end

@@ -11,6 +11,12 @@ local function run(ctx)
   end
   ctx.log.info("serving %d packages from %d drives", count, #repo.roots())
 
+  -- Findable without a domain too: `pkg` looks the protocol up with rednet
+  -- when nothing else is configured.
+  if rednet.isOpen() and blockos.net and blockos.net.hostname() then
+    pcall(rednet.host, "blockos.pkg", blockos.net.hostname())
+  end
+
   -- Make this server findable as the domain's "pkg" service.
   local found, domain = pcall(import, "domain")
   if found and domain.is_joined() then
