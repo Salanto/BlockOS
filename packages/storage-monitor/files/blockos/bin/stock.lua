@@ -52,6 +52,13 @@ local function fail(message)
   ui.print(tostring(message), "error")
 end
 
+-- The two usual reasons a stock computer sees no storage at all.
+local NO_STORAGE_SHORT = "No storage found: right-click each wired modem"
+local function print_no_storage_hint()
+  ui.print("No storage found. Right-click each wired modem so it turns red,", "warn")
+  ui.print("and put it on the storage's interface block (multiblocks).", "warn")
+end
+
 local function connect(options)
   local connection, err = stock_client.connect(options.server, { interactive = true })
   if not connection then
@@ -119,6 +126,9 @@ local function setup(options)
     item_count = item_count + 1
   end
   ui.field("Storage", blocks .. " blocks, " .. item_count .. " different items", nil, 9)
+  if blocks == 0 then
+    print_no_storage_hint()
+  end
 
   if item_count > 0 and ask_yes("Watch all " .. item_count .. " items now in storage?", true) then
     local typed_percent = ui.prompt("Limit as % of the current count: ", { default = "50" })
@@ -150,6 +160,9 @@ local function show_status(connection)
     { title = "LIMIT", key = "limit" },
     { title = "STATE", key = function(row) return row.is_low and "LOW" or "ok" end },
   }, data.rows, function(row) return row.is_low and "error" or "text" end)
+  if data.sources == 0 then
+    print_no_storage_hint()
+  end
 end
 
 local function describe_alert(alert)
@@ -375,6 +388,9 @@ local function run_tool(connection)
     title = "Overview",
     load = function()
       local data, err = connection.call("status")
+      if data and data.sources == 0 then
+        set_message(NO_STORAGE_SHORT, "warn")
+      end
       return data and data.rows, err
     end,
     describe = function(row)

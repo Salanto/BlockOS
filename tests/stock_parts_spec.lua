@@ -37,9 +37,12 @@ return function(t)
       broken = broken,
       chest = t.fake_chest({ [1] = { name = "x", count = 3, label = "X" } }),
     })
-    local totals, blocks = import("stock_sources").read_all({ inventory })
+    local totals, blocks, failures = import("stock_sources").read_all({ inventory })
     t.eq(blocks, 1)
     t.eq(totals.x.count, 3)
+    t.eq(#failures, 1, "the broken chest is reported for the log")
+    t.eq(failures[1].handle, "broken")
+    t.ok(failures[1].error:find("block removed"), failures[1].error)
   end)
 
   t.it("every file in storage_sources is found as a source", function()
