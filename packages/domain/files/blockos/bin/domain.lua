@@ -169,8 +169,8 @@ local function dns_command(action, service_type, host, protocol)
       return fail(err)
     end
     print_list(services, function(service)
-      local protocol = tostring(service.protocol or "")
-      return string.format("%-14s -> %-16s %s", service.type, service.host, protocol)
+      local shown_protocol = tostring(service.protocol or "")
+      return string.format("%-14s -> %-16s %s", service.type, service.host, shown_protocol)
     end)
   elseif action == "add" and host then
     local record = { type = service_type, host = host, protocol = protocol }
