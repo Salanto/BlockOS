@@ -1,7 +1,7 @@
 -- dsa: Directory Service Admin, a full-screen tool for the domain (after AD's
 -- "Users and Computers"). Keyboard first; mouse clicks work on advanced devices.
 --
---   1-4 / Tab   switch tab        Up/Down/PgUp/PgDn   move
+--   1-5 / Tab   switch tab        Up/Down/PgUp/PgDn   move
 --   r           refresh           q                   quit
 --   Tab actions are shown on the bottom row.
 -- Everyone in the domain can look; changes need a domain admin, or for a module's roles
@@ -40,9 +40,20 @@ local tabs = {
     load = "list_computers",
     describe = function(host)
       local seen = domain.describe_seen(host)
-      return string.format("%-16s #%-5s %-8s %s", host.hostname, tostring(host.id), host.kind, seen)
+      local has_roles = #(host.roles or {}) > 0
+      local roles = has_roles and ("  [" .. table.concat(host.roles, ",") .. "]") or ""
+      return string.format("%-16s %-8s %s%s", host.hostname, host.kind, seen, roles)
     end,
-    hints = { { "d", "Remove" } },
+    hints = { { "o", "Roles" }, { "d", "Remove" } },
+  },
+  {
+    title = "Roles",
+    load = "list_computer_roles",
+    describe = function(role)
+      local used = #role.computers > 0 and (" (" .. #role.computers .. " pc)") or ""
+      return string.format("%-16s %s%s", role.name, table.concat(role.packages, ","), used)
+    end,
+    hints = { { "a", "Add" }, { "p", "Packages" }, { "s", "Setting" }, { "d", "Delete" } },
   },
   {
     title = "DNS",
@@ -204,7 +215,29 @@ actions[2] = {
   end,
 }
 
+local function split_words(text)
+  local words = {}
+  for word in tostring(text or ""):gmatch("[^,%s]+") do
+    words[#words + 1] = word
+  end
+  return words
+end
+
 actions[3] = {
+  -- Give a computer its computer roles; it installs and sets what they say by itself.
+  o = function(host)
+    if not host then
+      return
+    end
+    local current = table.concat(host.roles or {}, " ")
+    local answers = ui.form("Computer roles of " .. host.hostname,
+      { { label = "Roles (" .. (current ~= "" and current or "none") .. "): " } })
+    if answers then
+      local roles = answers[1] == "-" and {} or split_words(answers[1])
+      run("computer_assign", { hostname = host.hostname, roles = roles },
+        host.hostname .. " will apply its roles within 30 minutes (or update it now).")
+    end
+  end,
   d = function(host)
     if host and ui.confirm("Remove computer " .. host.hostname .. " from the domain?") then
       run("computer_remove", { hostname = host.hostname }, host.hostname .. " removed.")
@@ -212,7 +245,63 @@ actions[3] = {
   end,
 }
 
+-- Computer roles: what computers with the role should have installed and set.
 actions[4] = {
+  a = function()
+    local answers = ui.form("Add computer role", {
+      { label = "Name: " },
+      { label = "Packages: " },
+    })
+    if answers then
+      run("computer_role_set", { name = answers[1], packages = split_words(answers[2]) },
+        "Computer role " .. answers[1] .. " added.")
+    end
+  end,
+  p = function(role)
+    if not role then
+      return
+    end
+    local answers = ui.form("Packages of " .. role.name,
+      { { label = "Packages (" .. table.concat(role.packages, " ") .. "): " } })
+    if answers then
+      run("computer_role_set", { name = role.name, packages = split_words(answers[1]),
+        settings = role.settings }, "Packages changed.")
+    end
+  end,
+  s = function(role)
+    if not role then
+      return
+    end
+    local answers = ui.form("Setting for " .. role.name, {
+      { label = "Key (blockos.*): " },
+      { label = "Value (empty removes): " },
+    })
+    if answers then
+      local settings = {}
+      for key, value in pairs(role.settings or {}) do
+        settings[key] = value
+      end
+      local value = answers[2]
+      if value == "" then
+        value = nil
+      elseif value == "true" or value == "false" then
+        value = value == "true"
+      elseif tonumber(value) then
+        value = tonumber(value)
+      end
+      settings[answers[1]] = value
+      run("computer_role_set", { name = role.name, packages = role.packages, settings = settings },
+        "Setting changed.")
+    end
+  end,
+  d = function(role)
+    if role and ui.confirm("Delete computer role " .. role.name .. "?") then
+      run("computer_role_del", { name = role.name }, "Computer role " .. role.name .. " deleted.")
+    end
+  end,
+}
+
+actions[5] = {
   a = function()
     local answers = ui.form("Add service record", {
       { label = "Service type (e.g. pkg): " },

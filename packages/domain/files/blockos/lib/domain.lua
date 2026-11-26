@@ -109,6 +109,15 @@ function domain.call_as(token, op, args)
   return call(op, args, { token = token })
 end
 
+--- What this computer should have installed and set (its computer roles merged). Uses the
+-- computer's own token, so services can ask; never asks for a password.
+-- @treturn[1] table { roles, packages, settings }
+-- @treturn[2] nil
+-- @treturn[2] string error message
+function domain.computer_config()
+  return call("computer_config")
+end
+
 --- What modules need to know about a role: whether it exists and if it is open to
 -- everyone. Works with the computer's own token, so services can ask too.
 -- @tparam string name

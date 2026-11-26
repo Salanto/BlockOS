@@ -10,7 +10,9 @@
 --   groups    [name] = { members = { [user] = true }, everyone?, managed_by? }
 --             (everyone: every domain user is a member; managed_by: a group whose
 --             members may manage this one; module roles use both, see roles.lua)
---   computers [hostname] = { id, token, last_seen_day }
+--   computers [hostname] = { id, token, last_seen_day, roles? = { computer role names } }
+--   computer_roles [name] = { packages = { names }, settings = { [blockos.* key] = value } }
+--             (what a computer should have installed and set; computers apply it themselves)
 --   services  [type] = { host, protocol }
 -- User sessions are saved separately (/etc/blockos/sessions), so logins survive
 -- a controller restart; their times are real seconds (os.epoch). What computers
@@ -34,6 +36,10 @@ directory.SESSION_SECONDS = 24 * 60 * 60
 
 --- Largest status report (serialised info) a computer may send.
 directory.MAX_INFO_BYTES = 1024
+
+--- Largest computer role (serialised), and how many roles a computer may have.
+directory.MAX_ROLE_BYTES = 1024
+directory.MAX_ROLES_PER_COMPUTER = 8
 
 --- Computers not seen for this many days are marked stale (never deleted
 -- automatically: a turtle may be away for a long time).
@@ -84,6 +90,7 @@ function directory.load(data, sessions)
   data.groups = data.groups or {}
   data.computers = data.computers or {}
   data.services = data.services or {}
+  data.computer_roles = data.computer_roles or {}
   for _, group in ipairs(directory.BUILTIN_GROUPS) do
     data.groups[group] = data.groups[group] or { members = {} }
   end
@@ -526,10 +533,152 @@ function Directory:list_hosts(now, today)
       age = status.last_seen and (now - status.last_seen) or nil,
       days_unseen = days_unseen,
       is_stale = days_unseen ~= nil and days_unseen >= directory.STALE_DAYS,
+      roles = computer.roles or {},
     }
   end
   table.sort(hosts, function(a, b) return a.hostname < b.hostname end)
   return hosts
+end
+
+------------------------------------------------------------------------------
+-- Computer roles: what computers should have installed and set
+------------------------------------------------------------------------------
+
+local function check_role(role)
+  if type(role.packages) ~= "table" then
+    return nil, "a computer role needs a package list"
+  end
+  for _, name in ipairs(role.packages) do
+    if not is_valid_name(name) then
+      return nil, "invalid package name: " .. tostring(name)
+    end
+  end
+  for key, value in pairs(role.settings or {}) do
+    if type(key) ~= "string" or not key:match("^blockos%.") then
+      return nil, "settings must be blockos.* keys: " .. tostring(key)
+    end
+    local kind = type(value)
+    if kind ~= "string" and kind ~= "number" and kind ~= "boolean" then
+      return nil, "setting " .. key .. " must be text, a number or true/false"
+    end
+  end
+  if #textutils.serialise(role, { compact = true }) > directory.MAX_ROLE_BYTES then
+    return nil, "computer role too large (at most " .. directory.MAX_ROLE_BYTES .. " bytes)"
+  end
+  return true
+end
+
+--- Create or replace a computer role.
+-- @tparam string name e.g. "logistics-node"
+-- @tparam {string...} packages Packages computers with this role should have.
+-- @tparam[opt] table settings [blockos.* key] = value, applied on those computers.
+-- @treturn[1] true
+-- @treturn[2] nil
+-- @treturn[2] string error message
+function Directory:set_computer_role(name, packages, settings)
+  if not is_valid_name(name) then
+    return nil, "invalid computer role name"
+  end
+  local role = { packages = packages, settings = settings or {} }
+  local ok, err = check_role(role)
+  if not ok then
+    return nil, err
+  end
+  table.sort(role.packages)
+  self.data.computer_roles[name] = role
+  return true
+end
+
+--- Remove a computer role (and take it off every computer).
+function Directory:remove_computer_role(name)
+  if not self.data.computer_roles[name] then
+    return nil, "no such computer role"
+  end
+  self.data.computer_roles[name] = nil
+  for _, computer in pairs(self.data.computers) do
+    if computer.roles then
+      local kept = {}
+      for _, role in ipairs(computer.roles) do
+        if role ~= name then
+          kept[#kept + 1] = role
+        end
+      end
+      computer.roles = #kept > 0 and kept or nil
+    end
+  end
+  return true
+end
+
+--- Give a computer its computer roles (replaces the old list; empty clears it).
+-- @tparam string hostname
+-- @tparam {string...} roles
+function Directory:assign_computer_roles(hostname, roles)
+  local computer = self.data.computers[hostname]
+  if not computer then
+    return nil, "no such computer"
+  end
+  if #roles > directory.MAX_ROLES_PER_COMPUTER then
+    return nil, "at most " .. directory.MAX_ROLES_PER_COMPUTER .. " computer roles per computer"
+  end
+  for _, role in ipairs(roles) do
+    if not self.data.computer_roles[role] then
+      return nil, "no such computer role: " .. tostring(role)
+    end
+  end
+  computer.roles = #roles > 0 and roles or nil
+  return true
+end
+
+--- @treturn {table...} { name, packages, settings, computers = { hostnames } } sorted by name.
+function Directory:list_computer_roles()
+  local list = {}
+  for name, role in pairs(self.data.computer_roles) do
+    local computers = {}
+    for hostname, computer in pairs(self.data.computers) do
+      for _, assigned in ipairs(computer.roles or {}) do
+        if assigned == name then
+          computers[#computers + 1] = hostname
+        end
+      end
+    end
+    table.sort(computers)
+    list[#list + 1] = {
+      name = name,
+      packages = role.packages,
+      settings = role.settings,
+      computers = computers,
+    }
+  end
+  table.sort(list, function(a, b) return a.name < b.name end)
+  return list
+end
+
+--- What one computer should have: its roles merged (packages joined, later roles'
+-- settings win).
+-- @tparam string hostname
+-- @treturn table|nil { roles, packages, settings }
+function Directory:computer_config(hostname)
+  local computer = self.data.computers[hostname]
+  if not computer then
+    return nil
+  end
+  local packages, seen, settings = {}, {}, {}
+  for _, name in ipairs(computer.roles or {}) do
+    local role = self.data.computer_roles[name]
+    if role then
+      for _, package in ipairs(role.packages) do
+        if not seen[package] then
+          seen[package] = true
+          packages[#packages + 1] = package
+        end
+      end
+      for key, value in pairs(role.settings or {}) do
+        settings[key] = value
+      end
+    end
+  end
+  table.sort(packages)
+  return { roles = computer.roles or {}, packages = packages, settings = settings }
 end
 
 ------------------------------------------------------------------------------

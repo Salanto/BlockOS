@@ -13,6 +13,9 @@ local function print_usage()
   print("       domain group everyone <group> on|off | group manager <group> [group]")
   print("       domain setup [package]   set a package up for the domain (roles)")
   print("       domain computer list | computer remove <hostname>")
+  print("       domain computer roles | role <name> <package...> | role-del <name>")
+  print("       domain computer setting <role> <key> [value] | assign <host> [role...]")
+  print("       domain update            check this computer's roles and updates now")
   print("       domain dns list | dns add <type> <host> [protocol] | dns del <type>")
 end
 
@@ -176,6 +179,68 @@ local function group_command(action, first, second)
   end
 end
 
+-- "true"/"false" and numbers become real values; everything else stays text.
+local function setting_value(text)
+  if text == nil then
+    return nil
+  elseif text == "true" or text == "false" then
+    return text == "true"
+  end
+  return tonumber(text) or text
+end
+
+local function find_computer_role(name)
+  local roles, err = domain.call("list_computer_roles")
+  if not roles then
+    return nil, err
+  end
+  for _, role in ipairs(roles) do
+    if role.name == name then
+      return role
+    end
+  end
+  return nil, "no such computer role: " .. name
+end
+
+local function computer_role_command(action, words)
+  if action == "roles" then
+    local roles, err = domain.call("list_computer_roles")
+    if not roles then
+      return fail(err)
+    end
+    ui.title("Computer roles")
+    ui.table({
+      { title = "ROLE", key = "name" },
+      { title = "PACKAGES", key = function(role) return table.concat(role.packages, ", ") end },
+      { title = "COMPUTERS", key = function(role) return table.concat(role.computers, ", ") end },
+    }, roles)
+  elseif action == "role" and words[3] then
+    local existing = find_computer_role(words[3])
+    local packages = { table.unpack(words, 4) }
+    call("computer_role_set", { name = words[3], packages = packages,
+      settings = existing and existing.settings or nil }, "Computer role " .. words[3] .. " saved.")
+  elseif action == "role-del" and words[3] then
+    call("computer_role_del", { name = words[3] }, "Computer role " .. words[3] .. " deleted.")
+  elseif action == "setting" and words[4] then
+    local role, err = find_computer_role(words[3])
+    if not role then
+      return fail(err)
+    end
+    local settings = {}
+    for key, value in pairs(role.settings or {}) do
+      settings[key] = value
+    end
+    settings[words[4]] = setting_value(words[5])
+    call("computer_role_set", { name = role.name, packages = role.packages, settings = settings },
+      "Setting saved.")
+  elseif action == "assign" and words[3] then
+    call("computer_assign", { hostname = words[3], roles = { table.unpack(words, 4) } },
+      words[3] .. " applies its roles within 30 minutes ('domain update' there does it now).")
+  else
+    print_usage()
+  end
+end
+
 local function computer_command(action, hostname)
   if action == "list" then
     local hosts, err = domain.call("list_computers")
@@ -188,6 +253,7 @@ local function computer_command(action, hostname)
       { title = "ID", key = "id" },
       { title = "KIND", key = "kind" },
       { title = "SEEN", key = domain.describe_seen },
+      { title = "ROLES", key = function(host) return table.concat(host.roles or {}, ", ") end },
     }, hosts, function(host) return host.is_stale and "faint" or "text" end)
   elseif action == "remove" and hostname then
     call("computer_remove", { hostname = hostname }, "Computer " .. hostname .. " removed.")
@@ -327,8 +393,13 @@ elseif command == "user" then
   user_command(args[2], args[3])
 elseif command == "group" then
   group_command(args[2], args[3], args[4])
-elseif command == "computer" then
+elseif command == "computer" and (args[2] == "list" or args[2] == "remove") then
   computer_command(args[2], args[3])
+elseif command == "computer" then
+  computer_role_command(args[2], args)
+elseif command == "update" then
+  os.queueEvent("blockos_update_now")
+  ui.print("Checking this computer's roles and updates; it reboots if anything changes.", "ok")
 elseif command == "dns" then
   dns_command(args[2], args[3], args[4], args[5])
 elseif command == "setup" then

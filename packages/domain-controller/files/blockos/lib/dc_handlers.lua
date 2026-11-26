@@ -16,8 +16,10 @@
 --                                 domain-admins, or members of the group's managed_by
 --   group_add                     domain-admins, or a module's admins creating
 --                                 <module>-... roles managed by themselves
+--   computer_config               a joined computer: what it should have installed and set
 --   list_users, list_groups,      any logged-in domain user (read only)
 --   list_computers, list_services,
+--   list_computer_roles,
 --   dc_status
 --   everything else               a domain-admins user token
 --
@@ -60,6 +62,12 @@ local ARGS = {
   },
   group_everyone = { group = NAME, everyone = "boolean" },
   group_manager = { group = NAME, managed_by = { type = "string", max = 32, optional = true } },
+  computer_role = {
+    name = NAME,
+    packages = "table",
+    settings = { type = "table", optional = true },
+  },
+  computer_assign = { hostname = NAME, roles = "table" },
 }
 
 local dc_handlers = {}
@@ -315,6 +323,16 @@ function dc_handlers.new(dir, storage, clock)
   handlers.list_users = read_only(function() return dir:list_users() end)
   handlers.list_groups = read_only(function() return dir:list_groups() end)
   handlers.list_services = read_only(function() return dir:list_services() end)
+  handlers.list_computer_roles = read_only(function() return dir:list_computer_roles() end)
+
+  --- What the calling computer should have installed and set (its computer roles merged).
+  function handlers.computer_config(ctx)
+    local hostname, err = require_computer(ctx)
+    if not hostname then
+      return nil, err
+    end
+    return dir:computer_config(hostname)
+  end
   handlers.list_computers = read_only(function() return dir:list_hosts(now(), today()) end)
 
   --- Health of the controller: counts, saved size and disk space.
@@ -343,6 +361,15 @@ function dc_handlers.new(dir, storage, clock)
     end },
     group_set_manager = { ARGS.group_manager, function(args)
       return dir:set_manager(args.group, args.managed_by)
+    end },
+    computer_role_set = { ARGS.computer_role, function(args)
+      return dir:set_computer_role(args.name, args.packages, args.settings)
+    end },
+    computer_role_del = { ARGS.name, function(args)
+      return dir:remove_computer_role(args.name)
+    end },
+    computer_assign = { ARGS.computer_assign, function(args)
+      return dir:assign_computer_roles(args.hostname, args.roles)
     end },
     computer_remove = { ARGS.hostname, function(args)
       return dir:remove_computer(args.hostname)

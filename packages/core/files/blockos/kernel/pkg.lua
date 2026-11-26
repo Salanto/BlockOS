@@ -378,17 +378,18 @@ end
 -- Dependencies of the chosen packages are added too.
 -- @tparam table index
 -- @tparam[opt] {string...} extra_names
+-- @tparam[opt] table installed Installed packages (default: pkg.installed()).
 -- @treturn[1] {string...} Sorted package names.
 -- @treturn[2] nil
 -- @treturn[2] string error message
-function pkg.select(index, extra_names)
+function pkg.select(index, extra_names, installed)
   local chosen = {}
   for name, entry in pairs(index.packages) do
     if not entry.optional then
       chosen[name] = true
     end
   end
-  for name in pairs(pkg.installed()) do
+  for name in pairs(installed or pkg.installed()) do
     if index.packages[name] then
       chosen[name] = true
     end

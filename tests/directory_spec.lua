@@ -334,4 +334,45 @@ return function(t)
     t.ok(not domain.handlers.group_get({ sender = 3 }, { name = "turtle-drivers" }),
       "unjoined computers may not ask")
   end)
+
+  -- Computer roles -------------------------------------------------------------
+
+  t.it("computer roles merge into what a computer should have", function()
+    local domain = new_domain()
+    local admin = as_user(domain, login(domain, "admin", "secret"))
+    t.ok(domain.handlers.computer_role_set(admin, { name = "logistics-node",
+      packages = { "logistics-node", "logistics" } }))
+    t.ok(domain.handlers.computer_role_set(admin, { name = "farm-display", packages = { "music" },
+      settings = { ["blockos.autologin"] = "farmer", ["blockos.logistics.board"] = "monitor_0" } }))
+    t.ok(domain.handlers.computer_assign(admin,
+      { hostname = "pc1", roles = { "logistics-node", "farm-display" } }))
+
+    local config = domain.handlers.computer_config(domain.computer, {})
+    t.eq(table.concat(config.packages, ","), "logistics,logistics-node,music")
+    t.eq(config.settings["blockos.autologin"], "farmer")
+    t.ok(not domain.handlers.computer_config({ sender = 3 }, {}), "only joined computers ask")
+
+    local roles = domain.handlers.list_computer_roles(admin, {})
+    t.eq(roles[1].name, "farm-display")
+    t.eq(roles[1].computers[1], "pc1")
+    t.eq(domain.handlers.list_hosts()[1].roles[2], "farm-display")
+  end)
+
+  t.it("computer roles are checked and only admins change them", function()
+    local domain = new_domain()
+    domain.dir:add_user("bob", "pw")
+    local admin = as_user(domain, login(domain, "admin", "secret"))
+    local bob = as_user(domain, login(domain, "bob", "pw"))
+    t.ok(not domain.handlers.computer_role_set(bob, { name = "x", packages = {} }),
+      "bob is no admin")
+    t.ok(not domain.handlers.computer_role_set(admin,
+      { name = "bad", packages = {}, settings = { ["shell.allow_disk_startup"] = false } }),
+      "only blockos.* settings")
+    t.ok(not domain.handlers.computer_assign(admin, { hostname = "pc1", roles = { "missing" } }))
+    t.ok(domain.handlers.computer_role_set(admin, { name = "media", packages = { "music" } }))
+    t.ok(domain.handlers.computer_assign(admin, { hostname = "pc1", roles = { "media" } }))
+    t.ok(domain.handlers.computer_role_del(admin, { name = "media" }))
+    local after = domain.handlers.computer_config(domain.computer, {})
+    t.eq(#after.packages, 0, "taken off the computer")
+  end)
 end

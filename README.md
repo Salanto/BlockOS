@@ -65,6 +65,13 @@ defaults (everyone may use it, you administer it). Narrow them later in `dsa` (G
 switches "everyone" on or off) or with `domain group`. A module's admins (e.g. `logistics-admins`)
 manage its roles themselves, without a domain admin. `domain setup` lists what is set up.
 
+**Computer roles (install and update from one place).** In `dsa` (Roles tab) define what a kind
+of computer needs, e.g. `farm-display` = `music logistics` plus the setting
+`blockos.autologin farmer`, then give computers their roles (Computers tab, `o`). Every joined
+computer installs what its roles list and keeps all its packages up to date from your package
+server by itself: within 30 minutes, at boot, or right away with `domain update` on it. Updates
+apply when nobody is logged in; otherwise you get a notice and it happens after you log out.
+
 ## A package server
 
 On a computer with disk drives (attach as many as you like with wired modems):
