@@ -124,4 +124,13 @@ return function(t)
     outputs = stock.reaction_outputs(reactions, {})
     t.ok(not outputs["computer|back"].is_on, "unknown state counts as not low")
   end)
+
+  t.it("stock names are checked and lower-cased", function()
+    local stock = config_with({})
+    t.eq(stock.check_name("Farm"), "farm")
+    t.ok(not stock.check_name(""), "empty")
+    t.ok(not stock.check_name("farm.home"), "no dots")
+    t.ok(not stock.check_name(string.rep("a", stock.MAX_NAME_LENGTH + 1)), "too long")
+    t.eq(#("stock-" .. string.rep("a", stock.MAX_NAME_LENGTH)), 32)
+  end)
 end

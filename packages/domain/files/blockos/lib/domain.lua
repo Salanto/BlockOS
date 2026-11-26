@@ -206,6 +206,15 @@ function domain.register_service(service_type, protocol)
   return call("service_register", { type = service_type, protocol = protocol })
 end
 
+--- Remove a service record pointing at this computer (e.g. after a rename).
+-- @tparam string service_type e.g. "stock"
+-- @treturn[1] true
+-- @treturn[2] nil
+-- @treturn[2] string error message
+function domain.unregister_service(service_type)
+  return call("service_unregister", { type = service_type })
+end
+
 --- @tparam string service_type e.g. "pkg"
 -- @treturn table|nil { host, id, protocol }
 function domain.find_service(service_type)

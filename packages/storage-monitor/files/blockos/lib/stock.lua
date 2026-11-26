@@ -30,6 +30,28 @@ for _, side in ipairs(stock.SIDES) do
   VALID_SIDES[side] = true
 end
 
+-- "stock-" .. name must still fit a 32-character service record type.
+stock.MAX_NAME_LENGTH = 26
+
+--- Check a stock computer name ("kitchen").
+-- @tparam string name
+-- @treturn[1] string The name in lower case.
+-- @treturn[2] nil
+-- @treturn[2] string error message
+function stock.check_name(name)
+  if type(name) ~= "string" or name == "" then
+    return nil, "a name is required"
+  end
+  local clean = name:lower()
+  if not clean:match("^[%w_%-]+$") then
+    return nil, "names may only use letters, digits, - and _"
+  end
+  if #clean > stock.MAX_NAME_LENGTH then
+    return nil, "names may be at most " .. stock.MAX_NAME_LENGTH .. " characters"
+  end
+  return clean
+end
+
 --- A fresh config.
 -- @tparam {string...} admins Users or groups who may configure it.
 -- @tparam[opt] string name

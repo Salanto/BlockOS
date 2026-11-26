@@ -149,6 +149,25 @@ return function(t)
     t.ok(not domain.handlers.service_add(admin, { type = "x", host = "unknown-host" }))
   end)
 
+  t.it("computers remove only their own service records", function()
+    local domain = new_domain()
+    local joined = assert(domain.handlers.join({ sender = 8 },
+      { hostname = "pc2", admin_name = "admin", admin_password = "secret" }))
+    local pc2 = { sender = 8, computer_token = joined.computer_token }
+    t.ok(domain.handlers.service_register(domain.computer, { type = "stock" }))
+    t.ok(domain.handlers.service_register(pc2, { type = "pkg" }))
+
+    t.ok(not domain.handlers.service_unregister(pc2, { type = "stock" }),
+      "another computer's record stays")
+    t.ok(not domain.handlers.service_unregister({ sender = 3 }, { type = "stock" }),
+      "unjoined computers may not")
+    t.ok(domain.handlers.service_unregister(domain.computer, { type = "stock" }))
+    t.ok(not domain.handlers.service_find(nil, { type = "stock" }))
+    t.eq(domain.handlers.service_find(nil, { type = "pkg" }).host, "pc2")
+    t.ok(not domain.handlers.service_unregister(domain.computer, { type = "stock" }),
+      "a missing record is an error")
+  end)
+
   t.it("validate_computer tells a service which computer is calling", function()
     local domain = new_domain()
     local reply = domain.handlers.validate_computer(domain.computer,
