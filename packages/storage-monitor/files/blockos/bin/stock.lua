@@ -165,22 +165,38 @@ local function show_status(connection)
   end
 end
 
+-- "12:04 LOW: Copper Ingot 0/1" (older stock computers send no time).
 local function describe_alert(alert)
   local state = alert.is_low and "LOW" or "ok again"
-  return string.format("%s: %s %d/%d", state, alert.label or alert.item, alert.count, alert.limit)
+  local time = alert.time and (alert.time .. " ") or ""
+  return string.format("%s%s: %s %d/%d", time, state, alert.label or alert.item, alert.count,
+    alert.limit)
+end
+
+-- Only the newest alert of an item is in colour; older ones are history.
+local function alert_role(alert)
+  if not alert.is_current then
+    return "faint"
+  end
+  return alert.is_low and "error" or "ok"
+end
+
+local function load_alert_history(connection)
+  local alerts, err = connection.call("alerts")
+  return alerts and stock.alert_history(alerts), err
 end
 
 local function show_alerts(connection)
-  local alerts, err = connection.call("alerts")
-  if not alerts then
+  local history, err = load_alert_history(connection)
+  if not history then
     return fail(err)
   end
-  ui.title("Recent stock alerts")
-  if #alerts == 0 then
+  ui.title("Recent stock alerts (newest first)")
+  if #history == 0 then
     ui.print("  (none)", "faint")
   end
-  for _, alert in ipairs(alerts) do
-    ui.status(describe_alert(alert), alert.is_low and "error" or "ok")
+  for _, alert in ipairs(history) do
+    ui.status(describe_alert(alert), alert_role(alert))
   end
 end
 
@@ -494,9 +510,9 @@ local function run_tool(connection)
 
   tabs[4] = {
     title = "Alerts",
-    load = function() return connection.call("alerts") end,
+    load = function() return load_alert_history(connection) end,
     describe = describe_alert,
-    role = function(row) return row.is_low and "error" or "ok" end,
+    role = alert_role,
     hints = {},
     keys = {},
   }

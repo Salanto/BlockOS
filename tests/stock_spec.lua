@@ -140,6 +140,21 @@ return function(t)
     t.ok(not outputs["computer|back"].is_on, "unknown state counts as not low")
   end)
 
+  t.it("the alert history is newest first with only the latest per item current", function()
+    local stock = config_with({})
+    local history = stock.alert_history({
+      { server = "s", item = "copper", is_low = true },
+      { server = "s", item = "iron", is_low = true },
+      { server = "s", item = "copper", is_low = false },
+    })
+    t.eq(history[1].item, "copper")
+    t.eq(history[1].is_low, false)
+    t.ok(history[1].is_current, "the newest copper alert is current")
+    t.ok(history[2].is_current, "iron has only one alert")
+    t.eq(history[3].is_low, true)
+    t.ok(not history[3].is_current, "the old LOW is superseded")
+  end)
+
   t.it("stock names are checked and lower-cased", function()
     local stock = config_with({})
     t.eq(stock.check_name("Farm"), "farm")
