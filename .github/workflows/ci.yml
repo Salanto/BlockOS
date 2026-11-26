@@ -22,10 +22,6 @@ jobs:
         computer: [advanced, basic]
     steps:
       - uses: actions/checkout@v5
-      - name: Install CraftOS-PC
-        run: |
-          sudo add-apt-repository -y ppa:jackmacwindows/ppa
-          sudo apt-get update
-          sudo apt-get install -y craftos-pc
+      - uses: ./.github/actions/install-craftos
       - name: Run tests on a ${{ matrix.computer }} computer
         run: tools/test.sh ${{ matrix.computer }}

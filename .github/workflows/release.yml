@@ -15,11 +15,7 @@ jobs:
       contents: write
     steps:
       - uses: actions/checkout@v5
-      - name: Install CraftOS-PC
-        run: |
-          sudo add-apt-repository -y ppa:jackmacwindows/ppa
-          sudo apt-get update
-          sudo apt-get install -y craftos-pc zip
+      - uses: ./.github/actions/install-craftos
       - name: Build release assets
         run: tools/build.sh "${{ github.ref_name }}"
       - name: Publish the GitHub release

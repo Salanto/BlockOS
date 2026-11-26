@@ -42,7 +42,26 @@ cp -r "$computer_dir/repo" "$data_dir/computer/1/repo"
 printf 'shell.run("/repo/tools/harness.lua")\n' > "$computer_dir/startup.lua"
 
 echo "Running $* on a $computer_type computer..."
-timeout "$timeout_seconds" "$craftos" --headless --directory "$data_dir" --id 0 || true
+# Stop the emulator as soon as the harness has written its result: CraftOS-PC
+# otherwise keeps running while other emulated computers are still on.
+"$craftos" --headless --directory "$data_dir" --id 0 &
+craftos_pid=$!
+waited=0
+while kill -0 "$craftos_pid" 2>/dev/null; do
+  if [ -f "$computer_dir/harness-result" ]; then
+    sleep 1 # let the computer finish writing its files
+    kill "$craftos_pid" 2>/dev/null || true
+    break
+  fi
+  if [ "$waited" -ge "$timeout_seconds" ]; then
+    echo "CraftOS-PC did not finish within ${timeout_seconds}s" >&2
+    kill "$craftos_pid" 2>/dev/null || true
+    break
+  fi
+  sleep 1
+  waited=$((waited + 1))
+done
+wait "$craftos_pid" 2>/dev/null || true
 
 if [ -n "$copy_out_dir" ] && [ -d "$computer_dir/out" ]; then
   mkdir -p "$copy_out_dir"
