@@ -98,6 +98,12 @@ A stock computer is open by default: anyone can look and every computer gets its
 its admins (and domain admins) can change it. Narrow that in the Access tab if you like. It
 works without a domain too.
 
+## Music
+
+`pkg install music`, then `music <song.dfpwm> [volume]` plays a song on every attached speaker
+(a link to a `.dfpwm` file works too). `+`/`-` change the volume, `q` stops. Convert songs to
+DFPWM with an online converter (e.g. music.madefor.cc) before copying them over.
+
 ## Recovery
 
 If BlockOS keeps failing to start, it rolls back to the previous version by itself. You can
