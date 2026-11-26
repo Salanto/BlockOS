@@ -21,7 +21,7 @@ local tabs = {
       local state = user.is_enabled and "" or " [disabled]"
       return string.format("%-16s %s%s", user.name, table.concat(user.groups, ","), state)
     end,
-    help = "a add  d delete  p password  e enable/disable",
+    hints = { { "a", "Add" }, { "d", "Delete" }, { "p", "Password" }, { "e", "On/off" } },
   },
   {
     title = "Groups",
@@ -29,7 +29,7 @@ local tabs = {
     describe = function(group)
       return string.format("%-18s %s", group.name, table.concat(group.members, ","))
     end,
-    help = "a add  d delete  m add member  x remove member",
+    hints = { { "a", "Add" }, { "d", "Delete" }, { "m", "Add member" }, { "x", "Remove" } },
   },
   {
     title = "Computers",
@@ -38,7 +38,7 @@ local tabs = {
       local seen = domain.describe_seen(host)
       return string.format("%-16s #%-5s %-8s %s", host.hostname, tostring(host.id), host.kind, seen)
     end,
-    help = "d remove",
+    hints = { { "d", "Remove" } },
   },
   {
     title = "DNS",
@@ -46,7 +46,7 @@ local tabs = {
     describe = function(service)
       return string.format("%-14s -> %s", service.type, service.host)
     end,
-    help = "a add service record  d delete",
+    hints = { { "a", "Add record" }, { "d", "Delete" } },
   },
 }
 
@@ -81,7 +81,8 @@ end
 local function draw()
   local _, height = ui.size()
   ui.clear()
-  ui.bar(1, "dsa - domain " .. tostring(domain.name()))
+  ui.header(1, "Directory " .. ui.GLYPHS.dot .. " " .. tostring(domain.name()),
+    blockos.user and blockos.user.name)
   local titles = {}
   for index, tab in ipairs(tabs) do
     titles[index] = tab.title
@@ -98,7 +99,13 @@ local function draw()
   if state.message then
     ui.line(height - 1, state.message, state.message_role)
   end
-  ui.line(height, tabs[state.tab].help .. "  r refresh  q quit", "dim")
+  -- Quit first: hints that do not fit on a small screen are dropped from the end.
+  local hints = { { "q", "Quit" } }
+  for _, hint in ipairs(tabs[state.tab].hints) do
+    hints[#hints + 1] = hint
+  end
+  hints[#hints + 1] = { "r", "Refresh" }
+  ui.footer(hints)
 end
 
 local function selected()

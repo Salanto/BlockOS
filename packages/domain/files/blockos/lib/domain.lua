@@ -203,27 +203,29 @@ function domain.describe_seen(host)
   return text
 end
 
---- Disk and directory health of the controller, as lines of text.
+--- Disk and directory health of the controller, as rows to show.
 -- @tparam table status From the dc_status operation.
--- @treturn {string...}
+-- @treturn {table...} { label, value, role } rows.
 function domain.describe_health(status)
-  local lines = {
-    string.format("Directory:  %d users, %d groups, %d computers, %d services",
-      status.users, status.groups, status.computers, status.services),
-    string.format("Saved size: %d bytes, %d sessions in memory",
-      status.saved_bytes, status.sessions),
+  local rows = {
+    { label = "Users", value = status.users },
+    { label = "Groups", value = status.groups },
+    { label = "Computers", value = status.computers },
+    { label = "Services", value = status.services },
+    { label = "Sessions", value = status.sessions .. " in memory" },
+    { label = "Saved size", value = status.saved_bytes .. " bytes" },
   }
   if status.free then
     local disk = status.free .. " bytes free"
     if status.capacity then
       disk = disk .. " of " .. status.capacity
     end
-    lines[#lines + 1] = "Disk:       " .. disk
+    rows[#rows + 1] = { label = "Disk", value = disk, role = status.has_room and "ok" or "error" }
   end
   if not status.has_room then
-    lines[#lines + 1] = "WARNING:    the controller's disk is full; changes are refused"
+    rows[#rows + 1] = { label = "Warning", value = "disk full, changes refused", role = "error" }
   end
-  return lines
+  return rows
 end
 
 --- @tparam table user A user record.

@@ -49,30 +49,29 @@ local function describe_extra(peer)
   return table.concat(parts, " ")
 end
 
+local function describe_seen(peer)
+  if peer.age then
+    return math.floor(peer.age) .. "s"
+  elseif peer.days_unseen then
+    return peer.days_unseen .. "d"
+  end
+  return "-"
+end
+
 -- Narrow screens (turtles, pockets) get fewer columns.
 local width = ui.size()
-local is_wide = width >= 45
-
-ui.use("title")
-if is_wide then
-  print(string.format("%-16s %-5s %-8s %-9s %s", "HOST", "ID", "KIND", "VERSION", "SEEN"))
-else
-  print(string.format("%-16s %-5s %s", "HOST", "ID", "SEEN"))
+local columns = { { title = "HOST", key = "hostname" }, { title = "ID", key = "id" } }
+if width >= 45 then
+  columns[#columns + 1] = { title = "KIND", key = "kind" }
+  columns[#columns + 1] = { title = "VERSION", key = "version" }
 end
-ui.reset()
+columns[#columns + 1] = { title = "SEEN", key = describe_seen }
+columns[#columns + 1] = { title = "INFO", key = describe_extra }
 
-for _, peer in ipairs(peers) do
-  local seen = peer.age and (math.floor(peer.age) .. "s") or "-"
-  local line
-  if is_wide then
-    line = string.format("%-16s %-5d %-8s %-9s %s", ui.fit(peer.hostname, 16), peer.id or 0,
-      ui.fit(peer.kind, 8), ui.fit(peer.version, 9), seen)
-  else
-    line = string.format("%-16s %-5d %s", ui.fit(peer.hostname, 16), peer.id or 0, seen)
+ui.title(directory and ("Domain " .. directory.name()) or "Peers nearby")
+ui.table(columns, peers, function(peer)
+  if peer.is_stale then
+    return "faint"
   end
-  print(ui.fit(line, width))
-  local extra = describe_extra(peer)
-  if extra ~= "" then
-    ui.print("  " .. ui.fit(extra, width - 2), "dim")
-  end
-end
+  return "text"
+end)

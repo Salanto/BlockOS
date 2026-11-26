@@ -28,26 +28,40 @@ local function describe_device()
   return "Computer " .. id
 end
 
+local LOGO_MIN_HEIGHT = 17
+local LOGIN_HINTS = { { "Enter", "Next" } }
+
+-- Draws the login screen and returns where the two input fields go.
 local function draw_login_screen(message)
-  local _, height = ui.size()
+  local width, height = ui.size()
   local version = blockos and blockos.version or ""
-  ui.clear()
-  ui.bar(1, "BlockOS " .. version)
-  ui.line(3, describe_device(), "dim")
   local hint = auth.login_hint()
+  ui.clear()
+  ui.header(1, "BlockOS " .. version, describe_device())
+
+  local panel_top = nil
+  if height >= LOGO_MIN_HEIGHT then
+    ui.logo(math.floor((width - 6) / 2) + 1, 3)
+    panel_top = 7
+  end
+  local panel_height = 6 + (hint and 2 or 0)
+  local x, y, field_width = ui.panel(panel_height, "Sign in", panel_top)
   if hint then
-    ui.line(4, hint, "dim")
+    ui.text_at(x, y, ui.fit(hint, field_width), "dim", "panel")
+    y = y + 2
   end
   if message then
-    ui.line(height, message, "error")
+    ui.text_at(x, y + 3, ui.fit(message, field_width), "error", "panel")
   end
-  term.setCursorPos(1, 6)
+  ui.footer(LOGIN_HINTS)
+  return { x = x, y = y, width = field_width }
 end
 
 -- Returns the user record, or false and a message; raises on Ctrl+T.
-local function ask_credentials()
-  local name = ui.prompt("Username: ")
-  local password = ui.prompt("Password: ", { mask = "*" })
+local function ask_credentials(fields)
+  local name = ui.field_prompt(fields.x, fields.y, fields.width, "Username ")
+  local password = ui.field_prompt(fields.x, fields.y + 1, fields.width, "Password ",
+    { mask = "*" })
   local user, err = auth.login(name, password)
   if not user then
     return false, err
@@ -77,9 +91,9 @@ function session.login(on_ready)
 
   local message = nil
   while true do
-    draw_login_screen(message)
+    local fields = draw_login_screen(message)
     ready()
-    local ok, result, err = pcall(ask_credentials)
+    local ok, result, err = pcall(ask_credentials, fields)
     if ok and result then
       log.info("session", "%s logged in (%s)", result.name, result.source or "local")
       return result
@@ -125,7 +139,9 @@ function session.run_user(user, user_shell)
     blockos.user = user
   end
   ui.clear()
-  ui.print("Welcome, " .. user.name .. ". Type 'logout' to log out.", "dim")
+  ui.use("title")
+  write("Welcome, " .. user.name .. ". ")
+  ui.print("Type 'logout' to log out.", "dim")
 
   parallel.waitForAny(user_shell, wait_for_logout)
 

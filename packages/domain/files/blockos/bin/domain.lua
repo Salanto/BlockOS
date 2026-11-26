@@ -35,18 +35,23 @@ local function show_status()
     print("Not in a domain.")
     return
   end
-  print("Domain:     " .. membership.name)
-  print("Controller: #" .. tostring(membership.controller_id))
+  ui.title("Domain " .. membership.name)
+  ui.field("Controller", "#" .. tostring(membership.controller_id), nil, 12)
   if blockos.net then
-    print("Full name:  " .. tostring(blockos.net.full_hostname()))
+    ui.field("Full name", tostring(blockos.net.full_hostname()), nil, 12)
   end
   local is_domain_user = blockos.user and blockos.user.source == "domain"
-  print("Logged in:  " .. (is_domain_user and "domain user" or "local user"))
-  local status = domain.call("dc_status")
-  if type(status) == "table" then
-    for _, line in ipairs(domain.describe_health(status)) do
-      print(line)
-    end
+  ui.field("Logged in", is_domain_user and "domain user" or "local user", nil, 12)
+
+  local status, err = domain.call("dc_status")
+  print()
+  ui.title("Controller health")
+  if type(status) ~= "table" then
+    ui.status(tostring(err), "error")
+    return
+  end
+  for _, line in ipairs(domain.describe_health(status)) do
+    ui.field(line.label, line.value, line.role, 12)
   end
 end
 
@@ -86,12 +91,6 @@ local function leave(force)
   os.reboot()
 end
 
-local function print_list(rows, describe)
-  for _, row in ipairs(rows) do
-    print(describe(row))
-  end
-end
-
 local function call(op, call_args, success)
   local result, err = domain.call(op, call_args)
   if not result then
@@ -107,10 +106,12 @@ local function user_command(action, name)
     if not users then
       return fail(err)
     end
-    print_list(users, function(user)
-      local state = user.is_enabled and "" or " (disabled)"
-      return string.format("%-16s %s%s", user.name, table.concat(user.groups, ","), state)
-    end)
+    ui.title("Users")
+    ui.table({
+      { title = "USER", key = "name" },
+      { title = "STATE", key = function(user) return user.is_enabled and "on" or "off" end },
+      { title = "GROUPS", key = function(user) return table.concat(user.groups, ", ") end },
+    }, users, function(user) return user.is_enabled and "text" or "faint" end)
   elseif not name then
     print_usage()
   elseif action == "add" or action == "passwd" then
@@ -135,9 +136,11 @@ local function group_command(action, first, second)
     if not groups then
       return fail(err)
     end
-    print_list(groups, function(group)
-      return string.format("%-18s %s", group.name, table.concat(group.members, ","))
-    end)
+    ui.title("Groups")
+    ui.table({
+      { title = "GROUP", key = "name" },
+      { title = "MEMBERS", key = function(group) return table.concat(group.members, ", ") end },
+    }, groups)
   elseif action == "add" and first then
     call("group_add", { name = first }, "Group " .. first .. " created.")
   elseif action == "del" and first then
@@ -157,10 +160,13 @@ local function computer_command(action, hostname)
     if not hosts then
       return fail(err)
     end
-    print_list(hosts, function(host)
-      local seen = domain.describe_seen(host)
-      return string.format("%-16s #%-5s %-8s %s", host.hostname, tostring(host.id), host.kind, seen)
-    end)
+    ui.title("Computers")
+    ui.table({
+      { title = "HOST", key = "hostname" },
+      { title = "ID", key = "id" },
+      { title = "KIND", key = "kind" },
+      { title = "SEEN", key = domain.describe_seen },
+    }, hosts, function(host) return host.is_stale and "faint" or "text" end)
   elseif action == "remove" and hostname then
     call("computer_remove", { hostname = hostname }, "Computer " .. hostname .. " removed.")
   else
@@ -174,10 +180,12 @@ local function dns_command(action, service_type, host, protocol)
     if not services then
       return fail(err)
     end
-    print_list(services, function(service)
-      local shown_protocol = tostring(service.protocol or "")
-      return string.format("%-14s -> %-16s %s", service.type, service.host, shown_protocol)
-    end)
+    ui.title("Service records")
+    ui.table({
+      { title = "SERVICE", key = "type" },
+      { title = "HOST", key = "host" },
+      { title = "PROTOCOL", key = "protocol" },
+    }, services)
   elseif action == "add" and host then
     local record = { type = service_type, host = host, protocol = protocol }
     call("service_add", record, "Service " .. service_type .. " -> " .. host .. " added.")
