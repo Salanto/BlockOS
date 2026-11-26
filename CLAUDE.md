@@ -276,6 +276,11 @@ Peer liveness uses the local receive time, never the sender's clock.
   The build shrinks packaged Lua files (comment-only lines emptied, indentation dropped) without
   changing line numbers, so keep writing fully commented source. `[[ ]]` long strings are not
   allowed in package files (the shrinker would break them).
+- **Package versions:** each package's version is the release it last changed in. The release
+  build downloads the latest release's `index.lua` and compares each package's content sum
+  (`pkg.content_sum`: files and manifest, not the version); unchanged packages keep their
+  version, changed ones get the tag. `pkg update` lists and downloads only packages whose
+  version differs (`pkg.changes`). The tag names the release as a whole (`index.version`).
 - Releases: push a tag `vX.Y.Z` (or `vX.Y.Z-rcN` for a prerelease). CI tests, builds
   (`tools/build.sh`) and publishes `index.lua`, `*.pkg`, `install.lua`, `lz.lua`, `blockos-disk.zip`
   and `blockos-addon-<name>.zip` per optional package. Online installs use

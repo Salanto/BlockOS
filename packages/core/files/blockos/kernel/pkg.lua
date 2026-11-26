@@ -119,6 +119,67 @@ function pkg.checksum(data)
   return b * 65536 + a
 end
 
+-- A value as text with table keys in a fixed order, so equal content gives equal text.
+local function canonical(value)
+  if type(value) ~= "table" then
+    return type(value) .. ":" .. tostring(value)
+  end
+  local keys = {}
+  for key in pairs(value) do
+    keys[#keys + 1] = key
+  end
+  table.sort(keys, function(a, b) return tostring(a) < tostring(b) end)
+  local parts = {}
+  for _, key in ipairs(keys) do
+    parts[#parts + 1] = tostring(key) .. "=" .. canonical(value[key])
+  end
+  return "{" .. table.concat(parts, ",") .. "}"
+end
+
+--- A checksum of what a package contains, ignoring its version: the release build
+-- keeps a package's old version while this stays the same ("last changed in").
+-- @tparam table manifest
+-- @tparam table files [path] = content
+-- @treturn number
+function pkg.content_sum(manifest, files)
+  local copy = {}
+  for key, value in pairs(manifest) do
+    if key ~= "version" then
+      copy[key] = value
+    end
+  end
+  local paths = {}
+  for path in pairs(files) do
+    paths[#paths + 1] = path
+  end
+  table.sort(paths)
+  local parts = { canonical(copy) }
+  for _, path in ipairs(paths) do
+    parts[#parts + 1] = path .. "\0" .. files[path]
+  end
+  return pkg.checksum(table.concat(parts, "\1"))
+end
+
+--- Which of these packages an update would change: new ones and ones whose version
+-- in the source differs from the installed one.
+-- @tparam table index A source index.
+-- @tparam {string...} names Packages to consider (e.g. from pkg.select).
+-- @tparam[opt] table installed Default: pkg.installed().
+-- @treturn {table...} { name, from (nil when new), to }, sorted by name
+function pkg.changes(index, names, installed)
+  installed = installed or pkg.installed()
+  local list = {}
+  for _, name in ipairs(names) do
+    local entry = index.packages[name]
+    local have = installed[name] and installed[name].version
+    if entry and have ~= entry.version then
+      list[#list + 1] = { name = name, from = have, to = entry.version }
+    end
+  end
+  table.sort(list, function(a, b) return a.name < b.name end)
+  return list
+end
+
 --- Serialise a package table and compress it.
 -- @tparam table bundle { manifest, files }
 -- @treturn string

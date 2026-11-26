@@ -38,3 +38,7 @@ luac.out
 *.i*86
 *.x86_64
 *.hex
+
+# Downloaded by tools/build.sh to compare package versions with the last release
+tools/previous-index.lua
+dist/
