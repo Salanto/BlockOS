@@ -12,7 +12,7 @@ read_globals = {
   os = { other_fields = true },
   "colours", "colors", "commands", "disk", "fs", "gps", "help", "http", "keys",
   "multishell", "paintutils", "parallel", "peripheral", "pocket", "printError",
-  "read", "rednet", "settings", "shell", "sleep", "term", "textutils", "turtle",
+  "read", "rednet", "redstone", "settings", "shell", "sleep", "term", "textutils", "turtle",
   "vector", "window", "write",
   -- CraftOS-PC only (used by tests).
   "config", "periphemu",

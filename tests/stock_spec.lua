@@ -13,7 +13,8 @@ return function(t)
     local function at(count, previous)
       return stock.evaluate(config, { ["minecraft:iron_ingot"] = { count = count } }, previous)
     end
-    local states, changes = at(120)
+    local states = at(120)
+    local changes
     t.ok(not states["minecraft:iron_ingot"].is_low)
     states, changes = at(99, states)
     t.ok(states["minecraft:iron_ingot"].is_low)
