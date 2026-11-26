@@ -1,9 +1,19 @@
 -- The peer table and wire format.
 return function(t)
+  local ENVELOPE_FIELDS = { v = true, kind = true, topic = true }
+
+  -- An announce event; envelope fields (v, kind, topic) can be overridden too.
   local function announce(fields)
-    local message = { v = 1, hostname = "alpha", kind = "computer", version = "0.1.0" }
+    local message = {
+      v = 1, kind = "event", topic = "announce",
+      data = { hostname = "alpha", kind = "computer", version = "0.1.0" },
+    }
     for key, value in pairs(fields or {}) do
-      message[key] = value
+      if ENVELOPE_FIELDS[key] then
+        message[key] = value
+      else
+        message.data[key] = value
+      end
     end
     return message
   end
@@ -66,9 +76,10 @@ return function(t)
     net.set_current_hostname("me")
     net.set_info("fuel", 500)
     local message = net.build_announce(true)
-    t.eq(message.v, net.WIRE_VERSION)
-    t.eq(message.info.fuel, 500)
-    t.ok(message.hello)
-    t.ok(net.is_valid_announce(message))
+    t.eq(message.kind, "event")
+    t.eq(message.topic, "announce")
+    t.eq(message.data.info.fuel, 500)
+    t.ok(message.data.hello)
+    t.ok(net.parse_announce(message))
   end)
 end

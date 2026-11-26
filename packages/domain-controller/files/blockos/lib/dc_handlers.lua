@@ -17,6 +17,30 @@
 -- @module dc_handlers
 
 local directory = import("directory")
+local rpc = import("rpc")
+
+-- Argument schemas of the operations (see wire.validate).
+local NAME = { type = "string", max = 32 }
+local ARGS = {
+  credentials = { admin_name = "string", admin_password = "string" },
+  join = { hostname = NAME, admin_name = "string", admin_password = "string" },
+  login = { name = "string", password = "string" },
+  token = { token = "string" },
+  computer_token = { computer_token = "string" },
+  host_update = {
+    hostname = NAME,
+    info = { type = "table", optional = true },
+    kind = { type = "string", optional = true },
+    version = { type = "string", optional = true },
+  },
+  hostname = { hostname = NAME },
+  service_type = { type = NAME },
+  service = { type = NAME, host = NAME, protocol = { type = "string", optional = true } },
+  name = { name = NAME },
+  user_password = { name = NAME, password = "string" },
+  user_enable = { name = NAME, is_enabled = "boolean" },
+  membership = { group = NAME, user = NAME },
+}
 
 local dc_handlers = {}
 
@@ -89,17 +113,11 @@ function dc_handlers.new(dir, storage, clock)
     return result
   end
 
-  local function args_table(args)
-    if type(args) == "table" then
-      return args
-    end
-    return {}
-  end
+  local with_args = rpc.with_args
 
   -- Joining ------------------------------------------------------------------
 
-  function handlers.join(ctx, args)
-    args = args_table(args)
+  handlers.join = with_args(ARGS.join, function(ctx, args)
     if not dir:can_join(args.admin_name, args.admin_password) then
       return nil, "only domain-admins or computer-joiners can join computers"
     end
@@ -108,10 +126,9 @@ function dc_handlers.new(dir, storage, clock)
       return nil, err
     end
     return { computer_token = token, domain = dir:name() }
-  end
+  end)
 
-  function handlers.leave(ctx, args)
-    args = args_table(args)
+  handlers.leave = with_args(ARGS.credentials, function(ctx, args)
     local hostname, err = require_computer(ctx)
     if not hostname then
       return nil, err
@@ -120,59 +137,57 @@ function dc_handlers.new(dir, storage, clock)
       return nil, "only domain-admins or computer-joiners can remove computers"
     end
     return change(function() return dir:remove_computer(hostname) end)
-  end
+  end)
 
   -- Sessions -----------------------------------------------------------------
 
-  function handlers.login(ctx, args)
-    args = args_table(args)
+  handlers.login = with_args(ARGS.login, function(ctx, args)
     local hostname, err = require_computer(ctx)
     if not hostname then
       return nil, err
     end
     return dir:login(args.name, args.password, now())
-  end
+  end)
 
-  function handlers.validate(ctx, args)
+  handlers.validate = with_args(ARGS.token, function(ctx, args)
     local hostname, err = require_computer(ctx)
     if not hostname then
       return nil, err
     end
-    local user = dir:validate(args_table(args).token, now())
+    local user = dir:validate(args.token, now())
     if not user then
       return nil, "login required"
     end
     return user
-  end
+  end)
 
-  function handlers.logout(ctx, args)
+  handlers.logout = with_args(ARGS.token, function(ctx, args)
     local hostname, err = require_computer(ctx)
     if not hostname then
       return nil, err
     end
-    return dir:logout(args_table(args).token)
-  end
+    return dir:logout(args.token)
+  end)
 
   --- Which computer does a computer token belong to? Lets a service check a
   -- request from another system (e.g. a crafter asking a storage computer).
-  function handlers.validate_computer(ctx, args)
+  handlers.validate_computer = with_args(ARGS.computer_token, function(ctx, args)
     local hostname, err = require_computer(ctx)
     if not hostname then
       return nil, err
     end
-    local other = dir:computer_by_token(args_table(args).computer_token)
+    local other = dir:computer_by_token(args.computer_token)
     if not other then
       return nil, "unknown computer"
     end
     return { hostname = other }
-  end
+  end)
 
   -- Host and service records -------------------------------------------------
 
   -- Status reports are mostly kept in memory; only a rename, a new computer ID
   -- or the first report of a day is saved. A full disk only skips that save.
-  function handlers.host_update(ctx, args)
-    args = args_table(args)
+  handlers.host_update = with_args(ARGS.host_update, function(ctx, args)
     local hostname, needs_save = dir:update_host(ctx.computer_token, {
       hostname = args.hostname,
       id = ctx.sender,
@@ -187,44 +202,43 @@ function dc_handlers.new(dir, storage, clock)
       storage.save()
     end
     return { hostname = hostname }
-  end
+  end)
 
-  function handlers.resolve(_, args)
-    local id = dir:resolve(args_table(args).hostname)
+  handlers.resolve = with_args(ARGS.hostname, function(_, args)
+    local id = dir:resolve(args.hostname)
     if not id then
       return nil, "unknown host"
     end
     return { id = id }
-  end
+  end)
 
   function handlers.list_hosts()
     return dir:list_hosts(now(), today())
   end
 
-  function handlers.service_find(_, args)
-    local service = dir:find_service(args_table(args).type)
+  handlers.service_find = with_args(ARGS.service_type, function(_, args)
+    local service = dir:find_service(args.type)
     if not service then
       return nil, "no such service record"
     end
     return service
-  end
+  end)
 
-  function handlers.service_add(ctx, args)
-    args = args_table(args)
+  handlers.service_add = with_args(ARGS.service, function(ctx, args)
     local user, err = require_dns_admin(ctx)
     if not user then
       return nil, err
     end
     return change(function() return dir:add_service(args.type, args.host, args.protocol) end)
-  end
+  end)
 
-  function handlers.service_del(ctx, args)
+  handlers.service_del = with_args(ARGS.service_type, function(ctx, args)
     local user, err = require_dns_admin(ctx)
     if not user then
       return nil, err
     end
-    return change(function() return dir:remove_service(args_table(args).type) end)
-  end
+    return change(function() return dir:remove_service(args.type) end)
+  end)
 
   -- Directory management -----------------------------------------------------
 
@@ -256,30 +270,46 @@ function dc_handlers.new(dir, storage, clock)
     return status
   end)
 
-  -- Admin-only operations: op name -> function(args) doing the change.
+  -- Admin-only operations: op name -> { argument schema, the change }.
   local admin_operations = {
-    user_add = function(args) return dir:add_user(args.name, args.password) end,
-    user_del = function(args) return dir:remove_user(args.name) end,
-    user_enable = function(args) return dir:set_enabled(args.name, args.is_enabled == true) end,
-    group_add = function(args) return dir:add_group(args.name) end,
-    group_del = function(args) return dir:remove_group(args.name) end,
-    group_addmember = function(args) return dir:add_member(args.group, args.user) end,
-    group_rmmember = function(args) return dir:remove_member(args.group, args.user) end,
-    computer_remove = function(args) return dir:remove_computer(args.hostname) end,
+    user_add = { ARGS.user_password, function(args)
+      return dir:add_user(args.name, args.password)
+    end },
+    user_del = { ARGS.name, function(args)
+      return dir:remove_user(args.name)
+    end },
+    user_enable = { ARGS.user_enable, function(args)
+      return dir:set_enabled(args.name, args.is_enabled)
+    end },
+    group_add = { ARGS.name, function(args)
+      return dir:add_group(args.name)
+    end },
+    group_del = { ARGS.name, function(args)
+      return dir:remove_group(args.name)
+    end },
+    group_addmember = { ARGS.membership, function(args)
+      return dir:add_member(args.group, args.user)
+    end },
+    group_rmmember = { ARGS.membership, function(args)
+      return dir:remove_member(args.group, args.user)
+    end },
+    computer_remove = { ARGS.hostname, function(args)
+      return dir:remove_computer(args.hostname)
+    end },
   }
   for op, operation in pairs(admin_operations) do
-    handlers[op] = function(ctx, args)
+    local schema, apply = operation[1], operation[2]
+    handlers[op] = with_args(schema, function(ctx, args)
       local user, err = require_admin(ctx)
       if not user then
         return nil, err
       end
-      return change(function() return operation(args_table(args)) end)
-    end
+      return change(function() return apply(args) end)
+    end)
   end
 
   -- Users may change their own password; admins may change anyone's.
-  function handlers.user_passwd(ctx, args)
-    args = args_table(args)
+  handlers.user_passwd = with_args(ARGS.user_password, function(ctx, args)
     local user, err = require_user(ctx)
     if not user then
       return nil, err
@@ -288,7 +318,7 @@ function dc_handlers.new(dir, storage, clock)
       return nil, "permission denied"
     end
     return change(function() return dir:set_password(args.name, args.password) end)
-  end
+  end)
 
   return handlers
 end

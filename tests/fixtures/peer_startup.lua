@@ -44,7 +44,8 @@ local storage = { save = function() return true end, has_room = function() retur
 local domain_handlers = import("dc_handlers").new(dir, storage)
 
 local function announce_loop()
-  local announce = { v = 1, hostname = "peer-one", kind = "computer", version = "test" }
+  local announce = import("wire").event("announce",
+    { hostname = "peer-one", kind = "computer", version = "test" })
   for _ = 1, LIFETIME_SECONDS do
     rednet.broadcast(announce, "blockos.announce")
     sleep(1)
