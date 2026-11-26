@@ -1,0 +1,31 @@
+name: Install CraftOS-PC
+description: Install the CraftOS-PC emulator, using cached .deb packages when possible.
+
+runs:
+  using: composite
+  steps:
+    - name: Restore cached packages
+      uses: actions/cache@v4
+      with:
+        path: ~/craftos-debs
+        key: craftos-pc-debs-${{ runner.os }}-ubuntu-22.04-v1
+
+    - name: Install CraftOS-PC
+      shell: bash
+      run: |
+        set -euo pipefail
+        debs="$HOME/craftos-debs"
+        # Fast path: install the cached packages without touching apt.
+        if ls "$debs"/*.deb >/dev/null 2>&1 && sudo dpkg -i "$debs"/*.deb >/dev/null; then
+          echo "Installed CraftOS-PC from the cache."
+          exit 0
+        fi
+        # Slow path (first run, or the runner image changed): download into the
+        # cache folder, then install.
+        mkdir -p "$debs/partial"
+        sudo add-apt-repository -y ppa:jackmacwindows/ppa
+        sudo apt-get update
+        sudo apt-get install -y --download-only -o Dir::Cache::archives="$debs" craftos-pc
+        sudo apt-get install -y -o Dir::Cache::archives="$debs" craftos-pc
+        sudo chown -R "$USER" "$debs"
+        rm -rf "$debs/partial" "$debs/lock"
