@@ -36,23 +36,33 @@ local function find_package_disk()
 end
 
 local function show_status()
-  ui.print("Drives", "title")
+  local drives = {}
   for _, root in ipairs(repo.roots()) do
-    print(string.format("  %-12s %7d bytes free", root, fs.getFreeSpace(root)))
+    drives[#drives + 1] = { root = root, free = fs.getFreeSpace(root) .. " bytes" }
   end
-  ui.print("Packages", "title")
+  ui.title("Drives")
+  ui.table({ { title = "DRIVE", key = "root" }, { title = "FREE", key = "free" } }, drives)
+
   local rules = repo.rules()
-  local stored = repo.scan()
-  local names = {}
-  for name in pairs(stored) do
-    names[#names + 1] = name
+  local packages = {}
+  for name, meta in pairs(repo.scan()) do
+    local rule = rules[name]
+    packages[#packages + 1] = {
+      name = name,
+      version = meta.version,
+      drive = meta.root,
+      access = rule and table.concat(rule.groups, ", ") or "public",
+    }
   end
-  table.sort(names)
-  for _, name in ipairs(names) do
-    local meta = stored[name]
-    local access = rules[name] and ("groups: " .. table.concat(rules[name].groups, ",")) or "public"
-    print(string.format("  %-16s %-10s %-10s %s", name, meta.version, meta.root, access))
-  end
+  table.sort(packages, function(a, b) return a.name < b.name end)
+  print()
+  ui.title("Packages")
+  ui.table({
+    { title = "PACKAGE", key = "name" },
+    { title = "VERSION", key = "version" },
+    { title = "DRIVE", key = "drive" },
+    { title = "ACCESS", key = "access" },
+  }, packages, function(row) return row.access == "public" and "text" or "warn" end)
 end
 
 local function import_packages(flag, tag)

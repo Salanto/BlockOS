@@ -13,6 +13,8 @@ Built for CC:Tweaked 1.115 (SkyFactory 5), on basic and advanced computers and t
 floppy. In singleplayer, a floppy's files live in
 `saves/<world>/computercraft/disk/<disk id>/`. Put the floppy in a disk drive next to the
 computer (or turtle), reboot it, and choose **Install BlockOS**. Remove the disk when it's done.
+The install disk fits on a standard 125KB floppy; if a server lowers `floppy_space_limit` in the
+CC:Tweaked config, raise it again or use the online install.
 
 **Online.** On the computer, run:
 

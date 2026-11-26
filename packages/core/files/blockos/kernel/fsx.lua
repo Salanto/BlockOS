@@ -96,6 +96,34 @@ function fsx.delete(path)
   end
 end
 
+--- Tidy up after writes that were cut off (e.g. the chunk unloaded mid-save).
+--
+-- For every `name.tmp` in `dir`: if `name` exists, the temp file is a leftover
+-- and is deleted; if not, the write got as far as deleting the old file, so the
+-- temp file is the newest complete copy and is moved into place.
+-- @tparam string dir
+-- @treturn number How many temp files were handled.
+function fsx.finish_interrupted_writes(dir)
+  if not fs.isDir(dir) then
+    return 0
+  end
+  local handled = 0
+  for _, name in ipairs(fs.list(dir)) do
+    local final_name = name:match("^(.+)%.tmp$")
+    if final_name then
+      local tmp = fs.combine(dir, name)
+      local final = fs.combine(dir, final_name)
+      if fs.exists(final) then
+        fs.delete(tmp)
+      else
+        fs.move(tmp, final)
+      end
+      handled = handled + 1
+    end
+  end
+  return handled
+end
+
 --- List all files below a directory.
 -- @tparam string dir
 -- @treturn {string...} Sorted paths relative to `dir`.

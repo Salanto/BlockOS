@@ -121,15 +121,18 @@ local function apply_and_reboot(packages, apply_options)
 end
 
 local function show_installed()
-  local installed = pkg.installed()
-  local names = {}
-  for name in pairs(installed) do
-    names[#names + 1] = name
+  local rows = {}
+  for name, info in pairs(pkg.installed()) do
+    local kind = info.exclusive and "exclusive" or (info.optional and "optional" or "base")
+    rows[#rows + 1] = { name = name, version = info.version, kind = kind }
   end
-  table.sort(names)
-  for _, name in ipairs(names) do
-    print(string.format("%-14s %s", name, installed[name].version))
-  end
+  table.sort(rows, function(a, b) return a.name < b.name end)
+  ui.title("Installed packages")
+  ui.table({
+    { title = "PACKAGE", key = "name" },
+    { title = "VERSION", key = "version" },
+    { title = "KIND", key = "kind" },
+  }, rows)
 end
 
 local function show_available(source)
@@ -139,22 +142,35 @@ local function show_available(source)
     return
   end
   local installed = pkg.installed()
-  local names = {}
-  for name in pairs(index.packages) do
-    names[#names + 1] = name
-  end
-  table.sort(names)
-  for _, name in ipairs(names) do
-    local entry = index.packages[name]
-    local marks = {}
+  local rows = {}
+  for name, entry in pairs(index.packages) do
+    local status = "-"
     if installed[name] then
-      marks[#marks + 1] = "installed " .. installed[name].version
+      local order = pkg.compare_versions(entry.version, installed[name].version)
+      status = order > 0 and ("update from " .. installed[name].version) or "installed"
     end
-    if entry.optional then
-      marks[#marks + 1] = "optional"
-    end
-    print(string.format("%-14s %-10s %s", name, entry.version, table.concat(marks, ", ")))
+    rows[#rows + 1] = {
+      name = name,
+      version = entry.version,
+      kind = entry.optional and "optional" or "base",
+      status = status,
+    }
   end
+  table.sort(rows, function(a, b) return a.name < b.name end)
+  ui.title("Packages on " .. source.describe())
+  ui.table({
+    { title = "PACKAGE", key = "name" },
+    { title = "VERSION", key = "version" },
+    { title = "KIND", key = "kind" },
+    { title = "STATUS", key = "status" },
+  }, rows, function(row)
+    if row.status:find("update") then
+      return "warn"
+    elseif row.status == "installed" then
+      return "ok"
+    end
+    return "text"
+  end)
 end
 
 local function install(source, names, force)

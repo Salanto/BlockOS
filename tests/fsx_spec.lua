@@ -40,4 +40,16 @@ return function(t)
     t.eq(files[2], "x.lua")
     t.eq(fsx.tree_size(t.sandbox .. "/w"), 3)
   end)
+
+  t.it("interrupted writes are finished or cleaned up", function()
+    local fsx = t.fresh_import()("fsx")
+    local dir = t.sandbox .. "/etc"
+    t.write(dir .. "/complete", "real")
+    t.write(dir .. "/complete.tmp", "leftover")
+    t.write(dir .. "/moved.tmp", "newest copy")
+    t.eq(fsx.finish_interrupted_writes(dir), 2)
+    t.eq(t.read(dir .. "/complete"), "real")
+    t.ok(not fs.exists(dir .. "/complete.tmp"), "leftover temp file kept")
+    t.eq(t.read(dir .. "/moved"), "newest copy")
+  end)
 end

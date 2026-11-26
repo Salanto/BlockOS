@@ -40,7 +40,8 @@ _G.import = import
 
 local rpc = import("rpc")
 local dir = assert(import("directory").create("test", "admin", "secret"))
-local domain_handlers = import("dc_handlers").new(dir, function() end)
+local storage = { save = function() return true end, has_room = function() return true end }
+local domain_handlers = import("dc_handlers").new(dir, storage)
 
 local function announce_loop()
   local announce = { v = 1, hostname = "peer-one", kind = "computer", version = "test" }

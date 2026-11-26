@@ -55,6 +55,12 @@ local paths = import("paths")
 local pkg = import("pkg")
 
 log.level = config.get("blockos.log.level", "info")
+log.max_bytes = config.get("blockos.log.max_size", log.max_bytes)
+
+local tidied = fsx.finish_interrupted_writes(paths.top("etc/blockos"))
+if tidied > 0 then
+  log.info("kernel", "finished %d interrupted writes", tidied)
+end
 
 --- The public BlockOS API, available to every program as `blockos`.
 _G.blockos = {

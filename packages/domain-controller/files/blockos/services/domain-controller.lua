@@ -1,10 +1,15 @@
 -- domain-controller service: serves the domain directory over rednet.
 --
--- The directory is saved to /etc/blockos/directory after every change. User
--- sessions are kept in memory only: if the controller reloads, users log in
--- again. Only runs once `dcpromo` has created the domain.
+-- The directory is saved to /etc/blockos/directory after every change, but only
+-- when the disk has room for it; otherwise changes are refused and logged. User
+-- sessions and status reports are kept in memory only. Every few minutes the
+-- service drops expired sessions and warns when the disk is getting full.
+-- Only runs once `dcpromo` has created the domain.
 
 local DIRECTORY_FILE = "etc/blockos/directory"
+local SAVE_MARGIN_BYTES = 8 * 1024
+local LOW_SPACE_FRACTION = 0.2
+local HOUSEKEEPING_SECONDS = 300
 
 local function directory_path()
   return import("paths").top(DIRECTORY_FILE)
@@ -15,18 +20,46 @@ local function run(ctx)
   local directory = import("directory")
   local fsx = import("fsx")
   local rpc = import("rpc")
+  local log = ctx.log
 
-  local data = fsx.read_table(directory_path())
+  local path = directory_path()
+  local data = fsx.read_table(path)
   if not data then
     error("the directory file is missing or unreadable", 0)
   end
+  -- A save interrupted after its temp file was complete: keep the real file.
+  if fs.exists(path) and fs.exists(path .. ".tmp") then
+    fs.delete(path .. ".tmp")
+  end
   local dir = directory.load(data)
+  local disk_dir = fs.getDir(path)
 
-  local function save()
-    fsx.write_table(directory_path(), dir.data)
+  local function disk_status()
+    local capacity = fs.getCapacity and fs.getCapacity(disk_dir) or nil
+    return { free = fs.getFreeSpace(disk_dir), capacity = capacity }
   end
 
-  -- The controller can check user tokens itself, without a network round trip.
+  -- An atomic save needs room for a full second copy while it runs.
+  local function has_room()
+    local size = #textutils.serialise(dir.data)
+    return fs.getFreeSpace(disk_dir) >= size + SAVE_MARGIN_BYTES
+  end
+
+  local function save()
+    local ok, err = pcall(fsx.write_table, path, dir.data)
+    if not ok then
+      log.error("could not save the directory: %s", tostring(err))
+      if fs.exists(path .. ".tmp") and fs.exists(path) then
+        fs.delete(path .. ".tmp")
+      end
+      return nil, dc_handlers.DISK_FULL
+    end
+    return true
+  end
+
+  local storage = { save = save, has_room = has_room, disk_status = disk_status }
+
+  -- The controller can check tokens itself, without a network round trip.
   rpc.set_computer_validator(function(computer_token)
     local hostname = dir:computer_by_token(computer_token)
     return hostname and { hostname = hostname }
@@ -35,12 +68,35 @@ local function run(ctx)
     return dir:validate(token, os.clock())
   end)
 
+  local was_low = false
+  local function housekeeping()
+    while true do
+      local removed = dir:prune_sessions(os.clock())
+      if removed > 0 then
+        log.info("dropped %d expired sessions", removed)
+      end
+      local disk = disk_status()
+      local is_low = disk.capacity and disk.free < disk.capacity * LOW_SPACE_FRACTION
+        or not has_room()
+      if is_low and not was_low then
+        log.warn("disk space is low: %d bytes free", disk.free)
+      elseif was_low and not is_low then
+        log.info("disk space is fine again: %d bytes free", disk.free)
+      end
+      was_low = is_low
+      sleep(HOUSEKEEPING_SECONDS)
+    end
+  end
+
   -- Hosting under the domain name lets computers find us with rednet.lookup.
   if rednet.isOpen() then
     rednet.host("blockos.domain", dir:name())
   end
-  ctx.log.info("serving domain %s", dir:name())
-  rpc.serve("blockos.domain", dc_handlers.new(dir, save))
+  log.info("serving domain %s", dir:name())
+  parallel.waitForAny(
+    function() rpc.serve("blockos.domain", dc_handlers.new(dir, storage)) end,
+    housekeeping
+  )
 end
 
 return {

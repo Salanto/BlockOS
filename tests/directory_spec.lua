@@ -1,26 +1,33 @@
 -- The domain directory and the controller's request handlers.
 return function(t)
   local NOW = 1000
+  local TODAY = 500
 
   -- A domain "home" with admin/secret, plus a computer "pc1" joined to it.
+  -- `domain.disk_full = true` makes the storage report no room.
   local function new_domain()
     local import = t.fresh_import()
     local directory = import("directory")
     local dir = assert(directory.create("home", "admin", "secret"))
-    local saves = 0
-    local handlers = import("dc_handlers").new(dir, function() saves = saves + 1 end,
-      function() return NOW end)
-    local joined = assert(handlers.join({ sender = 7 }, {
+    local domain = { directory = directory, dir = dir, saves = 0, disk_full = false, day = TODAY }
+    local storage = {
+      save = function()
+        domain.saves = domain.saves + 1
+        return true
+      end,
+      has_room = function() return not domain.disk_full end,
+      disk_status = function() return { free = 1234, capacity = 1000000 } end,
+    }
+    local clock = {
+      now = function() return NOW end,
+      today = function() return domain.day end,
+    }
+    domain.handlers = import("dc_handlers").new(dir, storage, clock)
+    local joined = assert(domain.handlers.join({ sender = 7 }, {
       hostname = "pc1", admin_name = "admin", admin_password = "secret",
     }))
-    local computer = { sender = 7, computer_token = joined.computer_token }
-    return {
-      directory = directory,
-      dir = dir,
-      handlers = handlers,
-      computer = computer,
-      saves = function() return saves end,
-    }
+    domain.computer = { sender = 7, computer_token = joined.computer_token }
+    return domain
   end
 
   local function login(domain, name, password)
@@ -94,7 +101,7 @@ return function(t)
     local _, err = domain.handlers.user_add(bob, { name = "eve", password = "x" })
     t.eq(err, "permission denied")
     t.ok(domain.handlers.user_add(admin, { name = "eve", password = "x" }))
-    t.ok(domain.saves() > 0, "changes are saved")
+    t.ok(domain.saves > 0, "changes are saved")
     t.ok(domain.handlers.list_users(bob), "everyone in the domain can read")
     t.ok(not domain.handlers.list_users({ sender = 7 }), "reading needs a login")
     t.ok(domain.handlers.user_passwd(bob, { name = "bob", password = "new" }),
@@ -155,5 +162,69 @@ return function(t)
     t.ok(domain.handlers.computer_remove(admin, { hostname = "pc1" }))
     t.ok(not domain.dir:computer_by_token(domain.computer.computer_token))
     t.ok(not domain.dir:find_service("pkg"))
+  end)
+
+  t.it("status reports stay in memory and are capped in size", function()
+    local domain = new_domain()
+    local report = { hostname = "pc1", info = { fuel = 42 }, kind = "turtle" }
+    t.ok(domain.handlers.host_update(domain.computer, report))
+    t.eq(domain.dir.data.computers.pc1.info, nil, "info must not be saved")
+    t.eq(domain.handlers.list_hosts()[1].info.fuel, 42)
+
+    local huge = { blob = string.rep("x", 2000) }
+    local ok, err = domain.handlers.host_update(domain.computer, { hostname = "pc1", info = huge })
+    t.ok(not ok)
+    t.ok(err:find("too large"), err)
+  end)
+
+  t.it("status reports only save on a rename, a new ID or a new day", function()
+    local domain = new_domain()
+    domain.handlers.host_update(domain.computer, { hostname = "pc1" })
+    local saves = domain.saves
+    domain.handlers.host_update(domain.computer, { hostname = "pc1", info = { fuel = 1 } })
+    t.eq(domain.saves, saves, "a plain heartbeat must not write to disk")
+    domain.day = TODAY + 1
+    domain.handlers.host_update(domain.computer, { hostname = "pc1" })
+    t.eq(domain.saves, saves + 1, "the first report of a day is saved")
+  end)
+
+  t.it("computers unseen for a week are marked stale", function()
+    local domain = new_domain()
+    domain.handlers.host_update(domain.computer, { hostname = "pc1" })
+    domain.day = TODAY + domain.directory.STALE_DAYS
+    local host = domain.handlers.list_hosts()[1]
+    t.eq(host.days_unseen, domain.directory.STALE_DAYS)
+    t.ok(host.is_stale)
+  end)
+
+  t.it("a full disk refuses changes but logins and lookups keep working", function()
+    local domain = new_domain()
+    local admin = as_user(domain, login(domain, "admin", "secret"))
+    domain.disk_full = true
+    local _, err = domain.handlers.user_add(admin, { name = "eve", password = "x" })
+    t.ok(err:find("disk is full"), err)
+    t.eq(domain.dir.data.users.eve, nil, "nothing changes when it cannot be saved")
+    t.ok(login(domain, "admin", "secret"), "logins still work")
+    t.ok(domain.handlers.resolve(nil, { hostname = "pc1" }), "lookups still work")
+    t.ok(domain.handlers.host_update(domain.computer, { hostname = "pc1" }),
+      "status reports still work")
+  end)
+
+  t.it("dc_status reports counts and disk space", function()
+    local domain = new_domain()
+    local admin = as_user(domain, login(domain, "admin", "secret"))
+    local status = domain.handlers.dc_status(admin)
+    t.eq(status.domain, "home")
+    t.eq(status.users, 1)
+    t.eq(status.computers, 1)
+    t.eq(status.free, 1234)
+    t.ok(status.saved_bytes > 0)
+  end)
+
+  t.it("expired sessions are pruned", function()
+    local domain = new_domain()
+    domain.dir:login("admin", "secret", 0)
+    t.eq(domain.dir:prune_sessions(domain.directory.SESSION_SECONDS), 1)
+    t.eq(domain.dir:stats().sessions, 0)
   end)
 end
