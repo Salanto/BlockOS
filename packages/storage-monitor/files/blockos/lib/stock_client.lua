@@ -6,12 +6,27 @@
 -- domain service record "stock" (or "stock-<name>") and called over rpc.
 -- @module stock_client
 
+local config = import("config")
 local rpc = import("rpc")
 
 local stock_client = {}
 
 stock_client.PROTOCOL = "blockos.stock"
 stock_client.CONFIG_FILE = "etc/blockos/storage-monitor"
+
+config.define("blockos.stock.server", {
+  description = "Which stock computer this one talks to (its --name); empty: the default.",
+  type = "string",
+})
+config.define("blockos.stock.board", {
+  description = "Monitor or Create Display Link that shows the stock board.",
+  type = "string",
+})
+config.define("blockos.stock.reactions", {
+  description = "Redstone outputs that are on while an item is low: { { item, target, side } }.",
+  default = {},
+  type = "table",
+})
 
 --- The service record type of a stock computer.
 -- @tparam[opt] string name e.g. "kitchen"

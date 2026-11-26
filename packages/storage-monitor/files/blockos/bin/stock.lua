@@ -9,6 +9,10 @@
 --   stock sound note|sound|file <value> [volume] | test
 --                                   alarm sound: a note block instrument, a
 --                                   Minecraft sound event, or a .dfpwm audio file
+--   stock react add <item> <target> <side> | remove <item> | list
+--                                   on THIS computer: a redstone output that stays
+--                                   on while the item is low (e.g. run a farm until
+--                                   it is refilled); target is "computer" or a relay
 --   --server <name>                 talk to the stock computer registered as
 --                                   "stock-<name>" instead of "stock"
 local args = { ... }
@@ -23,6 +27,7 @@ local function print_usage()
   print("       stock board <peripheral> | off")
   print("       stock access add|remove admin|viewer|computer <name>")
   print("       stock sound note|sound|file <value> [volume] | test")
+  print("       stock react add <item> <target> <side> | remove <item> | list")
 end
 
 local function parse_args()
@@ -211,6 +216,64 @@ local function set_sound(connection, kind, value, volume)
   ui.print("Alarm sound set to " .. kind .. " " .. value .. ".", "ok")
 end
 
+-- Find an item by its label or ID among the stock computer's watches.
+local function find_item(connection, typed)
+  local data, err = connection.call("status")
+  if not data then
+    return nil, err
+  end
+  for _, row in ipairs(data.rows) do
+    if row.item == typed or tostring(row.label):lower() == typed:lower() then
+      return row
+    end
+  end
+  return nil, "no watched item called " .. typed
+end
+
+local function show_reactions()
+  local reactions = blockos.config.get("blockos.stock.reactions", {})
+  ui.title("Reactions on this computer")
+  ui.table({
+    { title = "ITEM", key = "item" },
+    { title = "OUTPUT", key = function(r) return r.target .. ":" .. r.side end },
+  }, reactions)
+end
+
+-- stock react add <item> <target> <side> | remove <item> | list
+local function change_reactions(connection, action, typed, target, side)
+  if action == "list" or action == nil then
+    return show_reactions()
+  end
+  if not (blockos.user and blockos.user.is_admin) then
+    return fail("Only administrators can change reactions.")
+  end
+  if not typed then
+    return print_usage()
+  end
+  local row, err = find_item(connection, typed)
+  if not row then
+    return fail(err)
+  end
+  local kept = {}
+  for _, reaction in ipairs(blockos.config.get("blockos.stock.reactions", {})) do
+    if reaction.item ~= row.item then
+      kept[#kept + 1] = reaction
+    end
+  end
+  if action == "add" then
+    local ok, output_error = stock.validate_output({ target = target, side = side })
+    if not ok then
+      return fail(output_error)
+    end
+    kept[#kept + 1] = { item = row.item, target = target, side = side }
+  elseif action ~= "remove" then
+    return print_usage()
+  end
+  blockos.config.set("blockos.stock.reactions", kept)
+  ui.print("Reactions updated.", "ok")
+  show_reactions()
+end
+
 local ACCESS_LISTS = { admin = "admins", viewer = "viewers", computer = "computers" }
 
 local function change_access(connection, action, kind, name)
@@ -296,12 +359,22 @@ local function run_tool(connection)
       return data and data.rows, err
     end,
     describe = function(row)
-      return string.format("%-18s %6d/%-6d %s", row.label, row.count, row.limit,
+      local target = row.refill_to and (" to " .. row.refill_to) or ""
+      return string.format("%-18s %6d/%d%s %s", row.label, row.count, row.limit, target,
         row.is_low and "LOW" or "")
     end,
     role = function(row) return row.is_low and "error" or nil end,
-    hints = { { "e", "Limit" }, { "d", "Unwatch" } },
+    hints = { { "e", "Limit" }, { "f", "Refill to" }, { "d", "Unwatch" } },
     keys = {
+      f = function(row)
+        local answers = ui.form("Refill " .. row.label .. " to (0 = off)",
+          { { label = "Refill to: " } })
+        if answers then
+          local refill_to = tonumber(answers[1]) or 0
+          run("watch", { item = row.item, limit = row.limit, refill_to = refill_to },
+            refill_to > 0 and ("Refills to " .. refill_to .. ".") or "Refill target removed.")
+        end
+      end,
       e = function(row)
         local answers = ui.form("Limit for " .. row.label, { { label = "Limit: " } })
         if answers then
@@ -520,7 +593,7 @@ end
 
 ------------------------------------------------------------------------------
 
-local REMOTE_COMMANDS = { status = true, alerts = true, access = true, sound = true }
+local REMOTE_COMMANDS = { status = true, alerts = true, access = true, sound = true, react = true }
 
 local options = parse_args()
 local command = options.words[1]
@@ -546,6 +619,9 @@ elseif command == nil or REMOTE_COMMANDS[command] then
     change_access(connection, options.words[2], options.words[3], options.words[4])
   elseif command == "sound" then
     set_sound(connection, options.words[2], options.words[3], options.words[4])
+  elseif command == "react" then
+    change_reactions(connection, options.words[2], options.words[3], options.words[4],
+      options.words[5])
   else
     run_tool(connection)
   end

@@ -5,12 +5,15 @@
 -- * Puts a notice on the welcome screen while items are low.
 -- * Draws a stock board on a monitor or Create Display Link when the
 --   `blockos.stock.board` setting names one (set with `stock board <name>`).
+-- * Reactions: redstone outputs that stay on while an item is low, e.g. to run
+--   a farm until stock is refilled (`stock react ...`).
 
 local MAX_ALERTS = 20
-local BOARD_SECONDS = 10
+local REFRESH_SECONDS = 10
 
 local function run(ctx)
   local config = ctx.config
+  local stock = import("stock")
   local stock_alarms = import("stock_alarms")
   local stock_board = import("stock_board")
   local stock_client = import("stock_client")
@@ -41,11 +44,14 @@ local function run(ctx)
     os.queueEvent("blockos_notice", "stock", alert)
   end
 
+  -- Returns the alert if the message is one.
   local function on_message(message)
     local event = wire.parse(message, "event", stock_alarms.ALERT_SCHEMA)
     if event and event.topic == stock_alarms.ALERT_TOPIC then
       remember(event.data)
+      return event.data
     end
+    return nil
   end
 
   -- On the stock computer itself, its own alerts are read directly.
@@ -65,10 +71,34 @@ local function run(ctx)
     seen_local = #alerts
   end
 
+  -- Reactions: redstone outputs that are on while an item is low (e.g. run an
+  -- iron farm until iron is refilled). They follow the stock computer's actual
+  -- state, polled every few seconds; alerts only make them react sooner, so a
+  -- missed alert (this computer was unloaded) is corrected on the next poll.
+  local item_low = {} -- [item] = true/false, from status and alerts
+  local applied_reactions = {}
+
+  local function apply_reactions()
+    local reactions = config.get("blockos.stock.reactions", {})
+    local wanted = stock.reaction_outputs(reactions, item_low)
+    applied_reactions = stock_alarms.apply_redstone(wanted, applied_reactions)
+  end
+
   local page = 1
-  local function draw_board()
+  local function draw_board(data)
     local board = config.get("blockos.stock.board")
     if not board or board == "" then
+      return
+    end
+    local pages = stock_board.show(peripheral, board, data, page)
+    page = (pages and page < pages) and (page + 1) or 1
+  end
+
+  -- One status request feeds both the board and the reactions.
+  local function refresh()
+    local has_board = (config.get("blockos.stock.board") or "") ~= ""
+    local has_reactions = #config.get("blockos.stock.reactions", {}) > 0
+    if not has_board and not has_reactions then
       return
     end
     local connection = stock_client.connect(config.get("blockos.stock.server"))
@@ -77,29 +107,40 @@ local function run(ctx)
     end
     local data, err = connection.call("status")
     if not data then
-      ctx.log.warn("board: %s", tostring(err))
+      ctx.log.warn("stock status: %s", tostring(err))
       return
     end
-    local pages = stock_board.show(peripheral, board, data, page)
-    page = (pages and page < pages) and (page + 1) or 1
+    for _, row in ipairs(data.rows) do
+      item_low[row.item] = row.is_low
+    end
+    apply_reactions()
+    draw_board(data)
+  end
+
+  local function on_alert_message(message)
+    local alert = on_message(message)
+    if alert then
+      item_low[alert.item] = alert.is_low
+      apply_reactions()
+    end
   end
 
   local timer = os.startTimer(1)
   while true do
     local event, a, b, c = os.pullEvent()
     if event == "rednet_message" and c == stock_alarms.ALERT_PROTOCOL then
-      on_message(b)
+      on_alert_message(b)
     elseif event == "timer" and a == timer then
       check_local_alerts()
-      draw_board()
-      timer = os.startTimer(BOARD_SECONDS)
+      refresh()
+      timer = os.startTimer(REFRESH_SECONDS)
     end
   end
 end
 
 return {
   name = "stock-client",
-  description = "Stock alerts, welcome notices and stock boards",
+  description = "Stock alerts, notices, boards and reactions",
   after = { "net", "domain-client", "storage-monitor" },
   restart = "on-failure",
   run = run,

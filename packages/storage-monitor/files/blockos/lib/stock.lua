@@ -7,7 +7,8 @@
 --   poll_seconds     how often storage is read
 --   chime            play the alarm sound when an item goes low
 --   sound            { kind = "note" | "sound" | "file", value, volume } (see stock_alarms)
---   watches          [item] = { label, limit, outputs = { { target, side }... } }
+--   watches          [item] = { label, limit, refill_to?, outputs = { { target, side }... } }
+--                    (low below `limit`, recovered at `refill_to` or a small margin above)
 --   any_low_outputs  redstone outputs that are on while any item is low
 --   access           { admins = {...}, viewers = {...}, computers = {...} }
 --   name             optional: this stock computer's name ("kitchen")
@@ -67,7 +68,7 @@ function stock.validate_output(output)
 end
 
 --- Check and clean a watch before it is stored.
--- @tparam table watch { label, limit, outputs }
+-- @tparam table watch { label, limit, refill_to?, outputs }
 -- @treturn[1] table The cleaned watch.
 -- @treturn[2] nil
 -- @treturn[2] string error message
@@ -75,6 +76,11 @@ function stock.clean_watch(watch)
   local limit = tonumber(watch.limit)
   if not limit or limit < 1 then
     return nil, "the limit must be a number of at least 1"
+  end
+  limit = math.floor(limit)
+  local refill_to = watch.refill_to and tonumber(watch.refill_to)
+  if watch.refill_to and (not refill_to or refill_to <= limit) then
+    return nil, "the refill target must be above the limit"
   end
   local outputs = {}
   for _, output in ipairs(watch.outputs or {}) do
@@ -84,15 +90,24 @@ function stock.clean_watch(watch)
     end
     outputs[#outputs + 1] = { target = output.target, side = output.side }
   end
-  return { label = watch.label, limit = math.floor(limit), outputs = outputs }
+  return {
+    label = watch.label,
+    limit = limit,
+    refill_to = refill_to and math.floor(refill_to),
+    outputs = outputs,
+  }
 end
 
---- The count at which a low item counts as recovered (a margin above the
--- limit, so lamps do not flicker when stock hovers around it).
--- @tparam number limit
+--- The count at which a low item counts as recovered: its refill target when
+-- set (e.g. a farm runs from 200 until 1000), otherwise a small margin above
+-- the limit so lamps do not flicker when stock hovers around it.
+-- @tparam table watch { limit, refill_to? }
 -- @treturn number
-function stock.recovery_level(limit)
-  return limit + math.max(1, math.ceil(limit * stock.RECOVERY_MARGIN))
+function stock.recovery_level(watch)
+  if watch.refill_to then
+    return watch.refill_to
+  end
+  return watch.limit + math.max(1, math.ceil(watch.limit * stock.RECOVERY_MARGIN))
 end
 
 --- Compare current counts with the watches.
@@ -111,7 +126,7 @@ function stock.evaluate(config, totals, previous)
     local was_low = previous[item] ~= nil and previous[item].is_low
     local is_low
     if was_low then
-      is_low = count < stock.recovery_level(watch.limit)
+      is_low = count < stock.recovery_level(watch)
     else
       is_low = count < watch.limit
     end
@@ -119,6 +134,7 @@ function stock.evaluate(config, totals, previous)
       label = watch.label or (found and found.label) or item,
       count = count,
       limit = watch.limit,
+      refill_to = watch.refill_to,
       is_low = is_low,
     }
     if is_low and not was_low then
@@ -160,6 +176,22 @@ function stock.output_states(config, states)
   end
   for _, output in ipairs(config.any_low_outputs) do
     add(output, any_low)
+  end
+  return outputs
+end
+
+--- Outputs for reactions on another computer: each { item, target, side } is
+-- on while that item is low.
+-- @tparam {table...} reactions
+-- @tparam table item_low [item] = true while low
+-- @treturn table [ "target|side" ] = { target, side, is_on }
+function stock.reaction_outputs(reactions, item_low)
+  local outputs = {}
+  for _, reaction in ipairs(reactions) do
+    local key = output_key(reaction)
+    local entry = outputs[key] or { target = reaction.target, side = reaction.side, is_on = false }
+    entry.is_on = entry.is_on or item_low[reaction.item] == true
+    outputs[key] = entry
   end
   return outputs
 end
@@ -234,7 +266,7 @@ end
 
 --- Rows for display, sorted: low items first, then by label.
 -- @tparam table states From stock.evaluate.
--- @treturn {table...} { item, label, count, limit, is_low }
+-- @treturn {table...} { item, label, count, limit, refill_to, is_low }
 function stock.sorted_rows(states)
   local rows = {}
   for item, state in pairs(states) do
@@ -243,6 +275,7 @@ function stock.sorted_rows(states)
       label = state.label,
       count = state.count,
       limit = state.limit,
+      refill_to = state.refill_to,
       is_low = state.is_low,
     }
   end

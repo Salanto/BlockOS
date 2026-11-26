@@ -15,7 +15,9 @@ return function(t)
     end
     inventory.peripheral = t.fake_peripherals({
       chest_0 = chest,
-      chest_1 = t.fake_chest({ [5] = { name = "minecraft:cobblestone", count = 6, label = "Cobblestone" } }),
+      chest_1 = t.fake_chest({
+        [5] = { name = "minecraft:cobblestone", count = 6, label = "Cobblestone" },
+      }),
       monitor_0 = { types = { "monitor" }, methods = {} },
     })
     local sources = { inventory }

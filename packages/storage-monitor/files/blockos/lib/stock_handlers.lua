@@ -24,6 +24,7 @@ local ARGS = {
   watch = {
     item = ITEM,
     limit = { type = "number", min = 1 },
+    refill_to = { type = "number", min = 0, optional = true }, -- 0 clears it
     label = { type = "string", optional = true, max = 64 },
     outputs = { type = "table", optional = true },
   },
@@ -183,6 +184,14 @@ function stock_handlers.new(monitor)
 
   -- Changing -------------------------------------------------------------
 
+  -- A refill target from a request: missing keeps the old one, 0 clears it.
+  local function refill_target(requested, existing)
+    if requested == 0 then
+      return nil
+    end
+    return requested or existing
+  end
+
   handlers.watch = with_args(ARGS.watch, function(ctx, args)
     return admin_change(ctx, function()
       local existing = monitor.config.watches[args.item] or {}
@@ -190,6 +199,7 @@ function stock_handlers.new(monitor)
       local watch, err = stock.clean_watch({
         label = args.label or existing.label or (found and found.label) or args.item,
         limit = args.limit,
+        refill_to = refill_target(args.refill_to, existing.refill_to),
         outputs = args.outputs or existing.outputs,
       })
       if not watch then

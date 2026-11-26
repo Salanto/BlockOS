@@ -84,6 +84,13 @@ Know when you are running out of something, with lamps, a sound and a board.
    - **Board:** `stock board <monitor or Display Link>`, on the stock computer or any computer
      on its access list.
 
+**Run a farm until stock is refilled:** give an item a refill target (Overview tab, `f`), for
+example "low below 200, refill to 1000". An alarm output for that item then stays on until
+the target is reached, so it can drive the farm directly. To drive a farm next to *another*
+computer, put that computer on the stock computer's access list and add a reaction there:
+`stock react add iron computer back`. Reactions follow the real stock state, so a missed
+alert (an unloaded chunk) never leaves the farm running.
+
 Each stock computer decides who may reach it: nobody but its admins (and domain admins) until
 you add viewers and computers to its access list.
 

@@ -8,7 +8,8 @@ return function(t)
   end
 
   t.it("items go low below their limit and recover above a margin", function()
-    local stock, config = config_with({ ["minecraft:iron_ingot"] = { label = "Iron", limit = 100 } })
+    local iron = { ["minecraft:iron_ingot"] = { label = "Iron", limit = 100 } }
+    local stock, config = config_with(iron)
     local function at(count, previous)
       return stock.evaluate(config, { ["minecraft:iron_ingot"] = { count = count } }, previous)
     end
@@ -67,7 +68,8 @@ return function(t)
     t.ok(not stock.clean_watch({ limit = 0 }))
     t.ok(not stock.clean_watch({ limit = "x" }))
     t.ok(not stock.clean_watch({ limit = 5, outputs = { { target = "computer", side = "up" } } }))
-    local watch = stock.clean_watch({ limit = 5.7, outputs = { { target = "computer", side = "top" } } })
+    local outputs = { { target = "computer", side = "top" } }
+    local watch = stock.clean_watch({ limit = 5.7, outputs = outputs })
     t.eq(watch.limit, 5)
   end)
 
@@ -83,5 +85,39 @@ return function(t)
     t.ok(not stock.is_computer_allowed(config, "board-pc"))
     config.access.computers = { "board-pc" }
     t.ok(stock.is_computer_allowed(config, "board-pc"))
+  end)
+
+  t.it("a refill target keeps an item low until it is refilled (farms)", function()
+    local stock, config = config_with({
+      iron = { label = "Iron", limit = 200, refill_to = 1000 },
+    })
+    local function at(count, previous)
+      return stock.evaluate(config, { iron = { count = count } }, previous)
+    end
+    local states = at(150)
+    t.ok(states.iron.is_low, "below the limit: the farm starts")
+    states = at(600, states)
+    t.ok(states.iron.is_low, "still refilling")
+    local changes
+    states, changes = at(1000, states)
+    t.ok(not states.iron.is_low, "refilled: the farm stops")
+    t.eq(changes.recovered[1], "iron")
+    states = at(500, states)
+    t.ok(not states.iron.is_low, "does not restart above the limit")
+    t.ok(not stock.clean_watch({ limit = 200, refill_to = 100 }), "refill must be above the limit")
+  end)
+
+  t.it("reactions on another computer follow the item state", function()
+    local stock = t.fresh_import()("stock")
+    local reactions = {
+      { item = "iron", target = "computer", side = "back" },
+      { item = "gold", target = "computer", side = "back" },
+      { item = "coal", target = "redstone_relay_1", side = "top" },
+    }
+    local outputs = stock.reaction_outputs(reactions, { iron = true, coal = false })
+    t.ok(outputs["computer|back"].is_on, "on while any of its items is low")
+    t.ok(not outputs["redstone_relay_1|top"].is_on)
+    outputs = stock.reaction_outputs(reactions, {})
+    t.ok(not outputs["computer|back"].is_on, "unknown state counts as not low")
   end)
 end

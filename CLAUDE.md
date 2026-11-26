@@ -288,8 +288,9 @@ Peer liveness uses the local receive time, never the sender's clock.
 - **Done (milestone 2):** rpc layer, domain controller with DNS, package server.
 - **Milestone 3:** StorageMonitor (`storage-monitor` package): stock watching with limits,
   redstone/relay lamps, a speaker sound (note, Minecraft sound or .dfpwm file), monitor and
-  Create Display Board boards, alerts to listed computers, a per-computer access list; the
-  shared wire format.
+  Create Display Board boards, alerts to listed computers, a per-computer access list, refill
+  targets and reactions on other computers (level-triggered: they poll status, alerts only
+  speed them up); the shared wire format.
 - **Next:** remote control for PCs and turtles, built on rpc, wire and domain logins. More
   storage sources (e.g. an ME/RS bridge) as separate packages adding
   `lib/storage_sources/<kind>.lua`.
