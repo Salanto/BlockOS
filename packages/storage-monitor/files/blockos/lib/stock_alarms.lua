@@ -88,11 +88,13 @@ local function find_speaker()
 end
 
 -- CC's DFPWM decoder lives in the rom as a `require` module; services have no
--- `require` of their own, so build one.
+-- `require` of their own, so build one. The loaded modules call `require`
+-- themselves (cc.audio.dfpwm needs cc.expect), so it lives in their environment.
 local function dfpwm_module()
   local make_require = dofile("/rom/modules/main/cc/require.lua").make
-  local require = make_require(_ENV, "/")
-  return require("cc.audio.dfpwm")
+  local env = setmetatable({}, { __index = _ENV })
+  env.require = make_require(env, "/")
+  return env.require("cc.audio.dfpwm")
 end
 
 -- Stream a .dfpwm file through the speaker, chunk by chunk.
