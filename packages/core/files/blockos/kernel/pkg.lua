@@ -148,13 +148,13 @@ function pkg.content_sum(manifest, files)
       copy[key] = value
     end
   end
-  local paths = {}
+  local file_paths = {}
   for path in pairs(files) do
-    paths[#paths + 1] = path
+    file_paths[#file_paths + 1] = path
   end
-  table.sort(paths)
+  table.sort(file_paths)
   local parts = { canonical(copy) }
-  for _, path in ipairs(paths) do
+  for _, path in ipairs(file_paths) do
     parts[#parts + 1] = path .. "\0" .. files[path]
   end
   return pkg.checksum(table.concat(parts, "\1"))
