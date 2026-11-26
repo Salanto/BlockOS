@@ -98,8 +98,14 @@ local function run(ctx)
     local hostname = blockos.net and blockos.net.hostname() or ("#" .. os.getComputerID())
     local recipients = alert_recipients(config, stock, stock_alarms)
     local sent = stock_alarms.send_alerts(hostname, states, changes, recipients)
+    local time = textutils.formatTime(os.time(), true)
     for _, alert in ipairs(sent) do
-      monitor.alerts[#monitor.alerts + 1] = alert
+      -- The history shows when it happened (in-game time); not sent on the wire.
+      local entry = { time = time }
+      for key, value in pairs(alert) do
+        entry[key] = value
+      end
+      monitor.alerts[#monitor.alerts + 1] = entry
       if #monitor.alerts > MAX_ALERTS then
         table.remove(monitor.alerts, 1)
       end

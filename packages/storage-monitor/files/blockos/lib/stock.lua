@@ -52,6 +52,28 @@ function stock.check_name(name)
   return clean
 end
 
+--- Alerts as a history to show: newest first, and only the newest alert of
+-- each item marked current (older ones are superseded, e.g. a LOW that was
+-- followed by "ok again").
+-- @tparam {table...} alerts Oldest first, as the stock computer keeps them.
+-- @treturn {table...} Copies, newest first, each with `is_current`.
+function stock.alert_history(alerts)
+  local history = {}
+  local seen = {}
+  for index = #alerts, 1, -1 do
+    local alert = alerts[index]
+    local copy = {}
+    for key, value in pairs(alert) do
+      copy[key] = value
+    end
+    local key = tostring(alert.server) .. "/" .. tostring(alert.item)
+    copy.is_current = not seen[key]
+    seen[key] = true
+    history[#history + 1] = copy
+  end
+  return history
+end
+
 --- A fresh config.
 -- @tparam {string...} admins Users or groups who may configure it.
 -- @tparam[opt] string name
