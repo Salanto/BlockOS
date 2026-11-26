@@ -35,6 +35,37 @@ local function find_package_disk()
   return nil
 end
 
+-- Groups in `names` that no longer exist in the domain; nil if not checkable.
+local function find_unknown_groups(names)
+  local found, domain = pcall(import, "domain")
+  if not found then
+    return nil
+  end
+  return domain.find_unknown(names)
+end
+
+-- A rule naming only deleted groups hides the package from everyone but
+-- domain admins, so point such groups out.
+local function warn_unknown_groups(rules)
+  for name, rule in pairs(rules) do
+    local unknown = find_unknown_groups(rule.groups)
+    if unknown and #unknown > 0 then
+      ui.print(name .. ": group(s) no longer in the domain: " .. table.concat(unknown, ", "),
+        "warn")
+    end
+  end
+end
+
+local function allow(name, groups)
+  local unknown = find_unknown_groups(groups)
+  if unknown and #unknown > 0 then
+    ui.print("No such group in the domain: " .. table.concat(unknown, ", "), "error")
+    return
+  end
+  repo.set_rule(name, groups)
+  ui.print(name .. " is now limited to: " .. table.concat(groups, ", "), "ok")
+end
+
 local function show_status()
   local drives = {}
   for _, root in ipairs(repo.roots()) do
@@ -63,6 +94,7 @@ local function show_status()
     { title = "DRIVE", key = "drive" },
     { title = "ACCESS", key = "access" },
   }, packages, function(row) return row.access == "public" and "text" or "warn" end)
+  warn_unknown_groups(rules)
 end
 
 local function import_packages(flag, tag)
@@ -116,9 +148,7 @@ elseif not is_admin() then
 elseif command == "import" then
   import_packages(args[2], args[3])
 elseif command == "allow" and args[3] then
-  local groups = { table.unpack(args, 3) }
-  repo.set_rule(args[2], groups)
-  ui.print(args[2] .. " is now limited to: " .. table.concat(groups, ", "), "ok")
+  allow(args[2], { table.unpack(args, 3) })
 elseif command == "public" and args[2] then
   repo.set_rule(args[2], nil)
   ui.print(args[2] .. " is now public.", "ok")

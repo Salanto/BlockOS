@@ -281,6 +281,19 @@ end
 
 local ACCESS_LISTS = { admin = "admins", viewer = "viewers", computer = "computers" }
 
+-- Access lists are not updated when a domain user or group is deleted; point
+-- out entries that no longer exist (computer lists hold hostnames: skipped).
+local function warn_unknown_names(list, kind)
+  if kind == "computer" then
+    return
+  end
+  local found, domain = pcall(import, "domain")
+  local unknown = found and domain.find_unknown(list, true)
+  if unknown and #unknown > 0 then
+    ui.print("Not in the domain (deleted?): " .. table.concat(unknown, ", "), "warn")
+  end
+end
+
 local function change_access(connection, action, kind, name)
   local list_name = ACCESS_LISTS[kind]
   if not list_name or not name or (action ~= "add" and action ~= "remove") then
@@ -304,6 +317,7 @@ local function change_access(connection, action, kind, name)
     return fail(set_error)
   end
   ui.print((action == "add" and "Added " or "Removed ") .. name .. " (" .. kind .. ").", "ok")
+  warn_unknown_names(list, kind)
 end
 
 ------------------------------------------------------------------------------
