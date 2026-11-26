@@ -5,6 +5,8 @@
 -- where `stock setup` was done.
 
 local MAX_ALERTS = 20
+-- Recent item moves, for the network map's animations.
+local MAX_MOVES = 50
 
 local function config_path()
   return import("paths").top(import("stock_client").CONFIG_FILE)
@@ -49,7 +51,26 @@ local function run(ctx)
     alerts = {},
     sources = nil,
     inventories = {}, -- from the last read: { handle, role, source, items? }
+    moves = {}, -- recent moves, oldest first: { seq, from, to, item, label, count }
+    move_seq = 0,
   }
+
+  -- Note a move for the map (the map asks for moves newer than a seq).
+  local function record_move(from, to, item, count)
+    monitor.move_seq = monitor.move_seq + 1
+    local found = monitor.totals[item]
+    monitor.moves[#monitor.moves + 1] = {
+      seq = monitor.move_seq,
+      from = from,
+      to = to,
+      item = item,
+      label = found and found.label or item,
+      count = count,
+    }
+    if #monitor.moves > MAX_MOVES then
+      table.remove(monitor.moves, 1)
+    end
+  end
 
   function monitor.save()
     if pcall(fsx.write_table, path, config) then
@@ -71,7 +92,7 @@ local function run(ctx)
 
   --- Deliver items to an output chest (see stock_logistics.request).
   function monitor.request(item, count, output)
-    return stock_logistics.request(monitor.inventories, item, count, output)
+    return stock_logistics.request(monitor.inventories, item, count, output, record_move)
   end
 
   -- How full one inventory is right now, for the Storage tab.
@@ -136,7 +157,7 @@ local function run(ctx)
   local function check_stock()
     local totals, blocks, failures, inventories = stock_sources.read_all(sources, role_of)
     monitor.inventories = inventories
-    local _, sort_failures = stock_logistics.sort_inputs(inventories)
+    local _, sort_failures = stock_logistics.sort_inputs(inventories, record_move)
     for _, failure in ipairs(sort_failures) do
       failures[#failures + 1] = failure
     end

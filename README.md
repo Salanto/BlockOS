@@ -106,6 +106,12 @@ alert (an unloaded chunk) never leaves the farm running.
 Give chests labels with `l`. To find out which chest is which, press `f` and drop any item into
 it. Everyone who can look at the stock may take items out.
 
+`stock map` (or `m` in the Storage tab) shows the network as a map: inputs and outputs on the
+left, storage on the right with fill bars, and items flying along the lines as they are sorted
+or requested. Advanced computers get colours and mouse clicks; basic ones a plain text map.
+Select a chest (arrows and Enter, or a click) to label it, change its role or get items into
+an output.
+
 A stock computer is open by default: anyone can look and every computer gets its alerts; only
 its admins (and domain admins) can change it. Narrow that in the Access tab if you like. It
 works without a domain too.

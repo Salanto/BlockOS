@@ -10,6 +10,7 @@
 --   stock storage role <chest> storage|input|output|ignore
 --   stock storage label <chest> <label...>   (nothing removes it)
 --   stock request <item> [count] [output]    deliver items to an output chest
+--   stock map                       the network map, with item moves animated
 --   stock board <peripheral>|off    show a stock board on a monitor or Display Link
 --   stock access add|remove admin|viewer|computer <name>
 --   stock sound note|sound|file <value> [volume] | test
@@ -31,7 +32,7 @@ local function print_usage()
   print("       stock setup [--name <name>] | rename <name> | rename --clear")
   print("       stock status | alerts")
   print("       stock storage [list] | role <chest> <role> | label <chest> <label>")
-  print("       stock request <item> [count] [output chest]")
+  print("       stock request <item> [count] [output chest] | map")
   print("       stock board <peripheral> | off")
   print("       stock access add|remove admin|viewer|computer <name>")
   print("       stock sound note|sound|file <value> [volume] | test")
@@ -425,6 +426,13 @@ end
 -- The full-screen tool
 ------------------------------------------------------------------------------
 
+local function show_map(connection)
+  local ok, err = import("stock_map").run(connection)
+  if not ok then
+    fail(err)
+  end
+end
+
 local function run_tool(connection)
   local state = { tab = 1, rows = {}, list = ui.new_list(), message = nil, role = "dim" }
 
@@ -443,7 +451,7 @@ local function run_tool(connection)
   end
 
   -- Keys that work without a selected row.
-  local ROWLESS_KEYS = { W = true, a = true, s = true, t = true, f = true }
+  local ROWLESS_KEYS = { W = true, a = true, s = true, t = true, f = true, m = true }
 
   local function choose_sound()
     local kinds = { "note", "sound", "file" }
@@ -716,8 +724,9 @@ local function run_tool(connection)
       return string.format("%-18s %-7s %s", row.label, row.role, describe_fill(row))
     end,
     role = function(row) return row.role == "ignore" and "faint" or nil end,
-    hints = { { "f", "Find" }, { "l", "Label" }, { "s/i/o/x", "Role" } },
+    hints = { { "m", "Map" }, { "f", "Find" }, { "l", "Label" }, { "s/i/o/x", "Role" } },
     keys = {
+      m = function() show_map(connection) end,
       f = find_chest,
       l = set_label,
       s = function(row) set_role(row, "storage") end,
@@ -890,6 +899,7 @@ local REMOTE_COMMANDS = {
   react = true,
   storage = true,
   request = true,
+  map = true,
 }
 
 local options = parse_args()
@@ -922,6 +932,8 @@ elseif command == nil or REMOTE_COMMANDS[command] then
     change_access(connection, options.words[2], options.words[3], options.words[4])
   elseif command == "sound" then
     set_sound(connection, options.words[2], options.words[3], options.words[4])
+  elseif command == "map" then
+    show_map(connection)
   elseif command == "storage" then
     change_storage(connection, options.words)
   elseif command == "request" then

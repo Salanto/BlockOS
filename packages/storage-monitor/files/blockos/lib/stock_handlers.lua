@@ -2,7 +2,7 @@
 --
 -- Every stock computer decides who may reach it (its access list; open to
 -- everyone by default, "*" meaning everyone):
---   viewers          status, catalog, alerts, storages, request (taking items
+--   viewers          status, catalog, alerts, storages, moves, request (taking items
 --                    out is for everyone who may look: friends only)
 --   admins           everything, including watches, alarms, storage roles and
 --                    the access list
@@ -44,6 +44,7 @@ local ARGS = {
     role = { type = "string", optional = true, max = 16 },
     label = { type = "string", optional = true, max = 64 },
   },
+  moves = { since = { type = "number", optional = true } },
   -- `item` is an item id or (part of) its name.
   request = {
     item = ITEM,
@@ -320,6 +321,22 @@ function stock_handlers.new(monitor)
     end
     return monitor.list_storages()
   end
+
+  --- Moves newer than `since` (for the map's animations), and the newest seq.
+  handlers.moves = with_args(ARGS.moves, function(ctx, args)
+    local ok, err = require_viewer(ctx)
+    if not ok then
+      return nil, err
+    end
+    local since = args.since or 0
+    local newer = {}
+    for _, move in ipairs(monitor.moves or {}) do
+      if move.seq > since then
+        newer[#newer + 1] = move
+      end
+    end
+    return { seq = monitor.move_seq or 0, moves = newer }
+  end)
 
   handlers.set_storage = with_args(ARGS.set_storage, function(ctx, args)
     return admin_change(ctx, function()
