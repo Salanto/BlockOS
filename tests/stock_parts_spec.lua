@@ -73,6 +73,7 @@ return function(t)
           methods = {
             playNote = function(instrument) notes[#notes + 1] = instrument end,
             playSound = function(name) notes[#notes + 1] = name return true end,
+            playAudio = function() notes[#notes + 1] = "audio" return true end,
           },
         },
       }),
@@ -114,6 +115,10 @@ return function(t)
     local ok, err = alarms.chime({ kind = "file", value = "/missing.dfpwm" })
     t.ok(not ok)
     t.ok(err:find("no sound file"), err)
+    local clip = t.sandbox .. "/alert.dfpwm"
+    t.write(clip, string.rep("U", 64))
+    t.ok(alarms.chime({ kind = "file", value = clip }), "a .dfpwm file decodes and plays")
+    t.eq(notes[#notes], "audio")
     t.ok(not alarms.validate_sound({ kind = "music", value = "x" }))
   end)
 
