@@ -14,6 +14,7 @@ stock_alarms.ALERT_PROTOCOL = "blockos.stock.alert"
 stock_alarms.ALERT_TOPIC = "stock_alert"
 stock_alarms.COMPUTER = "computer"
 stock_alarms.RELAY_TYPE = "redstone_relay"
+stock_alarms.EVERYONE = "everyone"
 
 --- Payload of a stock alert event.
 stock_alarms.ALERT_SCHEMA = {
@@ -30,6 +31,7 @@ stock_alarms.env = {
   peripheral = peripheral,
   redstone = redstone,
   send = function(recipient, message, protocol) rednet.send(recipient, message, protocol) end,
+  broadcast = function(message, protocol) rednet.broadcast(message, protocol) end,
 }
 
 --- Redstone targets that can be chosen: this computer and every relay.
@@ -175,11 +177,12 @@ function stock_alarms.alert(server, item, state)
   })
 end
 
---- Send alerts for every change to each computer ID given.
+--- Send alerts for every change to each computer ID given, or to everyone.
+-- Alerts only go out when an item goes low or recovers, so a broadcast is rare.
 -- @tparam string server
 -- @tparam table states
 -- @tparam table changes From stock.evaluate.
--- @tparam {number...} recipients Computer IDs.
+-- @tparam {number...}|string recipients Computer IDs, or stock_alarms.EVERYONE.
 -- @treturn {table...} The alert payloads sent (for the alert history).
 function stock_alarms.send_alerts(server, states, changes, recipients)
   local sent = {}
@@ -192,8 +195,12 @@ function stock_alarms.send_alerts(server, states, changes, recipients)
   end
   for _, item in ipairs(changed) do
     local event = stock_alarms.alert(server, item, states[item])
-    for _, recipient in ipairs(recipients) do
-      stock_alarms.env.send(recipient, event, stock_alarms.ALERT_PROTOCOL)
+    if recipients == stock_alarms.EVERYONE then
+      stock_alarms.env.broadcast(event, stock_alarms.ALERT_PROTOCOL)
+    else
+      for _, recipient in ipairs(recipients) do
+        stock_alarms.env.send(recipient, event, stock_alarms.ALERT_PROTOCOL)
+      end
     end
     sent[#sent + 1] = event.data
   end

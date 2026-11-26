@@ -53,6 +53,10 @@ local function draw_login_screen(message)
   if message then
     ui.text_at(x, y + 3, ui.fit(message, field_width), "error", "panel")
   end
+  local motd = settings.get("blockos.motd")
+  if motd and motd ~= "" then
+    ui.center(height - 1, ui.fit(motd, width), "title")
+  end
   ui.footer(LOGIN_HINTS)
   return { x = x, y = y, width = field_width }
 end
@@ -158,13 +162,35 @@ function session.run_user(user, user_shell)
   log.info("session", "%s logged out", user.name)
 end
 
+--- The user to log in automatically at boot, if the blockos.autologin setting
+-- names an existing local account (for farm computers, displays and turtles).
+-- @treturn table|nil A user record.
+function session.autologin_user()
+  local name = settings.get("blockos.autologin")
+  local account = name and name ~= "" and auth.get(name)
+  if not account then
+    return nil
+  end
+  return { name = account.name, source = "local", groups = {}, is_admin = account.is_admin }
+end
+
 --- Login/session loop. Never returns.
 -- @tparam table shell The rom shell API.
 -- @tparam[opt] function on_ready Called once the first login screen is up.
 function session.run(shell, on_ready)
   local user_shell = session.default_shell(shell)
+  -- Only at boot: after a logout, the login screen is shown as usual.
+  local user = session.autologin_user()
+  if user then
+    log.info("session", "%s logged in automatically", user.name)
+    if on_ready then
+      on_ready()
+      on_ready = nil
+    end
+    session.run_user(user, user_shell)
+  end
   while true do
-    local user = session.login(on_ready)
+    user = session.login(on_ready)
     on_ready = nil
     session.run_user(user, user_shell)
   end

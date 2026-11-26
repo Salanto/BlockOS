@@ -1,6 +1,6 @@
 -- pkg-server service: serves the packages stored on this computer's drives
--- (protocol "blockos.pkg"). Register it in the domain once with
--- `domain dns add pkg <this hostname>` so other computers find it.
+-- (protocol "blockos.pkg"). It registers itself as the domain's "pkg" service
+-- record at start, so other computers find it.
 
 local function run(ctx)
   local repo = import("repo")
@@ -10,6 +10,15 @@ local function run(ctx)
     count = count + 1
   end
   ctx.log.info("serving %d packages from %d drives", count, #repo.roots())
+
+  -- Make this server findable as the domain's "pkg" service.
+  local found, domain = pcall(import, "domain")
+  if found and domain.is_joined() then
+    local ok, err = domain.register_service("pkg", "blockos.pkg")
+    if not ok then
+      ctx.log.warn("could not register the pkg service record: %s", tostring(err))
+    end
+  end
   rpc.serve("blockos.pkg", repo.handlers())
 end
 

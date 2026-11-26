@@ -49,6 +49,16 @@ config.define("blockos.log.max_size", {
   type = "number",
 })
 
+config.define("blockos.autologin", {
+  description = "Local user logged in automatically at boot (farm computers, displays, turtles).",
+  type = "string",
+})
+
+config.define("blockos.motd", {
+  description = "Message of the day, shown on the login screen.",
+  type = "string",
+})
+
 config.define("blockos.services.disabled", {
   description = "Names of BlockOS services that should not start.",
   default = {},

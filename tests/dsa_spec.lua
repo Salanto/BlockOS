@@ -25,7 +25,8 @@ return function(t)
     local dir = assert(import("directory").create("home", "admin", "secret"))
     local token = dir:join("pc1", ME)
     import("domain").set_membership({ name = "home", controller_id = ME, computer_token = token })
-    local session = dir:login("admin", "secret", os.clock())
+    -- Sessions are measured in real seconds, like the controller does.
+    local session = dir:login("admin", "secret", math.floor(os.epoch("utc") / 1000))
     _G.blockos = { ui = import("ui"), user = { name = "admin", token = session.token } }
     rpc.set_transport(rpc.loopback_transport())
     local storage = { save = function() return true end, has_room = function() return true end }
@@ -67,11 +68,11 @@ return function(t)
     with_screen(39, 13, function()
       run_dsa(rpc, handlers, steps(
         { { "wait", 0.5 }, { "char", "2" }, { "wait", 0.5 } },
-        -- Groups are sorted: computer-joiners is first.
+        -- Groups are sorted: domain-admins is first.
         { { "char", "m" } },
         type_line("dave"),
         { { "wait", 0.5 }, { "char", "q" } }))
     end)
-    t.ok(dir:is_member("computer-joiners", "dave"))
+    t.ok(dir:is_member("domain-admins", "dave"))
   end)
 end

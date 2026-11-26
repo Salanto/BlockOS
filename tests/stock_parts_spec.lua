@@ -77,6 +77,9 @@ return function(t)
       send = function(recipient, message, protocol)
         sent[#sent + 1] = { recipient = recipient, message = message, protocol = protocol }
       end,
+      broadcast = function(message, protocol)
+        sent[#sent + 1] = { recipient = "everyone", message = message, protocol = protocol }
+      end,
     }
     return alarms, relay_outputs, computer_outputs, sent, notes
   end
@@ -123,6 +126,9 @@ return function(t)
     t.ok(import("wire").parse(sent[1].message, "event", alarms.ALERT_SCHEMA))
     alarms.send_alerts("stock-pc", states, { went_low = {}, recovered = {} }, { 12 })
     t.eq(#sent, 2, "no change, no alert")
+    local went_low = { went_low = { "iron" }, recovered = {} }
+    alarms.send_alerts("stock-pc", states, went_low, alarms.EVERYONE)
+    t.eq(sent[3].recipient, "everyone", "open access: one broadcast")
   end)
 
   local BOARD_DATA = {

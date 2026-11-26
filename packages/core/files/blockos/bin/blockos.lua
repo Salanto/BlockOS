@@ -19,6 +19,8 @@ local function print_usage()
   print("  blockos log [lines]")
   print("  blockos rollback")
   print("  blockos cleanup")
+  print("  blockos autologin <user> | off")
+  print("  blockos motd <message...> | off")
   print("  blockos version")
 end
 
@@ -195,6 +197,42 @@ local function roll_back()
   os.reboot()
 end
 
+-- blockos autologin <user>|off: log a local user in automatically at boot.
+local function set_autologin(name)
+  if not name then
+    return print_usage()
+  end
+  if not is_admin() then
+    return
+  end
+  if name == "off" then
+    blockos.config.set("blockos.autologin", nil)
+    return ui.print("Autologin turned off.", "ok")
+  end
+  if not blockos.auth.get(name) then
+    return ui.print("No local user named " .. name .. ".", "error")
+  end
+  blockos.config.set("blockos.autologin", name)
+  ui.print(name .. " is logged in automatically at boot.", "ok")
+end
+
+-- blockos motd <message...>|off: a message on the login screen.
+local function set_motd(words)
+  if #words == 0 then
+    return print_usage()
+  end
+  if not is_admin() then
+    return
+  end
+  local message = table.concat(words, " ")
+  if message == "off" then
+    blockos.config.set("blockos.motd", nil)
+    return ui.print("Message of the day removed.", "ok")
+  end
+  blockos.config.set("blockos.motd", message)
+  ui.print("Message of the day set.", "ok")
+end
+
 local function show_version()
   ui.title("BlockOS " .. blockos.version)
   local rows = {}
@@ -216,6 +254,10 @@ elseif command == "log" then
   show_log(args[2])
 elseif command == "cleanup" then
   clean_up()
+elseif command == "autologin" then
+  set_autologin(args[2])
+elseif command == "motd" then
+  set_motd({ table.unpack(args, 2) })
 elseif command == "rollback" then
   roll_back()
 elseif command == "version" then

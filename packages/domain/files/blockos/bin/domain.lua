@@ -23,7 +23,7 @@ local function is_local_admin()
 end
 
 local function ask_admin_login(purpose)
-  print(purpose .. " needs a domain admin or computer-joiner.")
+  print(purpose .. ": log in with any domain account.")
   local name = ui.prompt("Name: ")
   local password = ui.prompt("Password: ", { mask = "*" })
   return name, password
@@ -80,7 +80,11 @@ local function leave(force)
     fail("Only administrators can remove this computer from its domain.")
     return
   end
-  local name, password = ask_admin_login("Leaving the domain")
+  -- A logged-in domain user needs no password: their login is sent along.
+  local name, password
+  if blockos.user.source ~= "domain" then
+    name, password = ask_admin_login("Leaving the domain")
+  end
   local ok, err = domain.leave(name, password, force)
   if not ok then
     fail(err .. " (use --force to leave anyway)")

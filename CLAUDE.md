@@ -59,11 +59,11 @@ may log in, which packages a computer may pull, and who may use services and con
 | AD | BlockOS |
 |---|---|
 | Domain / domain controller | `dcpromo` (package `domain-controller`) creates a domain such as `home`; the controller serves protocol `blockos.domain`. It is **exclusive**: no other optional packages on it unless `--force`. |
-| Users and groups | Stored on the controller. Flat groups; built in: `domain-admins`, `domain-users` (everyone), `computer-joiners`, `dns-admins`. |
-| Computer accounts | `domain join` needs a domain admin or computer-joiner login. The computer gets a long-lived **computer token** (on disk on both sides; revoked by removing the account). It authorises status reports, user logins and system-to-system calls (`rpc.require_computer`). |
-| Logging in | The password goes once, in plain text, to the controller, which returns a **session token** (fixed 8-hour lifetime, in the controller's memory only). Services check the token with the controller on **every** request (`rpc.require_user`): no cached logins, so logout and group changes apply at once. |
+| Users and groups | Stored on the controller. Flat groups; built in: `domain-admins` and `domain-users` (everyone). |
+| Computer accounts | `domain join` needs any domain user's login (friends only: joining is not guarded). The computer gets a long-lived **computer token** (on disk on both sides; revoked by removing the account). It authorises status reports, user logins, registering its own service records and system-to-system calls (`rpc.require_computer`). `domain leave` needs no password when a domain user is logged in. |
+| Logging in | The password goes once, in plain text, to the controller, which returns a **session token** (24 hours of real time, saved on the controller so it survives restarts). Services check the token with the controller on **every** request (`rpc.require_user`): no cached logins, so logout and group changes apply at once. When a program finds its login expired it asks for the password once and retries (`rpc.call` option `relogin`; never in services). Farm computers, displays and turtles can log a local user in at boot (`blockos autologin <user>`). |
 | Local accounts | Always available as `.\name`, e.g. when the controller is down. A bare name means a domain user once joined. Domain admins are admins on every joined computer. |
-| AD-integrated DNS | The controller holds host records (`<host>.<domain>`, updated by each computer itself) and service records (e.g. `pkg -> storage`, created by domain-admins or dns-admins). |
+| AD-integrated DNS | The controller holds host records (`<host>.<domain>`, updated by each computer itself) and service records (e.g. `pkg -> storage`). Services register records pointing at their own computer at start (`domain.register_service`); domain-admins can add any record. |
 | Users and Computers tool | `dsa` (full-screen) and `domain` (command line). |
 
 Login providers: `auth.register_provider(name, provider)`; core has `local`, the `domain`
@@ -83,6 +83,12 @@ Things to keep in mind:
 - `math.random` is fine for session tokens and salts given the threat model.
 
 ## Design principles
+
+- **Fun first (friends only):** we only play with friends, so when realism and fun disagree,
+  fun wins. Default to open (e.g. stock computers are viewable by everyone), avoid extra
+  password prompts and admin chores, give common actions a short path, and don't add
+  permission tiers or safety rules that only matter against strangers. Keep only safeguards
+  against *accidents* (bad updates, full disks, missed events).
 
 - **Build our own:** this is a hobby project to build a proper network stack ourselves. Do not
   pull in or copy existing community OSes, networking libraries, or crypto/DNS packages; write

@@ -36,6 +36,7 @@ local transport = {
 local computer_token_provider = function() return nil end
 local user_validator = function() return nil, "this computer is not in a domain" end
 local computer_validator = function() return nil, "this computer is not in a domain" end
+local relogin_handler = function() return nil end
 
 --- Replace how messages are sent (tests use a loopback transport).
 -- @tparam table new_transport { send = function(recipient, message, protocol) }
@@ -72,6 +73,13 @@ end
 -- @tparam function validator validator(token) -> { name, groups } or nil, err
 function rpc.set_user_validator(validator)
   user_validator = validator
+end
+
+--- Set how an expired login is renewed (the domain package asks the user for
+-- their password). Returns the new token or nil.
+-- @tparam function handler
+function rpc.set_relogin_handler(handler)
+  relogin_handler = handler
 end
 
 --- Set how computer tokens are checked (normally: ask the domain controller).
@@ -117,23 +125,7 @@ local function wait_for_reply(request_id, protocol, timeout)
   end
 end
 
---- Call an operation on another computer and wait for the answer.
--- @tparam number server_id Computer ID.
--- @tparam string protocol e.g. "blockos.domain"
--- @tparam string op
--- @param[opt] args Any serialisable value.
--- @tparam[opt] table options { timeout, retries, token, computer_token }
--- @return[1] The result.
--- @treturn[2] nil
--- @treturn[2] string error message
-function rpc.call(server_id, protocol, op, args, options)
-  options = options or {}
-  local timeout = options.timeout or rpc.DEFAULT_TIMEOUT
-  local attempts = 1 + (options.retries or rpc.DEFAULT_RETRIES)
-  local request = wire.request(new_request_id(), op, args,
-    options.token or current_user_token(),
-    options.computer_token or computer_token_provider())
-
+local function send_and_wait(server_id, protocol, request, timeout, attempts)
   for _ = 1, attempts do
     transport.send(server_id, request, protocol)
     local response = wait_for_reply(request.id, protocol, timeout)
@@ -148,6 +140,37 @@ function rpc.call(server_id, protocol, op, args, options)
     end
   end
   return nil, "no answer from computer #" .. tostring(server_id)
+end
+
+--- Call an operation on another computer and wait for the answer.
+-- @tparam number server_id Computer ID.
+-- @tparam string protocol e.g. "blockos.domain"
+-- @tparam string op
+-- @param[opt] args Any serialisable value.
+-- @tparam[opt] table options { timeout, retries, token, computer_token, relogin }.
+--   With `relogin`, an expired login asks the user for their password once and
+--   retries (only for programs the user is running, never for services).
+-- @return[1] The result.
+-- @treturn[2] nil
+-- @treturn[2] string error message
+function rpc.call(server_id, protocol, op, args, options)
+  options = options or {}
+  local timeout = options.timeout or rpc.DEFAULT_TIMEOUT
+  local attempts = 1 + (options.retries or rpc.DEFAULT_RETRIES)
+  local token = options.token or current_user_token()
+  local request = wire.request(new_request_id(), op, args, token,
+    options.computer_token or computer_token_provider())
+
+  local result, err = send_and_wait(server_id, protocol, request, timeout, attempts)
+  if result or err ~= rpc.LOGIN_REQUIRED or not (options.relogin and token) then
+    return result, err
+  end
+  local new_token = relogin_handler()
+  if not new_token then
+    return nil, err
+  end
+  request = wire.request(new_request_id(), op, args, new_token, request.computer_token)
+  return send_and_wait(server_id, protocol, request, timeout, attempts)
 end
 
 --- Find a server by protocol (and optionally name) with rednet.lookup.

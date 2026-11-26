@@ -76,6 +76,14 @@ function auth.list()
   return users
 end
 
+--- Look up a local account.
+-- @tparam string name
+-- @treturn table|nil { name, is_admin }
+function auth.get(name)
+  local user = load_db().users[name]
+  return user and public_record(name, user)
+end
+
 --- Create an account.
 -- @tparam string name
 -- @tparam string password

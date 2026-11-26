@@ -38,6 +38,9 @@ Either way, the first boot asks you to create an administrator account.
 | `update` | Upgrade from the latest release (`--tag`, `--disk`, `--check`, `--make-disk`) |
 | `useradd`, `userdel`, `passwd` | Manage local accounts |
 | `logout` | Log out (closes all tabs) |
+| `msg <host> <text>` / `msg * <text>` / `msg` | Chat with other computers; `msg` shows your messages |
+| `blockos autologin <user>` | Log a local user in at boot (farms, displays, turtles) |
+| `blockos motd <text>` | A message of the day on the login screen |
 
 ## Optional packages
 
@@ -51,7 +54,7 @@ computers.
 1. On a computer that will do nothing else: `pkg install domain-controller`, then `dcpromo`
    (choose a domain name like `home` and the first domain admin).
 2. On every other computer or turtle: `pkg install domain`, then `domain join home` and log in
-   with a domain admin when asked.
+   with any domain account when asked.
 3. Log in with domain accounts from then on. Local accounts still work as `.\name`, for example
    when the controller is down.
 4. Manage users, groups, computers and service records with `dsa` (full screen) or `domain`.
@@ -59,8 +62,8 @@ computers.
 ## A package server
 
 On a computer with disk drives (attach as many as you like with wired modems):
-`pkg install pkg-server`, then `pkgserver import --latest`. Register it once with
-`domain dns add pkg <hostname>`; other computers then install with `pkg install <name> --server`.
+`pkg install pkg-server`, then `pkgserver import --latest`. It registers itself in the domain,
+so other computers can install from it right away with `pkg install <name> --server`.
 `pkgserver allow <name> <group>` limits a package to a group.
 
 ## Watching stock
@@ -91,8 +94,9 @@ computer, put that computer on the stock computer's access list and add a reacti
 `stock react add iron computer back`. Reactions follow the real stock state, so a missed
 alert (an unloaded chunk) never leaves the farm running.
 
-Each stock computer decides who may reach it: nobody but its admins (and domain admins) until
-you add viewers and computers to its access list.
+A stock computer is open by default: anyone can look and every computer gets its alerts; only
+its admins (and domain admins) can change it. Narrow that in the Access tab if you like. It
+works without a domain too.
 
 ## Recovery
 

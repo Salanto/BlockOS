@@ -10,9 +10,10 @@
 --   groups    [name] = { members = { [user] = true } }
 --   computers [hostname] = { id, token, last_seen_day }
 --   services  [type] = { host, protocol }
--- Kept in memory only: user sessions, and what computers report about
--- themselves (info, kind, version, exact last-seen time). This keeps the saved
--- file small and avoids a disk write for every status report.
+-- User sessions are saved separately (/etc/blockos/sessions), so logins survive
+-- a controller restart; their times are real seconds (os.epoch). What computers
+-- report about themselves (info, kind, version, exact last-seen time) stays in
+-- memory, which keeps the saved files small.
 -- @module directory
 
 local auth = import("auth")
@@ -24,13 +25,10 @@ local directory = {}
 
 directory.ADMINS = "domain-admins"
 directory.USERS = "domain-users"
-directory.JOINERS = "computer-joiners"
-directory.DNS_ADMINS = "dns-admins"
-directory.BUILTIN_GROUPS = {
-  directory.ADMINS, directory.USERS, directory.JOINERS, directory.DNS_ADMINS,
-}
+directory.BUILTIN_GROUPS = { directory.ADMINS, directory.USERS }
 
-directory.SESSION_SECONDS = 8 * 60 * 60
+--- How long a login lasts, in real seconds. Friends only: long and forgiving.
+directory.SESSION_SECONDS = 24 * 60 * 60
 
 --- Largest status report (serialised info) a computer may send.
 directory.MAX_INFO_BYTES = 1024
@@ -75,8 +73,9 @@ end
 
 --- Wrap saved data (fills in anything missing).
 -- @tparam table data
+-- @tparam[opt] table sessions Saved sessions (see saved_sessions).
 -- @treturn Directory
-function directory.load(data)
+function directory.load(data, sessions)
   local self = setmetatable({}, Directory)
   self.data = data
   data.users = data.users or {}
@@ -93,7 +92,7 @@ function directory.load(data)
       computer[field] = nil
     end
   end
-  self.sessions = {}
+  self.sessions = sessions or {}
   self.status = {}
   return self
 end
@@ -291,12 +290,10 @@ end
 -- Computers and host records
 ------------------------------------------------------------------------------
 
---- May this user join computers to the domain?
+--- May this user join computers to the domain? Any domain user may: we only
+-- play with friends, so joining is not something to guard.
 function Directory:can_join(name, password)
-  if not self:check_password(name, password) then
-    return false
-  end
-  return self:is_member(directory.ADMINS, name) or self:is_member(directory.JOINERS, name)
+  return self:check_password(name, password)
 end
 
 --- Create (or replace) a computer account. Returns its long-lived token.
@@ -526,6 +523,12 @@ function Directory:end_sessions_of(name)
       self.sessions[token] = nil
     end
   end
+end
+
+--- The sessions, for saving (they survive a controller restart).
+-- @treturn table [token] = { name, expires }
+function Directory:saved_sessions()
+  return self.sessions
 end
 
 --- Forget expired sessions (they are otherwise only dropped when used again).

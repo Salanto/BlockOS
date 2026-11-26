@@ -22,6 +22,9 @@ stock.RECOVERY_MARGIN = 0.05
 stock.SIDES = { "top", "bottom", "left", "right", "front", "back" }
 stock.DOMAIN_ADMINS = "domain-admins"
 
+--- In an access list: everyone (any user, any computer, even without a domain).
+stock.EVERYONE = "*"
+
 local VALID_SIDES = {}
 for _, side in ipairs(stock.SIDES) do
   VALID_SIDES[side] = true
@@ -32,7 +35,10 @@ end
 -- @tparam[opt] string name
 -- @treturn table
 function stock.new_config(admins, name)
-  return stock.normalise({ access = { admins = admins }, name = name })
+  -- Friends only: open by default. Everyone may look, every computer gets
+  -- alerts; only the admins (and domain admins) may change things.
+  local access = { admins = admins, viewers = { stock.EVERYONE }, computers = { stock.EVERYONE } }
+  return stock.normalise({ access = access, name = name })
 end
 
 --- Fill in anything missing (also for configs saved by older versions).
@@ -224,13 +230,25 @@ end
 
 local function is_listed(list, user)
   for _, entry in ipairs(list) do
-    if entry == user.name then
+    if entry == stock.EVERYONE or entry == user.name then
       return true
     end
     for _, group in ipairs(user.groups or {}) do
       if entry == group then
         return true
       end
+    end
+  end
+  return false
+end
+
+--- Is a list open to everyone ("*")?
+-- @tparam {string...} list
+-- @treturn boolean
+function stock.is_open(list)
+  for _, entry in ipairs(list) do
+    if entry == stock.EVERYONE then
+      return true
     end
   end
   return false
@@ -257,7 +275,7 @@ end
 -- @treturn boolean
 function stock.is_computer_allowed(config, hostname)
   for _, allowed in ipairs(config.access.computers) do
-    if allowed == hostname then
+    if allowed == stock.EVERYONE or allowed == hostname then
       return true
     end
   end

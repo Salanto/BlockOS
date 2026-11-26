@@ -1,16 +1,18 @@
 --- Request handlers of the domain controller (protocol "blockos.domain").
 --
 -- Kept apart from the service so tests can call them directly. Permissions:
---   join, leave                   name + password of a domain admin or computer-joiner
+--   join, leave                   name + password of any domain user (friends only:
+--                                 joining is not guarded); leave also takes the
+--                                 logged-in user's token
 --   login, validate, logout,      a joined computer's token
---   validate_computer, host_update
+--   validate_computer, host_update,
+--   service_register              (a computer registers services pointing at itself)
 --   resolve, service_find,        anyone
 --   list_hosts
 --   list_users, list_groups,      any logged-in domain user (read only)
 --   list_computers, list_services,
 --   dc_status
 --   everything else               a domain-admins user token
---                                 (service records: also dns-admins)
 --
 -- Every change first checks that the controller's disk has room to save it.
 -- When it does not, the change is refused; reads, logins and lookups go on.
@@ -22,7 +24,10 @@ local rpc = import("rpc")
 -- Argument schemas of the operations (see wire.validate).
 local NAME = { type = "string", max = 32 }
 local ARGS = {
-  credentials = { admin_name = "string", admin_password = "string" },
+  leave = {
+    admin_name = { type = "string", optional = true },
+    admin_password = { type = "string", optional = true },
+  },
   join = { hostname = NAME, admin_name = "string", admin_password = "string" },
   login = { name = "string", password = "string" },
   token = { token = "string" },
@@ -36,6 +41,7 @@ local ARGS = {
   hostname = { hostname = NAME },
   service_type = { type = NAME },
   service = { type = NAME, host = NAME, protocol = { type = "string", optional = true } },
+  service_register = { type = NAME, protocol = { type = "string", optional = true } },
   name = { name = NAME },
   user_password = { name = NAME, password = "string" },
   user_enable = { name = NAME, is_enabled = "boolean" },
@@ -53,11 +59,12 @@ dc_handlers.DISK_FULL = "the domain controller's disk is full; changes are refus
 --   save()          write the directory; returns true or nil, err
 --   has_room()      true if a save would fit
 --   disk_status()   optional: { free, capacity } of the controller's disk
+--   save_sessions() optional: persist user sessions
 -- @tparam[opt] table clock { now = seconds function, today = day function }
 -- @treturn table { [op] = function(request_ctx, args) }
 function dc_handlers.new(dir, storage, clock)
   clock = clock or {}
-  local now = clock.now or os.clock
+  local now = clock.now or function() return math.floor(os.epoch("utc") / 1000) end
   local today = clock.today or function() return os.day("utc") end
   local handlers = {}
 
@@ -93,10 +100,6 @@ function dc_handlers.new(dir, storage, clock)
     return require_user(ctx, { directory.ADMINS })
   end
 
-  local function require_dns_admin(ctx)
-    return require_user(ctx, { directory.ADMINS, directory.DNS_ADMINS })
-  end
-
   -- Make a change only if it can be saved, then save it.
   local function change(operation)
     if not storage.has_room() then
@@ -113,13 +116,21 @@ function dc_handlers.new(dir, storage, clock)
     return result
   end
 
+  -- Sessions are saved so logins survive a restart (best effort: a full disk
+  -- only means people log in again after the next restart).
+  local function save_sessions()
+    if storage.save_sessions and storage.has_room() then
+      storage.save_sessions()
+    end
+  end
+
   local with_args = rpc.with_args
 
   -- Joining ------------------------------------------------------------------
 
   handlers.join = with_args(ARGS.join, function(ctx, args)
     if not dir:can_join(args.admin_name, args.admin_password) then
-      return nil, "only domain-admins or computer-joiners can join computers"
+      return nil, "wrong user name or password"
     end
     local token, err = change(function() return dir:join(args.hostname, ctx.sender) end)
     if not token then
@@ -128,13 +139,15 @@ function dc_handlers.new(dir, storage, clock)
     return { computer_token = token, domain = dir:name() }
   end)
 
-  handlers.leave = with_args(ARGS.credentials, function(ctx, args)
+  -- Either a logged-in domain user (their token) or a name and password.
+  handlers.leave = with_args(ARGS.leave, function(ctx, args)
     local hostname, err = require_computer(ctx)
     if not hostname then
       return nil, err
     end
-    if not dir:can_join(args.admin_name, args.admin_password) then
-      return nil, "only domain-admins or computer-joiners can remove computers"
+    local is_logged_in = dir:validate(ctx.token, now()) ~= nil
+    if not is_logged_in and not dir:can_join(args.admin_name, args.admin_password) then
+      return nil, "wrong user name or password"
     end
     return change(function() return dir:remove_computer(hostname) end)
   end)
@@ -146,7 +159,11 @@ function dc_handlers.new(dir, storage, clock)
     if not hostname then
       return nil, err
     end
-    return dir:login(args.name, args.password, now())
+    local session, login_error = dir:login(args.name, args.password, now())
+    if session then
+      save_sessions()
+    end
+    return session, login_error
   end)
 
   handlers.validate = with_args(ARGS.token, function(ctx, args)
@@ -166,7 +183,9 @@ function dc_handlers.new(dir, storage, clock)
     if not hostname then
       return nil, err
     end
-    return dir:logout(args.token)
+    dir:logout(args.token)
+    save_sessions()
+    return true
   end)
 
   --- Which computer does a computer token belong to? Lets a service check a
@@ -224,8 +243,18 @@ function dc_handlers.new(dir, storage, clock)
     return service
   end)
 
+  --- A computer registers a service record pointing at itself (e.g. `stock`
+  -- after `stock setup`), so nobody has to run `domain dns add` by hand.
+  handlers.service_register = with_args(ARGS.service_register, function(ctx, args)
+    local hostname, err = require_computer(ctx)
+    if not hostname then
+      return nil, err
+    end
+    return change(function() return dir:add_service(args.type, hostname, args.protocol) end)
+  end)
+
   handlers.service_add = with_args(ARGS.service, function(ctx, args)
-    local user, err = require_dns_admin(ctx)
+    local user, err = require_admin(ctx)
     if not user then
       return nil, err
     end
@@ -233,7 +262,7 @@ function dc_handlers.new(dir, storage, clock)
   end)
 
   handlers.service_del = with_args(ARGS.service_type, function(ctx, args)
-    local user, err = require_dns_admin(ctx)
+    local user, err = require_admin(ctx)
     if not user then
       return nil, err
     end
