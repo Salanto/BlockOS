@@ -6,6 +6,7 @@
 --   <out>/index.lua          package list with versions, sizes and checksums
 --   <out>/<name>.pkg         one file per package
 --   <out>/install.lua        the online installer
+--   <out>/lz.lua             the decompressor the installers load first
 --   <out>/disk/...           contents of an install floppy
 
 local FLOPPY_CAPACITY_BYTES = 125000
@@ -110,8 +111,9 @@ fsx.write_raw(fs.combine(out_dir, "install.lua"),
   fsx.read_raw(fs.combine(repo_dir, "installer/install.lua")))
 
 -- Write a floppy image holding some packages. With an installer it is a
--- bootable install disk; without one it is an add-on disk for `pkg install --disk`.
-local function write_disk(dir_name, names, installer)
+-- bootable install disk (with the decompressor it needs); without one it is an
+-- add-on disk for `pkg install --disk`.
+local function write_disk(dir_name, names, installer, decompressor)
   local disk_dir = fs.combine(out_dir, dir_name)
   local disk_index = { version = version, packages = {} }
   local size = 0
@@ -128,6 +130,7 @@ local function write_disk(dir_name, names, installer)
   write_file("index.lua", textutils.serialise(disk_index))
   if installer then
     write_file("startup.lua", installer)
+    write_file("lz.lua", decompressor)
   end
 
   print(string.format("%-14s %6d bytes (floppy holds %d)", dir_name, size, FLOPPY_CAPACITY_BYTES))
@@ -149,8 +152,10 @@ end
 table.sort(required)
 table.sort(optional)
 
-local core = textutils.unserialise(raw_packages.core)
-write_disk("disk", required, core.files["blockos/installer/disk.lua"])
+local core = assert(pkg.decode(raw_packages.core))
+local decompressor = core.files["blockos/kernel/lz.lua"]
+fsx.write_raw(fs.combine(out_dir, "lz.lua"), decompressor)
+write_disk("disk", required, core.files["blockos/installer/disk.lua"], decompressor)
 for _, name in ipairs(optional) do
   write_disk("addon-" .. name, { name })
 end

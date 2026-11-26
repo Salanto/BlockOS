@@ -1,6 +1,6 @@
 --- Package manager: versions, package files, sources, crash-safe install.
 --
--- A .pkg file is a serialised table:
+-- A .pkg file is a serialised table, compressed with lz (see lz.lua):
 --
 --     { manifest = { name, version, depends = { core = ">=0.1" } },
 --       files = { ["blockos/kernel/x.lua"] = "...contents..." } }
@@ -17,6 +17,7 @@
 -- @module pkg
 
 local fsx = import("fsx")
+local lz = import("lz")
 local paths = import("paths")
 
 local pkg = {}
@@ -26,6 +27,7 @@ pkg.RELEASES_URL = "https://github.com/Salanto/BlockOS/releases"
 local SPACE_MARGIN_BYTES = 4096
 local CHECKSUM_CHUNK = 4096
 local DISK_INSTALLER = "blockos/installer/disk.lua"
+local DECOMPRESSOR = "blockos/kernel/lz.lua"
 
 ------------------------------------------------------------------------------
 -- Versions
@@ -119,20 +121,24 @@ function pkg.checksum(data)
   return b * 65536 + a
 end
 
---- Serialise a package table.
+--- Serialise a package table and compress it.
 -- @tparam table bundle { manifest, files }
 -- @treturn string
 function pkg.encode(bundle)
-  return textutils.serialise(bundle, { compact = true })
+  return lz.compress(textutils.serialise(bundle, { compact = true }))
 end
 
---- Parse and validate a .pkg file.
+--- Parse and validate a .pkg file (compressed with lz, or plain).
 -- @tparam string raw
 -- @treturn[1] table The package.
 -- @treturn[2] nil
 -- @treturn[2] string error message
 function pkg.decode(raw)
-  local bundle = textutils.unserialise(raw)
+  local text, unpack_error = lz.unpack(raw)
+  if not text then
+    return nil, "damaged package: " .. unpack_error
+  end
+  local bundle = textutils.unserialise(text)
   if type(bundle) ~= "table"
     or type(bundle.manifest) ~= "table"
     or type(bundle.files) ~= "table" then
@@ -739,9 +745,10 @@ end
 
 --- Write a package disk: index.lua and packages/ for the given packages.
 --
--- If the packages include core, the disk installer is written as startup.lua,
--- which makes it a bootable install disk. Otherwise it is an add-on disk for
--- `pkg install --disk`; it has no startup, so it never takes over booting.
+-- If the packages include core, the disk installer is written as startup.lua
+-- (with lz.lua next to it), which makes it a bootable install disk. Otherwise
+-- it is an add-on disk for `pkg install --disk`; it has no startup, so it never
+-- takes over booting.
 -- @tparam string dir Mount path of the disk.
 -- @tparam table index The source index (entries are copied for these packages).
 -- @tparam {table...} packages As returned by pkg.fetch (with `raw`).
@@ -749,18 +756,19 @@ end
 -- @treturn[2] nil
 -- @treturn[2] string error message
 function pkg.write_media(dir, index, packages)
-  local installer = nil
+  local installer, decompressor = nil, nil
   local disk_index = { version = index.version, packages = {} }
   for _, bundle in ipairs(packages) do
     local name = bundle.manifest.name
     disk_index.packages[name] = index.packages[name]
     if name == "core" then
       installer = bundle.files[DISK_INSTALLER]
+      decompressor = bundle.files[DECOMPRESSOR]
     end
   end
 
   local index_text = textutils.serialise(disk_index)
-  local needed = #index_text + (installer and #installer or 0)
+  local needed = #index_text + (installer and #installer + #decompressor or 0)
   for _, bundle in ipairs(packages) do
     needed = needed + #bundle.raw
   end
@@ -779,6 +787,8 @@ function pkg.write_media(dir, index, packages)
   fsx.write(fs.combine(dir, "index.lua"), index_text)
   if installer then
     fsx.write(fs.combine(dir, "startup.lua"), installer)
+    -- The installer needs the decompressor before it can open core.pkg.
+    fsx.write(fs.combine(dir, "lz.lua"), decompressor)
   end
   return true
 end

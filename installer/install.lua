@@ -58,7 +58,9 @@ end
 
 local base_url = RELEASES_URL .. (options.tag and ("download/" .. options.tag) or "latest/download")
 print("Downloading BlockOS core...")
-local core = textutils.unserialise(download(base_url .. "/core.pkg"))
+-- Packages are compressed; the release ships the decompressor next to them.
+local lz = assert(load(download(base_url .. "/lz.lua"), "@lz.lua", "t", _ENV))()
+local core = textutils.unserialise(lz.unpack(download(base_url .. "/core.pkg")) or "")
 if type(core) ~= "table" or type(core.files) ~= "table" then
   printError("The downloaded core package is unreadable.")
   return

@@ -31,4 +31,5 @@ jobs:
             dist/index.lua
             dist/*.pkg
             dist/install.lua
+            dist/lz.lua
             dist/*.zip

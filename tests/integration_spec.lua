@@ -26,6 +26,8 @@ return function(t)
       t.ok(pkg.decode(raw), name .. " does not decode")
     end
     t.ok(fs.exists(out .. "/disk/startup.lua"))
+    t.ok(fs.exists(out .. "/disk/lz.lua"), "the install disk needs the decompressor")
+    t.ok(fs.exists(out .. "/lz.lua"), "the release needs the decompressor")
     t.ok(fs.exists(out .. "/install.lua"))
   end)
 

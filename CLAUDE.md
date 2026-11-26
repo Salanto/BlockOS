@@ -228,8 +228,11 @@ fields, and drop messages with a newer major version. Peer liveness uses the loc
 
 ### Packages and releases
 
-- A `.pkg` is `textutils.serialise({ manifest, files = { [path] = content } })`.
-  `index.lua` lists `{ version, depends, optional, size, sum }` per package.
+- A `.pkg` is `textutils.serialise({ manifest, files = { [path] = content } })`, compressed with
+  `lz.lua` (LZ77-style, byte-oriented, "BLZ1" header; plain packages still decode).
+  `index.lua` lists `{ version, depends, optional, size, sum }` per package (size and sum of the
+  compressed file). Installed files are not compressed. The installers need `lz.lua` before
+  they can open `core.pkg`, so it ships next to them on install disks and in releases.
 - Sources (`pkg.disk_source`, `pkg.github_source`, `pkg_remote.source`) share one interface:
   `describe()`, `index()`, `fetch(name)`.
 - Package server (`pkg-server`): stores packages in `<drive>/blockos-repo/` across every mounted
@@ -244,12 +247,13 @@ fields, and drop messages with a newer major version. Peer liveness uses the loc
   accounts (status reports, sessions and exact last-seen times stay in memory; last-seen *day*
   is saved so stale computers survive restarts), caps reported info at 1KB, refuses changes
   when a save would not fit (logins and lookups keep working), and warns below 20% free.
-- **Floppy budget:** core + net must fit on one 125KB install disk (the build fails otherwise).
+- **Floppy budget:** core + net (compressed) must fit on one 125KB install disk (the build
+  fails otherwise; servers can also raise `floppy_space_limit` in the CC:Tweaked config).
   The build shrinks packaged Lua files (comment-only lines emptied, indentation dropped) without
   changing line numbers, so keep writing fully commented source. `[[ ]]` long strings are not
   allowed in package files (the shrinker would break them).
 - Releases: push a tag `vX.Y.Z` (or `vX.Y.Z-rcN` for a prerelease). CI tests, builds
-  (`tools/build.sh`) and publishes `index.lua`, `*.pkg`, `install.lua`, `blockos-disk.zip`
+  (`tools/build.sh`) and publishes `index.lua`, `*.pkg`, `install.lua`, `lz.lua`, `blockos-disk.zip`
   and `blockos-addon-<name>.zip` per optional package. Online installs use
   `releases/latest/download/...`, never `api.github.com` (rate limits are shared per server IP).
 

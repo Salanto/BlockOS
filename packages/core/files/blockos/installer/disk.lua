@@ -66,7 +66,15 @@ end
 local options = parse_args({ ... })
 local disk_dir = options.dir or ("/" .. fs.getDir(shell.getRunningProgram()))
 
-local core = textutils.unserialise(read_file(fs.combine(disk_dir, "packages/core.pkg")) or "")
+-- Packages are compressed; lz.lua sits next to this installer on the disk.
+local lz_chunk = loadfile(fs.combine(disk_dir, "lz.lua"), nil, _ENV)
+if not lz_chunk then
+  printError("This disk is missing lz.lua; write it again with 'update --make-disk'.")
+  return
+end
+local lz = lz_chunk()
+local core_raw = read_file(fs.combine(disk_dir, "packages/core.pkg")) or ""
+local core = textutils.unserialise(lz.unpack(core_raw) or "")
 if type(core) ~= "table" or type(core.files) ~= "table" then
   printError("This disk has no readable BlockOS core package.")
   return
