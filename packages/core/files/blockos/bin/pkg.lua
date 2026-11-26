@@ -229,6 +229,8 @@ local function confirm(question, default_yes)
   return answer == "y"
 end
 
+-- Each package keeps the version of the release it last changed in, so an update
+-- compares package by package and downloads only what changed.
 local function update(source, options)
   ui.print("Checking " .. source.describe() .. "...", "dim")
   local index, err = source.index()
@@ -236,24 +238,38 @@ local function update(source, options)
     ui.print(err, "error")
     return
   end
-  local available = tostring(index.version)
-  print("Installed: " .. blockos.version .. "   Available: " .. available)
+  local names, select_error = pkg.select(index)
+  if not names then
+    ui.print(select_error, "error")
+    return
+  end
+  local changes = pkg.changes(index, names)
+  if #changes == 0 then
+    ui.print("Up to date with release " .. tostring(index.version) .. ".", "ok")
+    return
+  end
+  ui.title("Release " .. tostring(index.version) .. ": " .. #changes .. " package(s) changed")
+  local is_downgrade = false
+  for _, change in ipairs(changes) do
+    local older = change.from and pkg.compare_versions(change.to, change.from) < 0
+    is_downgrade = is_downgrade or older
+    print(string.format("  %-20s %s -> %s%s", change.name, change.from or "new", change.to,
+      older and "  (older)" or ""))
+  end
   if options.check_only then
     return
   end
   if not options.assume_yes then
-    local order = pkg.compare_versions(available, blockos.version)
-    local question = "Upgrade now?"
-    if order == 0 then
-      question = "Already up to date. Reinstall?"
-    elseif order < 0 then
-      question = "That version is older. Downgrade?"
-    end
-    if not confirm(question, order > 0) then
+    local question = is_downgrade and "Some are older. Install anyway?" or "Update now?"
+    if not confirm(question, not is_downgrade) then
       return
     end
   end
-  local fetched, packages = pkg.fetch(source, show_progress)
+  local wanted = {}
+  for _, change in ipairs(changes) do
+    wanted[#wanted + 1] = change.name
+  end
+  local fetched, packages = pkg.fetch(source, show_progress, wanted)
   if not fetched then
     ui.print(packages, "error")
     return

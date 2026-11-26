@@ -25,3 +25,8 @@ jobs:
       - uses: ./.github/actions/install-craftos
       - name: Run tests on a ${{ matrix.computer }} computer
         run: tools/test.sh ${{ matrix.computer }}
+      # A trial release build: proves the build still works and lists which packages
+      # would count as changed against the latest release.
+      - name: Trial build
+        if: matrix.computer == 'advanced'
+        run: tools/build.sh v0.0.0-ci
