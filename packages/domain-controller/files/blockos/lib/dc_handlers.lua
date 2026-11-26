@@ -7,22 +7,34 @@
 --   resolve, service_find,        anyone
 --   list_hosts
 --   list_users, list_groups,      any logged-in domain user (read only)
---   list_computers, list_services
+--   list_computers, list_services,
+--   dc_status
 --   everything else               a domain-admins user token
 --                                 (service records: also dns-admins)
+--
+-- Every change first checks that the controller's disk has room to save it.
+-- When it does not, the change is refused; reads, logins and lookups go on.
 -- @module dc_handlers
 
 local directory = import("directory")
 
 local dc_handlers = {}
 
+dc_handlers.DISK_FULL = "the domain controller's disk is full; changes are refused until "
+  .. "space is freed"
+
 --- Build the handler table.
 -- @tparam Directory dir
--- @tparam function save Called after every change that must be persisted.
--- @tparam[opt] function now Current time in seconds (default os.clock).
+-- @tparam table storage
+--   save()          write the directory; returns true or nil, err
+--   has_room()      true if a save would fit
+--   disk_status()   optional: { free, capacity } of the controller's disk
+-- @tparam[opt] table clock { now = seconds function, today = day function }
 -- @treturn table { [op] = function(request_ctx, args) }
-function dc_handlers.new(dir, save, now)
-  now = now or os.clock
+function dc_handlers.new(dir, storage, clock)
+  clock = clock or {}
+  local now = clock.now or os.clock
+  local today = clock.today or function() return os.day("utc") end
   local handlers = {}
 
   local function computer_of(ctx)
@@ -61,12 +73,20 @@ function dc_handlers.new(dir, save, now)
     return require_user(ctx, { directory.ADMINS, directory.DNS_ADMINS })
   end
 
-  -- Run a change and save it if it worked.
-  local function change(ok, err)
-    if ok then
-      save()
+  -- Make a change only if it can be saved, then save it.
+  local function change(operation)
+    if not storage.has_room() then
+      return nil, dc_handlers.DISK_FULL
     end
-    return ok, err
+    local result, err = operation()
+    if not result then
+      return nil, err
+    end
+    local saved, save_error = storage.save()
+    if not saved then
+      return nil, save_error
+    end
+    return result
   end
 
   local function args_table(args)
@@ -83,11 +103,10 @@ function dc_handlers.new(dir, save, now)
     if not dir:can_join(args.admin_name, args.admin_password) then
       return nil, "only domain-admins or computer-joiners can join computers"
     end
-    local token, err = dir:join(args.hostname, ctx.sender)
+    local token, err = change(function() return dir:join(args.hostname, ctx.sender) end)
     if not token then
       return nil, err
     end
-    save()
     return { computer_token = token, domain = dir:name() }
   end
 
@@ -100,7 +119,7 @@ function dc_handlers.new(dir, save, now)
     if not dir:can_join(args.admin_name, args.admin_password) then
       return nil, "only domain-admins or computer-joiners can remove computers"
     end
-    return change(dir:remove_computer(hostname))
+    return change(function() return dir:remove_computer(hostname) end)
   end
 
   -- Sessions -----------------------------------------------------------------
@@ -150,21 +169,22 @@ function dc_handlers.new(dir, save, now)
 
   -- Host and service records -------------------------------------------------
 
+  -- Status reports are mostly kept in memory; only a rename, a new computer ID
+  -- or the first report of a day is saved. A full disk only skips that save.
   function handlers.host_update(ctx, args)
     args = args_table(args)
-    local before = computer_of(ctx)
-    local hostname, err = dir:update_host(ctx.computer_token, {
+    local hostname, needs_save = dir:update_host(ctx.computer_token, {
       hostname = args.hostname,
       id = ctx.sender,
       info = args.info,
       kind = args.kind,
       version = args.version,
-    }, now())
+    }, now(), today())
     if not hostname then
-      return nil, err
+      return nil, needs_save
     end
-    if hostname ~= before then
-      save()
+    if needs_save and storage.has_room() then
+      storage.save()
     end
     return { hostname = hostname }
   end
@@ -178,7 +198,7 @@ function dc_handlers.new(dir, save, now)
   end
 
   function handlers.list_hosts()
-    return dir:list_hosts(now())
+    return dir:list_hosts(now(), today())
   end
 
   function handlers.service_find(_, args)
@@ -195,7 +215,7 @@ function dc_handlers.new(dir, save, now)
     if not user then
       return nil, err
     end
-    return change(dir:add_service(args.type, args.host, args.protocol))
+    return change(function() return dir:add_service(args.type, args.host, args.protocol) end)
   end
 
   function handlers.service_del(ctx, args)
@@ -203,7 +223,7 @@ function dc_handlers.new(dir, save, now)
     if not user then
       return nil, err
     end
-    return change(dir:remove_service(args_table(args).type))
+    return change(function() return dir:remove_service(args_table(args).type) end)
   end
 
   -- Directory management -----------------------------------------------------
@@ -221,7 +241,20 @@ function dc_handlers.new(dir, save, now)
   handlers.list_users = read_only(function() return dir:list_users() end)
   handlers.list_groups = read_only(function() return dir:list_groups() end)
   handlers.list_services = read_only(function() return dir:list_services() end)
-  handlers.list_computers = read_only(function() return dir:list_hosts(now()) end)
+  handlers.list_computers = read_only(function() return dir:list_hosts(now(), today()) end)
+
+  --- Health of the controller: counts, saved size and disk space.
+  handlers.dc_status = read_only(function()
+    local status = dir:stats()
+    status.domain = dir:name()
+    status.has_room = storage.has_room()
+    if storage.disk_status then
+      local disk = storage.disk_status()
+      status.free = disk.free
+      status.capacity = disk.capacity
+    end
+    return status
+  end)
 
   -- Admin-only operations: op name -> function(args) doing the change.
   local admin_operations = {
@@ -240,7 +273,7 @@ function dc_handlers.new(dir, save, now)
       if not user then
         return nil, err
       end
-      return change(operation(args_table(args)))
+      return change(function() return operation(args_table(args)) end)
     end
   end
 
@@ -254,7 +287,7 @@ function dc_handlers.new(dir, save, now)
     if user.name ~= args.name and not dir:is_member(directory.ADMINS, user.name) then
       return nil, "permission denied"
     end
-    return change(dir:set_password(args.name, args.password))
+    return change(function() return dir:set_password(args.name, args.password) end)
   end
 
   return handlers

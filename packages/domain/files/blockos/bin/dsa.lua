@@ -35,7 +35,7 @@ local tabs = {
     title = "Computers",
     load = "list_computers",
     describe = function(host)
-      local seen = host.age and (math.floor(host.age) .. "s") or "-"
+      local seen = domain.describe_seen(host)
       return string.format("%-16s #%-5s %-8s %s", host.hostname, tostring(host.id), host.kind, seen)
     end,
     help = "d remove",
@@ -251,6 +251,10 @@ local function on_click(y)
 end
 
 refresh()
+local health = domain.call("dc_status")
+if type(health) == "table" and not health.has_room then
+  set_message("The controller's disk is full: changes are refused.", "error")
+end
 while true do
   draw()
   local event, a, _, c = os.pullEvent()

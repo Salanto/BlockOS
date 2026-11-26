@@ -18,6 +18,7 @@ local function print_usage()
   print("  blockos start|stop|restart <service>")
   print("  blockos log [lines]")
   print("  blockos rollback")
+  print("  blockos cleanup")
   print("  blockos version")
 end
 
@@ -27,6 +28,59 @@ local function is_admin()
   end
   ui.print("Only administrators can do that.", "error")
   return false
+end
+
+local function file_size(path)
+  if fs.exists(path) then
+    return fs.getSize(path)
+  end
+  return 0
+end
+
+-- Where this computer's disk space goes.
+local function disk_usage()
+  local fsx = blockos.import("fsx")
+  local paths = blockos.import("paths")
+  return {
+    free = fs.getFreeSpace("/"),
+    system = fsx.tree_size(paths.root()),
+    previous = fsx.tree_size(paths.previous()),
+    logs = file_size(paths.log()) + file_size(paths.log() .. ".1"),
+  }
+end
+
+-- Free space: the previous version (no rollback afterwards) and the old log.
+local function clean_up()
+  if not is_admin() then
+    return
+  end
+  local paths = blockos.import("paths")
+  local usage = disk_usage()
+  local rotated_log = paths.log() .. ".1"
+  local freed = usage.previous + file_size(rotated_log)
+  if freed == 0 then
+    print("Nothing to clean up.")
+    return
+  end
+  print(string.format("This frees %d bytes:", freed))
+  if usage.previous > 0 then
+    print("  the previous version (" .. usage.previous .. " bytes);")
+    print("  rollback will no longer be possible")
+  end
+  if fs.exists(rotated_log) then
+    print("  the old log (" .. file_size(rotated_log) .. " bytes)")
+  end
+  write("Continue? [y/N] ")
+  if read():lower() ~= "y" then
+    return
+  end
+  if fs.exists(paths.previous()) then
+    fs.delete(paths.previous())
+  end
+  if fs.exists(rotated_log) then
+    fs.delete(rotated_log)
+  end
+  ui.print("Freed " .. freed .. " bytes.", "ok")
 end
 
 local function show_status()
@@ -51,6 +105,10 @@ local function show_status()
   end
   table.sort(parts)
   print("Services: " .. table.concat(parts, ", "))
+
+  local usage = disk_usage()
+  print(string.format("Disk:     %d bytes free; system %d, previous version %d, logs %d",
+    usage.free, usage.system, usage.previous, usage.logs))
 end
 
 local function show_services()
@@ -116,6 +174,8 @@ elseif command == "start" or command == "stop" or command == "restart" then
   control_service(command, args[2])
 elseif command == "log" then
   show_log(args[2])
+elseif command == "cleanup" then
+  clean_up()
 elseif command == "rollback" then
   roll_back()
 elseif command == "version" then

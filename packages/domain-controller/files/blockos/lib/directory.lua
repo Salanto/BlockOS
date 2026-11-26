@@ -8,9 +8,11 @@
 --   domain    "home"
 --   users     [name] = { salt, hash, is_enabled }
 --   groups    [name] = { members = { [user] = true } }
---   computers [hostname] = { id, token, info, kind, version, last_seen }
+--   computers [hostname] = { id, token, last_seen_day }
 --   services  [type] = { host, protocol }
--- User sessions (tokens) are kept in memory only.
+-- Kept in memory only: user sessions, and what computers report about
+-- themselves (info, kind, version, exact last-seen time). This keeps the saved
+-- file small and avoids a disk write for every status report.
 -- @module directory
 
 local auth = import("auth")
@@ -29,6 +31,13 @@ directory.BUILTIN_GROUPS = {
 }
 
 directory.SESSION_SECONDS = 8 * 60 * 60
+
+--- Largest status report (serialised info) a computer may send.
+directory.MAX_INFO_BYTES = 1024
+
+--- Computers not seen for this many days are marked stale (never deleted
+-- automatically: a turtle may be away for a long time).
+directory.STALE_DAYS = 7
 
 local TOKEN_LENGTH = 32
 
@@ -77,7 +86,15 @@ function directory.load(data)
   for _, group in ipairs(directory.BUILTIN_GROUPS) do
     data.groups[group] = data.groups[group] or { members = {} }
   end
+  -- Older versions saved reported status too; it now lives in memory only.
+  local VOLATILE_FIELDS = { "info", "kind", "version", "last_seen" }
+  for _, computer in pairs(data.computers) do
+    for _, field in ipairs(VOLATILE_FIELDS) do
+      computer[field] = nil
+    end
+  end
   self.sessions = {}
+  self.status = {}
   return self
 end
 
@@ -293,7 +310,8 @@ function Directory:join(hostname, id)
     return nil, "invalid hostname"
   end
   local token = new_token()
-  self.data.computers[hostname] = { id = id, token = token, info = {} }
+  self.data.computers[hostname] = { id = id, token = token }
+  self.status[hostname] = nil
   return token
 end
 
@@ -316,6 +334,7 @@ function Directory:remove_computer(hostname)
     return nil, "no such computer"
   end
   self.data.computers[hostname] = nil
+  self.status[hostname] = nil
   for service_type, service in pairs(self.data.services) do
     if service.host == hostname then
       self.data.services[service_type] = nil
@@ -326,30 +345,54 @@ end
 
 --- A computer reports its status. It may only change its own record; a rename
 -- moves the record to the new hostname if that name is free.
+--
+-- Only the account (ID, token) and the day it was last seen are saved; the
+-- reported info and the exact time stay in memory, so reports rarely cause a
+-- disk write.
 -- @tparam string token The computer's token.
 -- @tparam table report { hostname, id, info, kind, version }
 -- @tparam number now Seconds.
+-- @tparam number today Day number (os.day("utc")).
 -- @treturn[1] string The hostname now on record.
+-- @treturn[1] boolean True if something that is saved changed.
 -- @treturn[2] nil
 -- @treturn[2] string error message
-function Directory:update_host(token, report, now)
+function Directory:update_host(token, report, now, today)
   local current = self:computer_by_token(token)
   if not current then
     return nil, "unknown computer"
   end
+  local info = type(report.info) == "table" and report.info or {}
+  if #textutils.serialise(info, { compact = true }) > directory.MAX_INFO_BYTES then
+    return nil, "status report too large (at most " .. directory.MAX_INFO_BYTES .. " bytes of info)"
+  end
+
   local computer = self.data.computers[current]
+  local needs_save = false
   local wanted = report.hostname
   if is_valid_name(wanted) and wanted ~= current and not self.data.computers[wanted] then
     self.data.computers[wanted] = computer
     self.data.computers[current] = nil
+    self.status[current] = nil
     current = wanted
+    needs_save = true
   end
-  computer.id = report.id or computer.id
-  computer.info = type(report.info) == "table" and report.info or {}
-  computer.kind = report.kind
-  computer.version = report.version
-  computer.last_seen = now
-  return current
+  if report.id and report.id ~= computer.id then
+    computer.id = report.id
+    needs_save = true
+  end
+  if computer.last_seen_day ~= today then
+    computer.last_seen_day = today
+    needs_save = true
+  end
+
+  self.status[current] = {
+    info = info,
+    kind = type(report.kind) == "string" and report.kind or nil,
+    version = type(report.version) == "string" and report.version or nil,
+    last_seen = now,
+  }
+  return current, needs_save
 end
 
 --- @tparam string hostname Short hostname.
@@ -359,18 +402,25 @@ function Directory:resolve(hostname)
   return computer and computer.id
 end
 
---- @tparam number now
--- @treturn {table...} { hostname, id, kind, version, info, age } sorted by hostname.
-function Directory:list_hosts(now)
+--- @tparam number now Seconds.
+-- @tparam number today Day number.
+-- @treturn {table...} { hostname, id, kind, version, info, age, days_unseen, is_stale }
+--   sorted by hostname. `age` is nil until the computer reports after a
+--   controller restart; `days_unseen` survives restarts.
+function Directory:list_hosts(now, today)
   local hosts = {}
   for hostname, computer in pairs(self.data.computers) do
+    local status = self.status[hostname] or {}
+    local days_unseen = computer.last_seen_day and today and (today - computer.last_seen_day)
     hosts[#hosts + 1] = {
       hostname = hostname,
       id = computer.id,
-      kind = computer.kind or "?",
-      version = computer.version or "?",
-      info = computer.info or {},
-      age = computer.last_seen and (now - computer.last_seen) or nil,
+      kind = status.kind or "?",
+      version = status.version or "?",
+      info = status.info or {},
+      age = status.last_seen and (now - status.last_seen) or nil,
+      days_unseen = days_unseen,
+      is_stale = days_unseen ~= nil and days_unseen >= directory.STALE_DAYS,
     }
   end
   table.sort(hosts, function(a, b) return a.hostname < b.hostname end)
@@ -476,6 +526,45 @@ function Directory:end_sessions_of(name)
       self.sessions[token] = nil
     end
   end
+end
+
+--- Forget expired sessions (they are otherwise only dropped when used again).
+-- @tparam number now
+-- @treturn number How many were removed.
+function Directory:prune_sessions(now)
+  local removed = 0
+  for token, entry in pairs(self.sessions) do
+    if now >= entry.expires then
+      self.sessions[token] = nil
+      removed = removed + 1
+    end
+  end
+  return removed
+end
+
+------------------------------------------------------------------------------
+-- Health
+------------------------------------------------------------------------------
+
+local function count(map)
+  local total = 0
+  for _ in pairs(map) do
+    total = total + 1
+  end
+  return total
+end
+
+--- Counts and sizes for the health check.
+-- @treturn table { users, groups, computers, services, sessions, saved_bytes }
+function Directory:stats()
+  return {
+    users = count(self.data.users),
+    groups = count(self.data.groups),
+    computers = count(self.data.computers),
+    services = count(self.data.services),
+    sessions = count(self.sessions),
+    saved_bytes = #textutils.serialise(self.data),
+  }
 end
 
 return directory

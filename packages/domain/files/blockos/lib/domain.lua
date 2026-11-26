@@ -186,6 +186,46 @@ function domain.list_hosts()
   return call("list_hosts")
 end
 
+--- When a computer was last seen, for lists: "12s ago", "3d ago" or "never",
+-- plus " (stale)" when it has not been seen for a week.
+-- @tparam table host A host record from list_hosts / list_computers.
+-- @treturn string
+function domain.describe_seen(host)
+  local text = "never"
+  if host.age then
+    text = math.floor(host.age) .. "s ago"
+  elseif host.days_unseen then
+    text = host.days_unseen .. "d ago"
+  end
+  if host.is_stale then
+    text = text .. " (stale)"
+  end
+  return text
+end
+
+--- Disk and directory health of the controller, as lines of text.
+-- @tparam table status From the dc_status operation.
+-- @treturn {string...}
+function domain.describe_health(status)
+  local lines = {
+    string.format("Directory:  %d users, %d groups, %d computers, %d services",
+      status.users, status.groups, status.computers, status.services),
+    string.format("Saved size: %d bytes, %d sessions in memory",
+      status.saved_bytes, status.sessions),
+  }
+  if status.free then
+    local disk = status.free .. " bytes free"
+    if status.capacity then
+      disk = disk .. " of " .. status.capacity
+    end
+    lines[#lines + 1] = "Disk:       " .. disk
+  end
+  if not status.has_room then
+    lines[#lines + 1] = "WARNING:    the controller's disk is full; changes are refused"
+  end
+  return lines
+end
+
 --- @tparam table user A user record.
 -- @treturn boolean True if the user is a domain admin.
 function domain.is_admin(user)

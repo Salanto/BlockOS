@@ -43,6 +43,12 @@ config.define("blockos.log.level", {
   type = "string",
 })
 
+config.define("blockos.log.max_size", {
+  description = "Bytes at which the BlockOS log is rotated (it keeps one old copy).",
+  default = 8 * 1024,
+  type = "number",
+})
+
 config.define("blockos.services.disabled", {
   description = "Names of BlockOS services that should not start.",
   default = {},

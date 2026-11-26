@@ -189,4 +189,21 @@ return function(t)
     t.ok(err:find("must run alone"), err)
     t.ok(pkg.apply({ other }, { force = true }), "--force allows it")
   end)
+
+  t.it("media-only files stay in the package but are not installed", function()
+    local import = t.fresh_import()
+    local pkg, paths = import("pkg"), import("paths")
+    local files = {
+      ["blockos/boot.lua"] = "-- boot",
+      ["blockos/loader.lua"] = "-- BlockOS loader",
+      ["blockos/installer/disk.lua"] = "-- installer",
+    }
+    local core = make_package(import, "core", "0.1.0", files,
+      { media_only = { "blockos/installer/", "blockos/loader.lua" } })
+    t.ok(pkg.apply({ core }))
+    t.ok(fs.exists(paths.root() .. "/boot.lua"))
+    t.ok(not fs.exists(paths.root() .. "/loader.lua"), "loader copy installed")
+    t.ok(not fs.exists(paths.root() .. "/installer"), "installer copy installed")
+    t.ok(core.files["blockos/installer/disk.lua"], "the package itself keeps the file")
+  end)
 end

@@ -163,7 +163,7 @@ peers). Both are required; anything else should be `optional = true`.
 /blockos/packages.db    installed packages (inside the tree, so it always matches it)
 /blockos.old/           previous version, for rollback
 /etc/blockos/           passwd, bootcount, upgrade.state, startup.bak/
-/var/log/blockos.log    system log (16KB, one rotated copy)
+/var/log/blockos.log    system log (rotated at blockos.log.max_size, default 8KB; one old copy)
 /.settings              CC settings; BlockOS keys are `blockos.*`, defaults defined in code
 ```
 
@@ -236,7 +236,14 @@ fields, and drop messages with a newer major version. Peer liveness uses the loc
   drive (wired-modem drives included) plus the local disk; `pkgserver allow <name> <group...>`
   restricts a package. Clients use `--server[=name]`, the domain's `pkg` service record, or the
   `blockos.pkg.server` setting.
-- Manifest flags: `optional` (not in the base install), `exclusive` (must run alone).
+- Manifest flags: `optional` (not in the base install), `exclusive` (must run alone),
+  `media_only` (path prefixes kept in the package for building disks but not installed).
+- **Storage housekeeping:** `blockos status` shows where disk space goes; `blockos cleanup`
+  deletes the previous version (no rollback afterwards) and the old log. Boot finishes or
+  removes interrupted `.tmp` writes in `/etc/blockos`. The domain controller saves only
+  accounts (status reports, sessions and exact last-seen times stay in memory; last-seen *day*
+  is saved so stale computers survive restarts), caps reported info at 1KB, refuses changes
+  when a save would not fit (logins and lookups keep working), and warns below 20% free.
 - **Floppy budget:** core + net must fit on one 125KB install disk (the build fails otherwise).
   The build shrinks packaged Lua files (comment-only lines emptied, indentation dropped) without
   changing line numbers, so keep writing fully commented source. `[[ ]]` long strings are not

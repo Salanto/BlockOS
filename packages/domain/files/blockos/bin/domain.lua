@@ -42,6 +42,12 @@ local function show_status()
   end
   local is_domain_user = blockos.user and blockos.user.source == "domain"
   print("Logged in:  " .. (is_domain_user and "domain user" or "local user"))
+  local status = domain.call("dc_status")
+  if type(status) == "table" then
+    for _, line in ipairs(domain.describe_health(status)) do
+      print(line)
+    end
+  end
 end
 
 local function join(domain_name)
@@ -152,7 +158,7 @@ local function computer_command(action, hostname)
       return fail(err)
     end
     print_list(hosts, function(host)
-      local seen = host.age and (math.floor(host.age) .. "s ago") or "never"
+      local seen = domain.describe_seen(host)
       return string.format("%-16s #%-5s %-8s %s", host.hostname, tostring(host.id), host.kind, seen)
     end)
   elseif action == "remove" and hostname then

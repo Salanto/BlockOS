@@ -28,7 +28,8 @@ return function(t)
     local session = dir:login("admin", "secret", os.clock())
     _G.blockos = { ui = import("ui"), user = { name = "admin", token = session.token } }
     rpc.set_transport(rpc.loopback_transport())
-    local handlers = import("dc_handlers").new(dir, function() end)
+    local storage = { save = function() return true end, has_room = function() return true end }
+    local handlers = import("dc_handlers").new(dir, storage)
     return dir, rpc, handlers
   end
 

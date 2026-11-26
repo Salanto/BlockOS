@@ -423,6 +423,16 @@ local function reset_bootcount()
   fsx.write(paths.bootcount(), "0")
 end
 
+-- Files listed in a manifest's `media_only` (path prefixes) are not installed.
+local function is_media_only(manifest, path)
+  for _, prefix in ipairs(manifest.media_only or {}) do
+    if path:sub(1, #prefix) == prefix then
+      return true
+    end
+  end
+  return false
+end
+
 -- Work out every file of the new tree.
 -- tree[relative path] = { content = "..." } or { copy_from = "/blockos/..." }
 -- outside[path] = content, for files outside the system tree.
@@ -453,10 +463,11 @@ local function plan_tree(new_packages, current, root, removed)
     local files = {}
     for path, content in pairs(bundle.files) do
       local relative = path:match("^blockos/(.+)$")
-      if relative then
+      local is_installed = not is_media_only(manifest, path)
+      if is_installed and relative then
         tree[relative] = { content = content }
         files[#files + 1] = relative
-      else
+      elseif is_installed then
         outside[path] = content
       end
     end

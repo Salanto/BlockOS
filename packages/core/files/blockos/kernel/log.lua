@@ -1,4 +1,5 @@
---- System log at /var/log/blockos.log, size-capped with one rotated copy (.1).
+--- System log at /var/log/blockos.log, size-capped with one rotated copy (.1),
+-- so it never uses more than twice `log.max_bytes` (setting blockos.log.max_size).
 -- @module log
 
 local paths = import("paths")
@@ -6,10 +7,12 @@ local paths = import("paths")
 local log = {}
 
 local LEVELS = { debug = 1, info = 2, warn = 3, error = 4 }
-local MAX_LOG_BYTES = 16 * 1024
 
 --- Messages below this level are dropped.
 log.level = "info"
+
+--- Size at which the log is rotated.
+log.max_bytes = 8 * 1024
 
 local function timestamp()
   local seconds = math.floor(os.epoch("utc") / 1000)
@@ -17,7 +20,7 @@ local function timestamp()
 end
 
 local function rotate_if_full(path)
-  if not fs.exists(path) or fs.getSize(path) <= MAX_LOG_BYTES then
+  if not fs.exists(path) or fs.getSize(path) <= log.max_bytes then
     return
   end
   local rotated = path .. ".1"
