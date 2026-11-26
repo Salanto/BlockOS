@@ -34,6 +34,21 @@ return function(t)
     t.ok(states["minecraft:gold_ingot"].is_low)
   end)
 
+  t.it("an item unwatched while low recovers once", function()
+    local stock, config = config_with({ gold = { label = "Gold", limit = 10 } })
+    local states = stock.evaluate(config, { gold = { count = 2 } })
+    t.ok(states.gold.is_low)
+    config.watches.gold = nil
+    local changes
+    states, changes = stock.evaluate(config, { gold = { count = 2 } }, states)
+    t.eq(states.gold, nil, "no longer shown")
+    t.eq(changes.recovered[1], "gold")
+    t.eq(changes.cleared.gold.is_low, false)
+    t.eq(changes.cleared.gold.label, "Gold")
+    local _, later = stock.evaluate(config, { gold = { count = 2 } }, states)
+    t.eq(#later.recovered, 0, "only once")
+  end)
+
   t.it("an output is on while any item mapped to it is low", function()
     local lamp = { target = "redstone_relay_0", side = "top" }
     local stock, config = config_with({
@@ -123,5 +138,14 @@ return function(t)
     t.ok(not outputs["redstone_relay_1|top"].is_on)
     outputs = stock.reaction_outputs(reactions, {})
     t.ok(not outputs["computer|back"].is_on, "unknown state counts as not low")
+  end)
+
+  t.it("stock names are checked and lower-cased", function()
+    local stock = config_with({})
+    t.eq(stock.check_name("Farm"), "farm")
+    t.ok(not stock.check_name(""), "empty")
+    t.ok(not stock.check_name("farm.home"), "no dots")
+    t.ok(not stock.check_name(string.rep("a", stock.MAX_NAME_LENGTH + 1)), "too long")
+    t.eq(#("stock-" .. string.rep("a", stock.MAX_NAME_LENGTH)), 32)
   end)
 end

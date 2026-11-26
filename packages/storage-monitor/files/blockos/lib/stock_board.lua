@@ -102,6 +102,20 @@ function stock_board.render_display_link(link, data)
   link.update()
 end
 
+--- Blank a monitor or Display Link that no longer shows the board.
+-- @tparam table peripheral_api The peripheral API (tests pass a stub).
+-- @tparam string name
+function stock_board.clear(peripheral_api, name)
+  local device = peripheral_api.wrap(name)
+  if not device then
+    return
+  end
+  device.clear()
+  if peripheral_api.hasType(name, stock_board.DISPLAY_LINK_TYPE) then
+    device.update()
+  end
+end
+
 --- Draw on whatever the named peripheral is (monitor or Display Link).
 -- @tparam table peripheral_api The peripheral API (tests pass a stub).
 -- @tparam string name

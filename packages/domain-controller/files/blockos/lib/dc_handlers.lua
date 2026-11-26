@@ -6,7 +6,8 @@
 --                                 logged-in user's token
 --   login, validate, logout,      a joined computer's token
 --   validate_computer, host_update,
---   service_register              (a computer registers services pointing at itself)
+--   service_register,             (a computer registers services pointing at itself,
+--   service_unregister            and removes only those)
 --   resolve, service_find,        anyone
 --   list_hosts
 --   list_users, list_groups,      any logged-in domain user (read only)
@@ -251,6 +252,23 @@ function dc_handlers.new(dir, storage, clock)
       return nil, err
     end
     return change(function() return dir:add_service(args.type, hostname, args.protocol) end)
+  end)
+
+  --- A computer removes a service record pointing at itself (e.g. the old
+  -- `stock` record after `stock rename`). Records of other hosts stay untouched.
+  handlers.service_unregister = with_args(ARGS.service_type, function(ctx, args)
+    local hostname, err = require_computer(ctx)
+    if not hostname then
+      return nil, err
+    end
+    local service = dir:find_service(args.type)
+    if not service then
+      return nil, "no such service record"
+    end
+    if service.host ~= hostname then
+      return nil, "that service record belongs to " .. service.host
+    end
+    return change(function() return dir:remove_service(args.type) end)
   end)
 
   handlers.service_add = with_args(ARGS.service, function(ctx, args)

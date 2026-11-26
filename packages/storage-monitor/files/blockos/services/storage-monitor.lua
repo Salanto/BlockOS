@@ -112,7 +112,7 @@ local function run(ctx)
     end
   end
 
-  parallel.waitForAny(
+  local ok, err = pcall(parallel.waitForAny,
     function() rpc.serve(import("stock_client").PROTOCOL, handlers) end,
     function()
       while true do
@@ -121,6 +121,13 @@ local function run(ctx)
       end
     end
   )
+  -- Nobody is counting any more: switch lamps and farms off rather than leave
+  -- them as they were. A restart switches the right ones on again.
+  blockos.stock_server = nil
+  stock_alarms.apply_redstone({}, applied_outputs)
+  if not ok then
+    error(err, 0)
+  end
 end
 
 return {

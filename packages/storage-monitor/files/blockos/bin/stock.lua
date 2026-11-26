@@ -3,6 +3,8 @@
 --   stock                           full-screen tool (Overview, Catalog, Alarms,
 --                                   Alerts, Access)
 --   stock setup [--name <name>]     make this computer a stock computer
+--   stock rename <name> | --clear   rename this stock computer (stock-<name>), or
+--                                   go back to plain "stock"
 --   stock status | alerts           print the current state
 --   stock board <peripheral>|off    show a stock board on a monitor or Display Link
 --   stock access add|remove admin|viewer|computer <name>
@@ -22,7 +24,7 @@ local stock_client = import("stock_client")
 
 local function print_usage()
   print("Usage: stock [--server <name>]")
-  print("       stock setup [--name <name>]")
+  print("       stock setup [--name <name>] | rename <name> | rename --clear")
   print("       stock status | alerts")
   print("       stock board <peripheral> | off")
   print("       stock access add|remove admin|viewer|computer <name>")
@@ -94,11 +96,21 @@ local function setup(options)
     return
   end
 
+  local name = nil
+  if options.name then
+    local err
+    name, err = stock.check_name(options.name)
+    if not name then
+      fail(err)
+      return
+    end
+  end
+
   ui.title("Stock computer setup")
   local default_admin = blockos.user.source == "domain" and blockos.user.name or "stock-admins"
   local typed = ui.prompt("Administrators (users/groups): ", { default = default_admin })
   local admins = split_names(typed)
-  local config = stock.new_config(admins, options.name)
+  local config = stock.new_config(admins, name)
 
   local sources = stock_sources.load()
   local totals, blocks = stock_sources.read_all(sources)
@@ -269,6 +281,19 @@ end
 
 local ACCESS_LISTS = { admin = "admins", viewer = "viewers", computer = "computers" }
 
+-- Access lists are not updated when a domain user or group is deleted; point
+-- out entries that no longer exist (computer lists hold hostnames: skipped).
+local function warn_unknown_names(list, kind)
+  if kind == "computer" then
+    return
+  end
+  local found, domain = pcall(import, "domain")
+  local unknown = found and domain.find_unknown(list, true)
+  if unknown and #unknown > 0 then
+    ui.print("Not in the domain (deleted?): " .. table.concat(unknown, ", "), "warn")
+  end
+end
+
 local function change_access(connection, action, kind, name)
   local list_name = ACCESS_LISTS[kind]
   if not list_name or not name or (action ~= "add" and action ~= "remove") then
@@ -292,6 +317,7 @@ local function change_access(connection, action, kind, name)
     return fail(set_error)
   end
   ui.print((action == "add" and "Added " or "Removed ") .. name .. " (" .. kind .. ").", "ok")
+  warn_unknown_names(list, kind)
 end
 
 ------------------------------------------------------------------------------
@@ -585,6 +611,83 @@ local function run_tool(connection)
 end
 
 ------------------------------------------------------------------------------
+-- stock rename
+------------------------------------------------------------------------------
+
+-- In a domain, refuse a name whose record already points at another computer.
+local function check_name_is_free(domain, service_type)
+  local service = domain.find_service(service_type)
+  if service and service.id ~= os.getComputerID() then
+    return nil, service_type .. " is already used by " .. tostring(service.host)
+  end
+  return true
+end
+
+-- Give this stock computer a new name (or none, with --clear). The service
+-- registers the new record when it restarts; the old record is removed here.
+local function rename(wanted)
+  local server = blockos.stock_server
+  if not server then
+    fail("Run this on the stock computer itself (see 'stock setup').")
+    return
+  end
+  if not (blockos.user and blockos.user.is_admin) then
+    fail("Only administrators can rename a stock computer.")
+    return
+  end
+
+  local new_name = nil
+  if wanted ~= "--clear" then
+    local err
+    new_name, err = stock.check_name(wanted)
+    if not new_name then
+      fail(err)
+      return
+    end
+  end
+  local config = server.config
+  if new_name == config.name then
+    ui.print("The name is unchanged.", "warn")
+    return
+  end
+
+  local old_type = stock_client.service_type(config.name)
+  local new_type = stock_client.service_type(new_name)
+  local found, domain = pcall(import, "domain")
+  local is_joined = found and domain.is_joined()
+  if is_joined then
+    local ok, err = check_name_is_free(domain, new_type)
+    if not ok then
+      fail(err)
+      return
+    end
+  end
+
+  config.name = new_name
+  local saved, save_error = server.monitor.save()
+  if not saved then
+    fail(save_error)
+    return
+  end
+  if is_joined then
+    local ok, err = domain.unregister_service(old_type)
+    if not ok then
+      ui.print("Could not remove the old " .. old_type .. " record: " .. tostring(err), "warn")
+    end
+  end
+  -- Restarting re-registers under the new name (rednet.host and the domain record).
+  blockos.services.restart("storage-monitor")
+
+  ui.status("Now registered as " .. new_type .. ".", "ok")
+  if new_name then
+    ui.print("Other computers: 'stock --server " .. new_name .. "',", "dim")
+    ui.print("or as default: 'set blockos.stock.server " .. new_name .. "'.", "dim")
+  else
+    ui.print("Other computers find it without --server again.", "dim")
+  end
+end
+
+------------------------------------------------------------------------------
 
 local REMOTE_COMMANDS = { status = true, alerts = true, access = true, sound = true, react = true }
 
@@ -593,6 +696,12 @@ local command = options.words[1]
 
 if command == "setup" then
   setup(options)
+elseif command == "rename" then
+  if options.words[2] then
+    rename(options.words[2])
+  else
+    print_usage()
+  end
 elseif command == "board" then
   if options.words[2] then
     set_board(options.words[2])

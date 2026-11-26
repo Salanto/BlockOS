@@ -193,8 +193,9 @@ function stock_alarms.send_alerts(server, states, changes, recipients)
   for _, item in ipairs(changes.recovered) do
     changed[#changed + 1] = item
   end
+  local cleared = changes.cleared or {}
   for _, item in ipairs(changed) do
-    local event = stock_alarms.alert(server, item, states[item])
+    local event = stock_alarms.alert(server, item, states[item] or cleared[item])
     if recipients == stock_alarms.EVERYONE then
       stock_alarms.env.broadcast(event, stock_alarms.ALERT_PROTOCOL)
     else

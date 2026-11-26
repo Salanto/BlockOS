@@ -30,6 +30,28 @@ for _, side in ipairs(stock.SIDES) do
   VALID_SIDES[side] = true
 end
 
+-- "stock-" .. name must still fit a 32-character service record type.
+stock.MAX_NAME_LENGTH = 26
+
+--- Check a stock computer name ("kitchen").
+-- @tparam string name
+-- @treturn[1] string The name in lower case.
+-- @treturn[2] nil
+-- @treturn[2] string error message
+function stock.check_name(name)
+  if type(name) ~= "string" or name == "" then
+    return nil, "a name is required"
+  end
+  local clean = name:lower()
+  if not clean:match("^[%w_%-]+$") then
+    return nil, "names may only use letters, digits, - and _"
+  end
+  if #clean > stock.MAX_NAME_LENGTH then
+    return nil, "names may be at most " .. stock.MAX_NAME_LENGTH .. " characters"
+  end
+  return clean
+end
+
 --- A fresh config.
 -- @tparam {string...} admins Users or groups who may configure it.
 -- @tparam[opt] string name
@@ -121,11 +143,13 @@ end
 -- @tparam table totals [item] = { count, label } from the storage sources.
 -- @tparam[opt] table previous The states from the last call.
 -- @treturn table states: [item] = { label, count, limit, is_low }
--- @treturn table changes: { went_low = {item...}, recovered = {item...} }
+-- @treturn table changes: { went_low = {item...}, recovered = {item...},
+--   cleared = { [item] = state } } (cleared: items unwatched while low, also
+--   listed in recovered; they have no entry in states)
 function stock.evaluate(config, totals, previous)
   previous = previous or {}
   local states = {}
-  local changes = { went_low = {}, recovered = {} }
+  local changes = { went_low = {}, recovered = {}, cleared = {} }
   for item, watch in pairs(config.watches) do
     local found = totals[item]
     local count = found and found.count or 0
@@ -147,6 +171,19 @@ function stock.evaluate(config, totals, previous)
       changes.went_low[#changes.went_low + 1] = item
     elseif was_low and not is_low then
       changes.recovered[#changes.recovered + 1] = item
+    end
+  end
+  -- An item unwatched while low never recovers by itself, so it counts as
+  -- recovered once: other computers then clear their notices and reactions.
+  for item, old in pairs(previous) do
+    if old.is_low and not config.watches[item] then
+      changes.recovered[#changes.recovered + 1] = item
+      changes.cleared[item] = {
+        label = old.label,
+        count = old.count,
+        limit = old.limit,
+        is_low = false,
+      }
     end
   end
   table.sort(changes.went_low)

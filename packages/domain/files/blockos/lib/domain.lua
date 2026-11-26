@@ -206,6 +206,54 @@ function domain.register_service(service_type, protocol)
   return call("service_register", { type = service_type, protocol = protocol })
 end
 
+local function add_names(known, list)
+  if type(list) ~= "table" then
+    return false
+  end
+  for _, entry in ipairs(list) do
+    known[entry.name] = true
+  end
+  return true
+end
+
+--- Names in an access list that no longer exist in the domain, e.g. a group
+-- that was deleted. Access lists on other computers are not updated when a
+-- group goes, so tools use this to point such entries out.
+-- @tparam {string...} names
+-- @tparam[opt] boolean include_users Users count as known too (lists that
+--   take users and groups).
+-- @treturn[1] {string...} The unknown names ("*" always counts as known).
+-- @treturn[2] nil When it cannot be checked (not joined, no domain login,
+--   controller unreachable).
+function domain.find_unknown(names, include_users)
+  if not domain.is_joined() then
+    return nil
+  end
+  local known = { ["*"] = true }
+  if not add_names(known, call("list_groups")) then
+    return nil
+  end
+  if include_users and not add_names(known, call("list_users")) then
+    return nil
+  end
+  local unknown = {}
+  for _, name in ipairs(names) do
+    if not known[name] then
+      unknown[#unknown + 1] = name
+    end
+  end
+  return unknown
+end
+
+--- Remove a service record pointing at this computer (e.g. after a rename).
+-- @tparam string service_type e.g. "stock"
+-- @treturn[1] true
+-- @treturn[2] nil
+-- @treturn[2] string error message
+function domain.unregister_service(service_type)
+  return call("service_unregister", { type = service_type })
+end
+
 --- @tparam string service_type e.g. "pkg"
 -- @treturn table|nil { host, id, protocol }
 function domain.find_service(service_type)
