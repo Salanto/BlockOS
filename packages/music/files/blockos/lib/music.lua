@@ -17,10 +17,13 @@ music.env = {
 
 -- CC's DFPWM decoder lives in the rom as a `require` module; modules loaded
 -- with `import` have no `require` of their own, so build one.
+-- The loaded modules call `require` themselves (cc.audio.dfpwm needs
+-- cc.expect), so it must live in the environment they run in.
 local function new_decoder()
   local make_require = dofile("/rom/modules/main/cc/require.lua").make
-  local require = make_require(_ENV, "/")
-  return require("cc.audio.dfpwm").make_decoder()
+  local env = setmetatable({}, { __index = _ENV })
+  env.require = make_require(env, "/")
+  return env.require("cc.audio.dfpwm").make_decoder()
 end
 
 --- Every attached speaker.
