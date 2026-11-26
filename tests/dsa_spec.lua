@@ -25,7 +25,8 @@ return function(t)
     local dir = assert(import("directory").create("home", "admin", "secret"))
     local token = dir:join("pc1", ME)
     import("domain").set_membership({ name = "home", controller_id = ME, computer_token = token })
-    local session = dir:login("admin", "secret", os.clock())
+    -- Sessions are measured in real seconds, like the controller does.
+    local session = dir:login("admin", "secret", math.floor(os.epoch("utc") / 1000))
     _G.blockos = { ui = import("ui"), user = { name = "admin", token = session.token } }
     rpc.set_transport(rpc.loopback_transport())
     local storage = { save = function() return true end, has_room = function() return true end }
