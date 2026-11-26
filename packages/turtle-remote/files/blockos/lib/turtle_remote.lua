@@ -21,7 +21,8 @@ turtle_remote.INVENTORY_SLOTS = 16
 turtle_remote.ARGS = {
   act = {
     action = { type = "string", max = 16 },
-    slot = { type = "number", min = 1, max = 16, optional = true },
+    -- wire's `max` limits lengths, not numbers: the upper bound is checked below.
+    slot = { type = "number", min = 1, optional = true },
   },
 }
 
@@ -65,8 +66,9 @@ end
 -- Run one action. Turtle functions return true, or false and a reason.
 local function run_action(turtle_api, args)
   if args.action == "select" then
-    if not args.slot then
-      return nil, "select needs a slot"
+    local slot = args.slot
+    if not slot or slot > turtle_remote.INVENTORY_SLOTS or slot % 1 ~= 0 then
+      return nil, "select needs a slot from 1 to " .. turtle_remote.INVENTORY_SLOTS
     end
     return turtle_api.select(args.slot), nil
   end
