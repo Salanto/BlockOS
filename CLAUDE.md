@@ -206,14 +206,27 @@ minutes marks the service `failed`. `condition` returning false marks it `n/a`.
 | Protocol           | Message                                                        |
 |--------------------|----------------------------------------------------------------|
 | `blockos`          | rednet's built-in `rednet.host` / `rednet.lookup` hostname records |
-| `blockos.announce` | `{ v = 1, hostname, kind, version, services = {...}, info = {...}, hello = true? }` broadcast at boot and every 5 min, **only by computers not in a domain**; a `hello` gets a direct reply |
-| `blockos.domain`   | rpc. join, leave, login, validate, logout, validate_computer, host_update, resolve, list_hosts, service_find/add/del, list_users/groups/computers/services, user_add/del/passwd/enable, group_add/del/addmember/rmmember, computer_remove. The controller also hosts this protocol under the domain name, so `rednet.lookup("blockos.domain", "home")` finds it. |
+| `blockos.announce` | event `announce` `{ hostname, kind, version, services, info, hello? }`, broadcast at boot and every 5 min, **only by computers not in a domain**; a `hello` gets a direct reply |
+| `blockos.domain`   | rpc. join, leave, login, validate, logout, validate_computer, host_update, resolve, list_hosts, service_find/add/del, list_users/groups/computers/services, user_add/del/passwd/enable, group_add/del/addmember/rmmember, computer_remove, dc_status. The controller also hosts this protocol under the domain name, so `rednet.lookup("blockos.domain", "home")` finds it. |
 | `blockos.pkg`      | rpc. index (filtered by the caller's groups), fetch `{ name }` (raw .pkg), publish `{ raw }` (domain-admins). |
+| `blockos.stock`    | rpc. status, alerts (viewers, admins or listed computers); catalog, watches (viewers, admins); outputs, watch, unwatch, watch_all, settings, test_sound, access, set_access (admins). Found via the domain service record `stock` / `stock-<name>`. |
+| `blockos.stock.alert` | event `stock_alert` `{ server, item, label, count, limit, is_low }`, sent directly to each computer on the stock computer's access list, only when an item goes low or recovers. |
 
-**rpc** (`net/lib/rpc.lua`): request `{ v = 1, id, op, args, token?, computer_token? }`,
-response `{ v = 1, reply_to, ok, result | error }`. Handlers return a result, or `nil, err`.
-Rednet has no request/response, so rpc only adds reply matching, timeouts/retries and a server
-loop that runs each request in its own coroutine.
+**Wire format** (`net/lib/wire.lua`): every message uses one envelope, so nothing is parsed by
+hand:
+
+- request `{ v = 1, kind = "request", id, op, args, token?, computer_token? }`
+- response `{ v = 1, kind = "response", reply_to, ok, result | error }`
+- event `{ v = 1, kind = "event", topic, data }` (one-way: announces, alerts)
+
+Each protocol declares its payload once as a schema (`{ hostname = { type = "string", max = 32 } }`).
+Receivers call `wire.parse(message, kind, schema)`, and rpc handlers are wrapped in
+`rpc.with_args(schema, fn)`. Unknown fields are ignored, and messages with a newer major version
+are dropped. **New protocols must use wire and declare schemas.**
+
+**rpc** (`net/lib/rpc.lua`): handlers return a result, or `nil, err`. Rednet has no
+request/response, so rpc only adds reply matching, timeouts/retries and a server loop that
+runs each request in its own coroutine.
 
 **Discovery:** joined computers resolve names and services by asking the controller (one
 direct message, answers cached 60s) instead of broadcasting; they still `rednet.host` their
@@ -223,8 +236,7 @@ name, which costs nothing unless queried. `rednet.lookup` is only used to find t
 control or last-seen data. Short hostnames contain no "."; it is reserved for the domain
 suffix.
 
-Every BlockOS message carries `v` (wire version). Receivers validate the shape, ignore unknown
-fields, and drop messages with a newer major version. Peer liveness uses the local receive time.
+Peer liveness uses the local receive time, never the sender's clock.
 
 ### Packages and releases
 
@@ -274,9 +286,13 @@ fields, and drop messages with a newer major version. Peer liveness uses the loc
 ## Roadmap
 
 - **Done (milestone 2):** rpc layer, domain controller with DNS, package server.
-- **Next milestone:** remote control for PCs (status panel) and turtles, built on rpc and
-  domain logins. Groups may later hold computer accounts too (e.g. "only computers in
-  `factory` may read stock"), when a service needs it.
+- **Milestone 3:** StorageMonitor (`storage-monitor` package): stock watching with limits,
+  redstone/relay lamps, a speaker sound (note, Minecraft sound or .dfpwm file), monitor and
+  Create Display Board boards, alerts to listed computers, a per-computer access list; the
+  shared wire format.
+- **Next:** remote control for PCs and turtles, built on rpc, wire and domain logins. More
+  storage sources (e.g. an ME/RS bridge) as separate packages adding
+  `lib/storage_sources/<kind>.lua`.
 - **Later:** uninstall of BlockOS itself, local IPC via custom events, tab completion,
   pocket computer support.
 

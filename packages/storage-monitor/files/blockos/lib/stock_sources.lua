@@ -1,0 +1,69 @@
+--- Storage sources for the StorageMonitor.
+--
+-- Every file in <root>/lib/storage_sources/ is a source. Packages install into
+-- the shared /blockos/lib, so a package that adds a new kind of storage (for
+-- example an ME bridge) only has to ship one more file there.
+--
+-- A source returns:
+--   kind                  short name, e.g. "inventory"
+--   describe()            text for people
+--   detect()              -> list of handles (e.g. peripheral names)
+--   read(handle)          -> [item] = { count, label }
+-- @module stock_sources
+
+local stock_sources = {}
+
+local SOURCE_DIR = "lib/storage_sources"
+
+--- Load every source module.
+-- @tparam[opt] string root System tree (default blockos.root).
+-- @tparam[opt] function loader Module loader (default import; tests pass their own).
+-- @treturn {table...}
+function stock_sources.load(root, loader)
+  loader = loader or import
+  root = root or (blockos and blockos.root) or "/blockos"
+  local dir = fs.combine(root, SOURCE_DIR)
+  local sources = {}
+  if not fs.isDir(dir) then
+    return sources
+  end
+  local names = fs.list(dir)
+  table.sort(names)
+  for _, file in ipairs(names) do
+    local name = file:match("^(.-)%.lua$")
+    if name then
+      local ok, source = pcall(loader, "storage_sources/" .. name)
+      if ok and type(source) == "table" and type(source.read) == "function" then
+        sources[#sources + 1] = source
+      end
+    end
+  end
+  return sources
+end
+
+--- Read and add up every item from every source.
+-- A handle that fails (a chest broken mid-read) is skipped, not an error.
+-- @tparam {table...} sources
+-- @treturn table [item] = { count, label }
+-- @treturn number How many storage blocks were read.
+function stock_sources.read_all(sources)
+  local totals = {}
+  local blocks = 0
+  for _, source in ipairs(sources) do
+    for _, handle in ipairs(source.detect()) do
+      local ok, items = pcall(source.read, handle)
+      if ok and type(items) == "table" then
+        blocks = blocks + 1
+        for item, found in pairs(items) do
+          local total = totals[item] or { count = 0, label = found.label }
+          total.count = total.count + found.count
+          total.label = total.label or found.label
+          totals[item] = total
+        end
+      end
+    end
+  end
+  return totals, blocks
+end
+
+return stock_sources

@@ -92,9 +92,9 @@ local function run(ctx)
     if sender == os.getComputerID() then
       return
     end
-    local announce = net.handle_announce(sender, message)
+    local payload = net.handle_announce(sender, message)
     -- A newcomer says hello: answer directly so it learns about us right away.
-    if announce and announce.hello and net.is_online() and not net.directory() then
+    if payload and payload.hello and net.is_online() and not net.directory() then
       rednet.send(sender, net.build_announce(), net.ANNOUNCE_PROTOCOL)
     end
   end

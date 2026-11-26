@@ -142,6 +142,9 @@ function session.run_user(user, user_shell)
   ui.use("title")
   write("Welcome, " .. user.name .. ". ")
   ui.print("Type 'logout' to log out.", "dim")
+  for _, notice in pairs(blockos and blockos.notices or {}) do
+    ui.status(notice, "warn")
+  end
 
   parallel.waitForAny(user_shell, wait_for_logout)
 
