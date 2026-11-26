@@ -6,6 +6,10 @@
 --   stock rename <name> | --clear   rename this stock computer (stock-<name>), or
 --                                   go back to plain "stock"
 --   stock status | alerts           print the current state
+--   stock storage [list]            every inventory with its role and label
+--   stock storage role <chest> storage|input|output|ignore
+--   stock storage label <chest> <label...>   (nothing removes it)
+--   stock request <item> [count] [output]    deliver items to an output chest
 --   stock board <peripheral>|off    show a stock board on a monitor or Display Link
 --   stock access add|remove admin|viewer|computer <name>
 --   stock sound note|sound|file <value> [volume] | test
@@ -26,6 +30,8 @@ local function print_usage()
   print("Usage: stock [--server <name>]")
   print("       stock setup [--name <name>] | rename <name> | rename --clear")
   print("       stock status | alerts")
+  print("       stock storage [list] | role <chest> <role> | label <chest> <label>")
+  print("       stock request <item> [count] [output chest]")
   print("       stock board <peripheral> | off")
   print("       stock access add|remove admin|viewer|computer <name>")
   print("       stock sound note|sound|file <value> [volume] | test")
@@ -350,6 +356,72 @@ local function change_access(connection, action, kind, name)
 end
 
 ------------------------------------------------------------------------------
+-- Logistics
+------------------------------------------------------------------------------
+
+local DEFAULT_REQUEST = 64
+
+local function describe_fill(row)
+  if not row.size then
+    return "-"
+  end
+  return row.used .. "/" .. row.size .. " slots"
+end
+
+local function show_storages(connection)
+  local rows, err = connection.call("storages")
+  if not rows then
+    return fail(err)
+  end
+  ui.title("Storage (" .. connection.describe .. ")")
+  ui.table({
+    { title = "CHEST", key = "label" },
+    { title = "ROLE", key = "role" },
+    { title = "FILL", key = describe_fill },
+    { title = "NAME", key = "handle" },
+  }, rows, function(row) return row.role == "ignore" and "faint" or "text" end)
+end
+
+local function change_storage(connection, words)
+  local action, chest = words[2], words[3]
+  if action == nil or action == "list" then
+    return show_storages(connection)
+  end
+  if not chest or (action ~= "role" and action ~= "label") then
+    return print_usage()
+  end
+  local call_args = { storage = chest }
+  if action == "role" then
+    call_args.role = words[4]
+  else
+    call_args.label = table.concat(words, " ", 4)
+  end
+  local result, err = connection.call("set_storage", call_args)
+  if not result then
+    return fail(err)
+  end
+  ui.print("Changed " .. result.storage .. ".", "ok")
+end
+
+local function describe_request(result, count)
+  local text = string.format("Moved %d of %d %s to %s.", result.moved, count,
+    tostring(result.label), tostring(result.output))
+  return text, result.moved < count and "warn" or "ok"
+end
+
+local function request_items(connection, item, count_text, output)
+  if not item then
+    return print_usage()
+  end
+  local count = tonumber(count_text) or DEFAULT_REQUEST
+  local result, err = connection.call("request", { item = item, count = count, output = output })
+  if not result then
+    return fail(err)
+  end
+  ui.print(describe_request(result, count))
+end
+
+------------------------------------------------------------------------------
 -- The full-screen tool
 ------------------------------------------------------------------------------
 
@@ -371,7 +443,7 @@ local function run_tool(connection)
   end
 
   -- Keys that work without a selected row.
-  local ROWLESS_KEYS = { W = true, a = true, s = true, t = true }
+  local ROWLESS_KEYS = { W = true, a = true, s = true, t = true, f = true }
 
   local function choose_sound()
     local kinds = { "note", "sound", "file" }
@@ -446,8 +518,21 @@ local function run_tool(connection)
     describe = function(row)
       return string.format("%-20s %7d %s", row.label, row.count, row.is_watched and "watched" or "")
     end,
-    hints = { { "w", "Watch" }, { "W", "Watch all" } },
+    hints = { { "w", "Watch" }, { "W", "Watch all" }, { "g", "Get" } },
     keys = {
+      g = function(row)
+        local answers = ui.form("Get " .. row.label .. " (" .. row.count .. " stored)",
+          { { label = "How many (" .. DEFAULT_REQUEST .. "): " } })
+        if answers then
+          local count = tonumber(answers[1]) or DEFAULT_REQUEST
+          local result, err = connection.call("request", { item = row.item, count = count })
+          if result then
+            set_message(describe_request(result, count))
+          else
+            set_message(err, "error")
+          end
+        end
+      end,
       w = function(row)
         local default = tostring(math.max(1, math.floor(row.count / 2)))
         local answers = ui.form("Watch " .. row.label .. " (now " .. row.count .. ")",
@@ -563,6 +648,82 @@ local function run_tool(connection)
           end
         end
       end,
+    },
+  }
+
+  -- Storage --------------------------------------------------------------
+
+  local function set_role(row, role)
+    if row then
+      local message = row.label .. " is now " .. role .. "."
+      run("set_storage", { storage = row.handle, role = role }, message)
+    end
+  end
+
+  local function set_label(row)
+    local answers = ui.form("Label for " .. row.handle, { { label = "Label: " } })
+    if answers then
+      run("set_storage", { storage = row.handle, label = answers[1] }, "Label set.")
+    end
+  end
+
+  local function storages_by_handle()
+    local by_handle = {}
+    for _, row in ipairs(connection.call("storages") or {}) do
+      by_handle[row.handle] = row
+    end
+    return by_handle
+  end
+
+  -- Find a chest by dropping an item into it: whichever inventory's contents
+  -- changed meanwhile is the one.
+  local function find_chest()
+    local before = storages_by_handle()
+    if not ui.confirm("Drop any item into the chest, then choose yes.") then
+      return
+    end
+    local changed = {}
+    for handle, row in pairs(storages_by_handle()) do
+      local old = before[handle]
+      if old and old.total ~= row.total then
+        changed[#changed + 1] = row
+      end
+    end
+    if #changed == 0 then
+      return set_message("No chest changed; is its modem switched on (red)?", "warn")
+    end
+    local row = changed[1]
+    if #changed > 1 then
+      local names = {}
+      for index, candidate in ipairs(changed) do
+        names[index] = candidate.label
+      end
+      row = changed[ui.menu({ title = "Several chests changed", items = names })]
+    end
+    local actions = { "Set label", "Storage", "Input", "Output", "Ignore", "Cancel" }
+    local choice = ui.menu({ title = "Found " .. row.label, items = actions })
+    if choice == 1 then
+      set_label(row)
+    elseif choice <= 5 then
+      set_role(row, actions[choice]:lower())
+    end
+  end
+
+  tabs[6] = {
+    title = "Storage",
+    load = function() return connection.call("storages") end,
+    describe = function(row)
+      return string.format("%-18s %-7s %s", row.label, row.role, describe_fill(row))
+    end,
+    role = function(row) return row.role == "ignore" and "faint" or nil end,
+    hints = { { "f", "Find" }, { "l", "Label" }, { "s/i/o/x", "Role" } },
+    keys = {
+      f = find_chest,
+      l = set_label,
+      s = function(row) set_role(row, "storage") end,
+      i = function(row) set_role(row, "input") end,
+      o = function(row) set_role(row, "output") end,
+      x = function(row) set_role(row, "ignore") end,
     },
   }
 
@@ -721,7 +882,15 @@ end
 
 ------------------------------------------------------------------------------
 
-local REMOTE_COMMANDS = { status = true, alerts = true, access = true, sound = true, react = true }
+local REMOTE_COMMANDS = {
+  status = true,
+  alerts = true,
+  access = true,
+  sound = true,
+  react = true,
+  storage = true,
+  request = true,
+}
 
 local options = parse_args()
 local command = options.words[1]
@@ -753,6 +922,10 @@ elseif command == nil or REMOTE_COMMANDS[command] then
     change_access(connection, options.words[2], options.words[3], options.words[4])
   elseif command == "sound" then
     set_sound(connection, options.words[2], options.words[3], options.words[4])
+  elseif command == "storage" then
+    change_storage(connection, options.words)
+  elseif command == "request" then
+    request_items(connection, options.words[2], options.words[3], options.words[4])
   elseif command == "react" then
     change_reactions(connection, options.words[2], options.words[3], options.words[4],
       options.words[5])

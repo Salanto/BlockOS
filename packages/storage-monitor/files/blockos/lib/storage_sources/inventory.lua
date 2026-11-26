@@ -50,4 +50,28 @@ function inventory.read(name)
   return items
 end
 
+-- Logistics (optional source functions; sources without them are only counted).
+
+--- @tparam string name
+-- @treturn number How many slots the inventory has.
+function inventory.size(name)
+  return inventory.peripheral.wrap(name).size()
+end
+
+--- @tparam string name
+-- @treturn table [slot] = { name, count }
+function inventory.list(name)
+  return inventory.peripheral.wrap(name).list()
+end
+
+--- Move items from one slot to another inventory on the same wired network.
+-- @tparam string from Peripheral name.
+-- @tparam string to Peripheral name.
+-- @tparam number slot Slot in `from`.
+-- @tparam[opt] number limit At most this many items.
+-- @treturn number How many items moved.
+function inventory.push(from, to, slot, limit)
+  return inventory.peripheral.wrap(from).pushItems(to, slot, limit)
+end
+
 return inventory

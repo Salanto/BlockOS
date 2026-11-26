@@ -217,7 +217,7 @@ minutes marks the service `failed`. `condition` returning false marks it `n/a`.
 | `blockos.announce` | event `announce` `{ hostname, kind, version, services, info, hello? }`, broadcast at boot and every 5 min, **only by computers not in a domain**; a `hello` gets a direct reply |
 | `blockos.domain`   | rpc. join, leave, login, validate, logout, validate_computer, host_update, resolve, list_hosts, service_find/add/del/register/unregister, list_users/groups/computers/services, user_add/del/passwd/enable, group_add/del/addmember/rmmember, computer_remove, dc_status. The controller also hosts this protocol under the domain name, so `rednet.lookup("blockos.domain", "home")` finds it. |
 | `blockos.pkg`      | rpc. index (filtered by the caller's groups), fetch `{ name }` (raw .pkg), publish `{ raw }` (domain-admins). |
-| `blockos.stock`    | rpc. status, alerts (viewers, admins or listed computers); catalog, watches (viewers, admins); outputs, watch, unwatch, watch_all, settings, test_sound, access, set_access (admins). Found via the domain service record `stock` / `stock-<name>`. |
+| `blockos.stock`    | rpc. status, alerts (viewers, admins or listed computers); catalog, watches, storages, request `{ item, count, output? }` (viewers, admins); outputs, watch, unwatch, watch_all, settings, test_sound, access, set_access, set_storage `{ storage, role?, label? }` (admins). Items and chests may be named by id, label or part of it. Found via the domain service record `stock` / `stock-<name>`. |
 | `blockos.remote`   | rpc, served by the `turtle-remote` service on joined turtles. info, act `{ action, slot? }` (domain users; only the actions listed in `turtle_remote.ACTIONS`, plus select). Never retried by the driver, so a lost answer cannot move a turtle twice. |
 | `blockos.stock.alert` | event `stock_alert` `{ server, item, label, count, limit, is_low }`, sent directly to each computer on the stock computer's access list, only when an item goes low or recovers. |
 
@@ -302,7 +302,8 @@ Peer liveness uses the local receive time, never the sender's clock.
   redstone/relay lamps, a speaker sound (note, Minecraft sound or .dfpwm file), monitor and
   Create Display Board boards, alerts to listed computers, a per-computer access list, refill
   targets and reactions on other computers (level-triggered: they poll status, alerts only
-  speed them up); the shared wire format.
+  speed them up); the shared wire format. Item logistics on top: per-inventory roles
+  (storage/input/output/ignore) and labels, inputs sorted into storage, requests to outputs.
 - **Next:** remote control for PCs (turtles done: `turtle-remote` package, `remote <turtle>`),
   built on rpc, wire and domain logins. More
   storage sources (e.g. an ME/RS bridge) as separate packages adding

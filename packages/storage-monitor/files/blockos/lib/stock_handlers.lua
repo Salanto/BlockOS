@@ -2,8 +2,10 @@
 --
 -- Every stock computer decides who may reach it (its access list; open to
 -- everyone by default, "*" meaning everyone):
---   viewers          status, catalog, alerts
---   admins           everything, including watches, alarms and the access list
+--   viewers          status, catalog, alerts, storages, request (taking items
+--                    out is for everyone who may look: friends only)
+--   admins           everything, including watches, alarms, storage roles and
+--                    the access list
 --   computers        status and alerts, headless (e.g. a board elsewhere)
 --   domain-admins    always admins
 --   local admin      at this computer's own keyboard: always admin, so a
@@ -36,6 +38,18 @@ local ARGS = {
     sound = { type = "table", optional = true },
   },
   set_access = { admins = NAMES, viewers = NAMES, computers = NAMES },
+  -- `storage` and `output` are a peripheral name or (part of) a label.
+  set_storage = {
+    storage = { type = "string", max = 64 },
+    role = { type = "string", optional = true, max = 16 },
+    label = { type = "string", optional = true, max = 64 },
+  },
+  -- `item` is an item id or (part of) its name.
+  request = {
+    item = ITEM,
+    count = { type = "number", min = 1 },
+    output = { type = "string", optional = true, max = 64 },
+  },
 }
 
 --- Build the handler table.
@@ -46,6 +60,9 @@ local ARGS = {
 --   totals        latest [item] = { count, label }
 --   alerts        recent alert payloads, newest last
 --   list_outputs()  redstone targets that can be chosen
+--   inventories   from the last read: { handle, role, source, items? }
+--   list_storages()  every inventory with role, label and fill
+--   request(item, count, output?)  deliver items (see stock_logistics)
 -- @treturn table
 function stock_handlers.new(monitor)
   local handlers = {}
@@ -284,6 +301,64 @@ function stock_handlers.new(monitor)
       access.computers = args.computers or access.computers
       return true
     end)
+  end)
+
+  -- Logistics ------------------------------------------------------------
+
+  local function inventory_handles()
+    local handles = {}
+    for _, inventory in ipairs(monitor.inventories or {}) do
+      handles[#handles + 1] = inventory.handle
+    end
+    return handles
+  end
+
+  function handlers.storages(ctx)
+    local ok, err = require_viewer(ctx)
+    if not ok then
+      return nil, err
+    end
+    return monitor.list_storages()
+  end
+
+  handlers.set_storage = with_args(ARGS.set_storage, function(ctx, args)
+    return admin_change(ctx, function()
+      local handle, err = stock.find_storage(monitor.config, inventory_handles(), args.storage)
+      if not handle then
+        return nil, err
+      end
+      local ok, set_error = stock.set_storage(monitor.config, handle, args.role, args.label)
+      if not ok then
+        return nil, set_error
+      end
+      return { storage = handle }
+    end)
+  end)
+
+  handlers.request = with_args(ARGS.request, function(ctx, args)
+    local ok, err = require_viewer(ctx)
+    if not ok then
+      return nil, err
+    end
+    local item, item_error = stock.find_item(monitor.totals, args.item)
+    if not item then
+      return nil, item_error
+    end
+    local output = nil
+    if args.output then
+      local output_error
+      output, output_error = stock.find_storage(monitor.config, inventory_handles(), args.output)
+      if not output then
+        return nil, output_error
+      end
+    end
+    local result, request_error = monitor.request(item, math.floor(args.count), output)
+    if not result then
+      return nil, request_error
+    end
+    result.item = item
+    result.label = monitor.totals[item] and monitor.totals[item].label or item
+    return result
   end)
 
   return handlers

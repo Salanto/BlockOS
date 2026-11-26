@@ -42,36 +42,49 @@ function stock_sources.load(root, loader)
 end
 
 --- Read and add up every item from every source.
--- A handle that fails (a chest broken mid-read) is skipped, not an error; it
--- is listed in the failures so the caller can log it.
+-- Only blocks whose role is "storage" are read and counted; inputs, outputs
+-- and ignored blocks are listed but not read (their items are in transit,
+-- already taken, or not ours). A handle that fails (a chest broken mid-read)
+-- is skipped, not an error; it is listed in the failures so the caller can
+-- log it.
 -- @tparam {table...} sources
+-- @tparam[opt] function role_of function(handle) -> role; default: all storage
 -- @treturn table [item] = { count, label }
 -- @treturn number How many storage blocks were read.
 -- @treturn {table...} failures: { handle, error } per block that could not be read
-function stock_sources.read_all(sources)
+-- @treturn {table...} inventories: { handle, role, source, items? } per block
+--   found (items only for storage blocks that were read)
+function stock_sources.read_all(sources, role_of)
   local totals = {}
   local blocks = 0
   local failures = {}
+  local inventories = {}
   for _, source in ipairs(sources) do
     for _, handle in ipairs(source.detect()) do
-      local ok, items = pcall(source.read, handle)
-      if not ok or type(items) ~= "table" then
-        failures[#failures + 1] = {
-          handle = tostring(handle),
-          error = ok and "the source returned no item list" or tostring(items),
-        }
-      else
-        blocks = blocks + 1
-        for item, found in pairs(items) do
-          local total = totals[item] or { count = 0, label = found.label }
-          total.count = total.count + found.count
-          total.label = total.label or found.label
-          totals[item] = total
+      local role = role_of and role_of(handle) or "storage"
+      local inventory = { handle = handle, role = role, source = source }
+      inventories[#inventories + 1] = inventory
+      if role == "storage" then
+        local ok, items = pcall(source.read, handle)
+        if not ok or type(items) ~= "table" then
+          failures[#failures + 1] = {
+            handle = tostring(handle),
+            error = ok and "the source returned no item list" or tostring(items),
+          }
+        else
+          blocks = blocks + 1
+          inventory.items = items
+          for item, found in pairs(items) do
+            local total = totals[item] or { count = 0, label = found.label }
+            total.count = total.count + found.count
+            total.label = total.label or found.label
+            totals[item] = total
+          end
         end
       end
     end
   end
-  return totals, blocks, failures
+  return totals, blocks, failures, inventories
 end
 
 return stock_sources

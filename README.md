@@ -94,6 +94,18 @@ computer, put that computer on the stock computer's access list and add a reacti
 `stock react add iron computer back`. Reactions follow the real stock state, so a missed
 alert (an unloaded chunk) never leaves the farm running.
 
+**Item logistics.** Every chest on the stock computer's wired network has a role, set in the
+**Storage** tab (or `stock storage role <chest> <role>`):
+
+- **storage** (the default): counted, and where items are sorted into and taken from.
+- **input**: a dump chest, emptied into storage automatically (next to the same item first).
+- **output**: where requested items arrive: `g` in the Catalog tab, or `stock request iron 64`
+  from any computer.
+- **ignore**: furnaces, machines, trash cans: never counted or touched.
+
+Give chests labels with `l`. To find out which chest is which, press `f` and drop any item into
+it. Everyone who can look at the stock may take items out.
+
 A stock computer is open by default: anyone can look and every computer gets its alerts; only
 its admins (and domain admins) can change it. Narrow that in the Access tab if you like. It
 works without a domain too.

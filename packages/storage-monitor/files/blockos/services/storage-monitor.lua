@@ -1,6 +1,7 @@
 -- storage-monitor service: reads the stock in attached storage, compares it
--- with the watched limits, raises alarms (redstone, speaker, network alerts)
--- and answers the `stock` tool and boards over rpc. Only runs on a computer
+-- with the watched limits, raises alarms (redstone, speaker, network alerts),
+-- empties input chests into storage, delivers requested items to output
+-- chests, and answers the `stock` tool and boards over rpc. Only runs on a computer
 -- where `stock setup` was done.
 
 local MAX_ALERTS = 20
@@ -31,6 +32,7 @@ local function run(ctx)
   local stock = import("stock")
   local stock_alarms = import("stock_alarms")
   local stock_handlers = import("stock_handlers")
+  local stock_logistics = import("stock_logistics")
   local stock_sources = import("stock_sources")
   local log = ctx.log
 
@@ -40,7 +42,14 @@ local function run(ctx)
 
   -- sources stays nil until the first read, so tools do not show "no storage"
   -- in the moment after a start.
-  local monitor = { config = config, totals = {}, states = {}, alerts = {}, sources = nil }
+  local monitor = {
+    config = config,
+    totals = {},
+    states = {},
+    alerts = {},
+    sources = nil,
+    inventories = {}, -- from the last read: { handle, role, source, items? }
+  }
 
   function monitor.save()
     if pcall(fsx.write_table, path, config) then
@@ -60,6 +69,48 @@ local function run(ctx)
 
   monitor.list_outputs = stock_alarms.list_outputs
 
+  --- Deliver items to an output chest (see stock_logistics.request).
+  function monitor.request(item, count, output)
+    return stock_logistics.request(monitor.inventories, item, count, output)
+  end
+
+  -- How full one inventory is right now, for the Storage tab.
+  local function fill_of(inventory)
+    local source = inventory.source
+    if type(source.list) ~= "function" or type(source.size) ~= "function" then
+      return nil
+    end
+    local ok_size, size = pcall(source.size, inventory.handle)
+    local ok_list, slots = pcall(source.list, inventory.handle)
+    if not (ok_size and ok_list) then
+      return nil
+    end
+    local used, total = 0, 0
+    for _, stack in pairs(slots) do
+      used = used + 1
+      total = total + stack.count
+    end
+    return { size = size, used = used, total = total }
+  end
+
+  --- Every inventory found, with role, label and how full it is.
+  function monitor.list_storages()
+    local rows = {}
+    for _, inventory in ipairs(monitor.inventories) do
+      local fill = fill_of(inventory) or {}
+      rows[#rows + 1] = {
+        handle = inventory.handle,
+        label = stock.storage_name(config, inventory.handle),
+        role = stock.role_of(config, inventory.handle),
+        size = fill.size,
+        used = fill.used,
+        total = fill.total,
+      }
+    end
+    table.sort(rows, function(a, b) return a.label < b.label end)
+    return rows
+  end
+
   local handlers = stock_handlers.new(monitor)
   blockos.stock_server = { handlers = handlers, monitor = monitor, config = config }
 
@@ -77,9 +128,18 @@ local function run(ctx)
     failing = now_failing
   end
 
+  local function role_of(handle)
+    return stock.role_of(config, handle)
+  end
+
   local applied_outputs = {}
   local function check_stock()
-    local totals, blocks, failures = stock_sources.read_all(sources)
+    local totals, blocks, failures, inventories = stock_sources.read_all(sources, role_of)
+    monitor.inventories = inventories
+    local _, sort_failures = stock_logistics.sort_inputs(inventories)
+    for _, failure in ipairs(sort_failures) do
+      failures[#failures + 1] = failure
+    end
     log_failures(failures)
     monitor.totals, monitor.sources = totals, blocks
     local states, changes = stock.evaluate(config, totals, monitor.states)
