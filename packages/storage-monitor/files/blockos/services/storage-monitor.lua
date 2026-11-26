@@ -38,7 +38,9 @@ local function run(ctx)
   local config = stock.normalise(assert(fsx.read_table(path), "the stock config is unreadable"))
   local sources = stock_sources.load()
 
-  local monitor = { config = config, totals = {}, states = {}, alerts = {}, sources = 0 }
+  -- sources stays nil until the first read, so tools do not show "no storage"
+  -- in the moment after a start.
+  local monitor = { config = config, totals = {}, states = {}, alerts = {}, sources = nil }
 
   function monitor.save()
     if pcall(fsx.write_table, path, config) then
@@ -61,9 +63,24 @@ local function run(ctx)
   local handlers = stock_handlers.new(monitor)
   blockos.stock_server = { handlers = handlers, monitor = monitor, config = config }
 
+  -- Log each unreadable block once (not every poll), and again only after it
+  -- was readable in between.
+  local failing = {} -- [handle] = true while it fails
+  local function log_failures(failures)
+    local now_failing = {}
+    for _, failure in ipairs(failures) do
+      if not failing[failure.handle] then
+        log.warn("cannot read %s: %s", failure.handle, failure.error)
+      end
+      now_failing[failure.handle] = true
+    end
+    failing = now_failing
+  end
+
   local applied_outputs = {}
   local function check_stock()
-    local totals, blocks = stock_sources.read_all(sources)
+    local totals, blocks, failures = stock_sources.read_all(sources)
+    log_failures(failures)
     monitor.totals, monitor.sources = totals, blocks
     local states, changes = stock.evaluate(config, totals, monitor.states)
     monitor.states = states
