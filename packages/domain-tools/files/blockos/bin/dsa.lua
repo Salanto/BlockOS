@@ -6,8 +6,12 @@
 --   Tab actions are shown on the bottom row.
 -- Everyone in the domain can look; changes need a domain admin, or for a module's roles
 -- a member of the module's admin role (e.g. logistics-admins).
+--
+-- Computer roles are chosen by ticking lists (role_picker): a role's packages from what
+-- the package source offers, and its computers from the domain's computers.
 local ui = blockos.ui
 local domain = import("domain")
+local role_picker = import("role_picker")
 
 if not domain.is_joined() then
   ui.print("This computer is not in a domain.", "error")
@@ -54,7 +58,8 @@ local tabs = {
       local used = #role.computers > 0 and (" (" .. #role.computers .. " pc)") or ""
       return string.format("%-16s %s%s", role.name, table.concat(role.packages, ","), used)
     end,
-    hints = { { "a", "Add" }, { "p", "Packages" }, { "s", "Setting" }, { "d", "Delete" } },
+    hints = { { "a", "Add" }, { "p", "Packages" }, { "c", "Computers" }, { "s", "Setting" },
+      { "d", "Delete" } },
   },
   {
     title = "DNS",
@@ -82,6 +87,40 @@ local function run(op, args, success)
   else
     set_message(err, "error")
   end
+end
+
+-- The domain's computers, with when they were last seen (for the checklists).
+local function computers()
+  local hosts, err = domain.call("list_computers")
+  if not hosts then
+    return nil, err
+  end
+  for _, host in ipairs(hosts) do
+    host.seen = domain.describe_seen(host)
+  end
+  return hosts
+end
+
+-- Tick the computers that have a role, and assign the ones that changed.
+local function choose_computers(role_name)
+  local hosts, err = computers()
+  if not hosts then
+    set_message(err, "error")
+    return
+  end
+  local changes = role_picker.pick_computers(role_name, hosts)
+  if not changes then
+    return
+  end
+  for _, change in ipairs(changes) do
+    local ok, assign_error = domain.call("computer_assign", change)
+    if not ok then
+      set_message(change.hostname .. ": " .. tostring(assign_error), "error")
+      return
+    end
+  end
+  set_message(#changes == 0 and "No computers changed." or (#changes .. " computer(s) changed;"
+    .. " they apply their roles within 30 minutes (u updates one now)."), "ok")
 end
 
 local actions = {}
@@ -174,14 +213,6 @@ actions[2] = {
     end
   end,
 }
-
-local function split_words(text)
-  local words = {}
-  for word in tostring(text or ""):gmatch("[^,%s]+") do
-    words[#words + 1] = word
-  end
-  return words
-end
 
 -- Remote admin: ask the computer itself (protocol blockos.manage, domain admins only).
 local function manage_call(host, op, call_args)
@@ -316,12 +347,14 @@ actions[3] = {
     if not host then
       return
     end
-    local current = table.concat(host.roles or {}, " ")
-    local answers = ui.form("Computer roles of " .. host.hostname,
-      { { label = "Roles (" .. (current ~= "" and current or "none") .. "): " } })
-    if answers then
-      local roles = answers[1] == "-" and {} or split_words(answers[1])
-      run("computer_assign", { hostname = host.hostname, roles = roles },
+    local roles, err = domain.call("list_computer_roles")
+    if not roles then
+      set_message(err, "error")
+      return
+    end
+    local chosen = role_picker.pick_roles(host, roles)
+    if chosen then
+      run("computer_assign", { hostname = host.hostname, roles = chosen },
         host.hostname .. " will apply its roles within 30 minutes (or update it now).")
     end
   end,
@@ -334,25 +367,39 @@ actions[3] = {
 
 -- Computer roles: what computers with the role should have installed and set.
 actions[4] = {
+  -- A name, then tick its packages, then tick the computers that get it.
   a = function()
-    local answers = ui.form("Add computer role", {
-      { label = "Name: " },
-      { label = "Packages: " },
-    })
-    if answers then
-      run("computer_role_set", { name = answers[1], packages = split_words(answers[2]) },
-        "Computer role " .. answers[1] .. " added.")
+    local answers = ui.form("Add computer role", { { label = "Name (e.g. farm-display): " } })
+    if not answers then
+      return
     end
+    local name = answers[1]
+    local packages = role_picker.pick_packages(name, {})
+    if not packages then
+      set_message("Computer role " .. name .. " not added.", "dim")
+      return
+    end
+    local ok, err = domain.call("computer_role_set", { name = name, packages = packages })
+    if not ok then
+      set_message(err, "error")
+      return
+    end
+    set_message("Computer role " .. name .. " added.", "ok")
+    choose_computers(name)
   end,
   p = function(role)
     if not role then
       return
     end
-    local answers = ui.form("Packages of " .. role.name,
-      { { label = "Packages (" .. table.concat(role.packages, " ") .. "): " } })
-    if answers then
-      run("computer_role_set", { name = role.name, packages = split_words(answers[1]),
-        settings = role.settings }, "Packages changed.")
+    local packages = role_picker.pick_packages(role.name, role.packages)
+    if packages then
+      run("computer_role_set", { name = role.name, packages = packages,
+        settings = role.settings }, "Packages of " .. role.name .. " changed.")
+    end
+  end,
+  c = function(role)
+    if role then
+      choose_computers(role.name)
     end
   end,
   s = function(role)

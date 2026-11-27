@@ -3,9 +3,9 @@
 --   remote list          turtles in the domain
 --   remote <turtle>      drive it from this computer (keyboard only)
 --
--- Needs a domain login; the turtle checks it with the controller on every
--- key press. With wireless modems, driving out of range simply stops it
--- answering (part of the fun).
+-- In a domain it needs a domain login, which the turtle checks with the controller
+-- on every key press; without one any turtle running turtle-remote may be driven.
+-- With wireless modems, driving out of range simply stops it answering (part of the fun).
 local args = { ... }
 local ui = blockos.ui
 local rpc = import("rpc")
@@ -167,8 +167,14 @@ local function request_for(char, info)
   return nil
 end
 
+local function is_joined()
+  local found, domain = pcall(import, "domain")
+  return found and domain.is_joined()
+end
+
 local function drive(name)
-  if not (blockos.user and blockos.user.source == "domain") then
+  local has_domain_login = blockos.user and blockos.user.source == "domain"
+  if is_joined() and not has_domain_login then
     return fail("Log in with a domain account to drive turtles.")
   end
   local id = blockos.net and blockos.net.resolve(name)

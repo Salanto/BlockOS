@@ -107,6 +107,25 @@ return function(t)
     t.eq(vision.pos.z, 11, "a failed move changes nothing")
   end)
 
+  t.it("without GPS hosts the turtle does not wait for GPS on every look", function()
+    local import = t.fresh_import()
+    local asked = 0
+    local has_hosts = false
+    local vision, advance = new_vision(import, nil, nil, function()
+      asked = asked + 1
+      return has_hosts and { x = 1, y = 2, z = 3 } or nil
+    end)
+    vision.look()
+    vision.look()
+    vision.position()
+    t.eq(asked, 1, "a failed lookup is not repeated at once")
+    has_hosts = true
+    advance(import("turtle_vision").GPS_RETRY_SECONDS)
+    t.eq(vision.look().pos.x, 1, "asked again after a while")
+    vision.look()
+    t.eq(asked, 2, "a known position needs no more lookups")
+  end)
+
   t.it("the map turns with the turtle: ahead is up", function()
     local import = t.fresh_import()
     local turtle_view = import("turtle_view")

@@ -97,6 +97,7 @@ local function run(ctx)
     transfer = ports.transfer,
     port_status = ports.status,
     hostname = hostname,
+    raise_alert = import("alerts").raise,
     title = "Logistics" .. (config.name and (" " .. config.name) or ""),
     log = log.warn,
   })
@@ -190,6 +191,7 @@ local function run(ctx)
       while true do
         sleep(logistics_hub.LEVELS_SECONDS)
         hub.check_levels_if_due()
+        hub.check_nodes()
       end
     end,
     function()

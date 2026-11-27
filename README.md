@@ -67,6 +67,7 @@ Protocol and library packages come along by themselves as dependencies. A storag
 | Messages | | `msg` (receives), `msg-tools` (the msg command) |
 | Turtles | `turtle-remote` on the turtle | `turtle-tools` (the remote command) |
 | Players | `player-locator` (next to a Player Detector) | none (turtles ask it) |
+| Alerts | `alerts-hub` (one per network; fine on the domain controller) | `alerts-tools` (the alerts command) |
 | Packages | `pkg-server`, `pkg-server-tools` | |
 
 ## A domain (one login for all computers)
@@ -87,9 +88,12 @@ defaults (everyone may use it, you administer it). Narrow them later in `dsa` (G
 switches "everyone" on or off) or with `domain group`. A module's admins (e.g. `logistics-admins`)
 manage its roles themselves, without a domain admin. `domain setup` lists what is set up.
 
-**Computer roles (install and update from one place).** In `dsa` (Roles tab) define what a kind
-of computer needs, e.g. `farm-display` = `music logistics` plus the setting
-`blockos.autologin farmer`, then give computers their roles (Computers tab, `o`). Every joined
+**Computer roles (install and update from one place).** In `dsa`, Roles tab, `a` adds a role
+for a kind of computer, e.g. `farm-display`: type its name, then tick its packages in the list
+of what your package server (or the latest release) offers, then tick the computers that get
+it. Space ticks, Enter saves. Later, `p` changes its packages, `c` its computers and `s` adds a
+setting such as `blockos.autologin farmer`; in the Computers tab `o` ticks one computer's
+roles. Every joined
 computer installs what its roles list and keeps all its packages up to date from your package
 server by itself: within 30 minutes, at boot, or right away with `domain update` on it. Updates
 apply when nobody is logged in; otherwise you get a notice and it happens after you log out.
@@ -121,6 +125,53 @@ speaker: a "ding dong" by default. Pick your own with `profile set blockos.mail.
 file:/sounds/mail.dfpwm` (any clip converted to DFPWM, like music), `note:<instrument>`,
 `sound:<minecraft sound>` or `off`; it follows you to every computer. Your own scripts can
 react too: the `blockos_mail` event carries the sender and how many messages are unread.
+
+## Alerts (Discord, mail, other computers)
+
+Anything that needs attention (an item running low, a reactor too hot, a farm jammed) is raised
+as an alert, and one **alert hub** decides who hears about it. Install `alerts-hub` on one
+computer (the domain controller's computer is fine) and `alerts-tools` where you manage it.
+Then add channels:
+
+```
+alerts add discord discord https://discord.com/api/webhooks/123/abc --level=warn
+alerts add miners mail miners --source=logistics
+alerts add wall computer wall --level=info
+alerts test discord
+```
+
+Kinds: `discord` (a webhook URL from the Discord channel's Integrations settings), `webhook`
+(any URL; each alert is POSTed as JSON), `mail` (a user or group; needs a mail server) and
+`computer` (a hostname, `#id` or `everyone`; `alerts watch` there shows them, e.g. on a monitor
+with `monitor top alerts watch`). Each channel takes alerts from `--level` up (default `warn`),
+only from the `--source`s you name, and says when a problem is over unless `--no-resolved`.
+`alerts` lists what is active and what happened lately, `alerts channels` how delivery goes.
+Discord and webhooks need HTTP, which CC:Tweaked allows by default.
+
+What reaches the hub by itself:
+
+- **Every joined computer's problems**, through the domain controller: a service that keeps
+  crashing, a mail server without a floppy, a player locator without its detector, a logistics
+  node that reports too much, the controller's own disk filling up. When it is fixed, the
+  channels hear that too (unless `--no-resolved`).
+- **Computers that stop reporting** (info level: often just an unloaded chunk, so only channels
+  with `--level=info` hear of it).
+- **Logistics**: items going low and recovering, storage nodes that stop reporting, failed
+  crafting jobs (source `logistics`).
+
+Computer problems have source `system`, so `--source=system` or `--source=logistics` splits
+them between channels. Your own scripts raise alerts with
+`alerts send --level=error --source=reactor --key=heat Reactor too hot` (and
+`--level=ok ... Reactor cool` when it is over), or from Lua:
+
+```lua
+import("alerts").raise({ source = "reactor", key = "heat", level = "error",
+  title = "Reactor too hot", text = "1840 C" })
+```
+
+Raise as often as you like: while a problem is active, the same alert is sent again at most
+every 5 minutes. In a domain, `domain setup alerts` limits who may change channels to
+`alerts-admins`.
 
 ## A package server
 
@@ -311,6 +362,18 @@ packages of their own are only installed when you ask for them:
   `logistics-crafting` (both by themselves on update).
 
 A computer role in `dsa` that lists the new packages installs them everywhere at once.
+
+**Domain controllers from 0.4 or older** still have the `domain` package (it came along as a
+dependency then), and `pkg update` there stops with "domain-controller must run alone on its
+computer, but domain is also installed". Upgrade it once with
+
+```
+pkg install domain-controller --force
+```
+
+which updates everything like `pkg update` does (the `pkg update` of 0.6 and older ignores
+`--force`). Newer versions allow `domain` and `domain-tools` next to the controller, so later
+updates need nothing special. Install `domain-tools` there for `dsa`, which 0.4 had in `domain`.
 
 ## Recovery
 

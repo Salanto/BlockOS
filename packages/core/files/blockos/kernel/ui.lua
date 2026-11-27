@@ -739,6 +739,85 @@ function ui.confirm(question)
   end
 end
 
+local CHECKLIST_HINTS = {
+  { "Space", "Tick" },
+  { "Enter", "Save" },
+  { "q", "Cancel" },
+}
+
+--- Let people tick items in a full-screen list, so they choose from what exists
+-- instead of typing names. Up/Down/PgUp/PgDn move, Space (or a click) ticks, Enter
+-- saves, q cancels.
+-- @tparam table spec { title, text? (wrapped above the list), items = { { label,
+--   detail?, is_checked? }... } }
+-- @treturn table|nil [index] = true for each ticked item, or nil when cancelled.
+function ui.checklist(spec)
+  local items = spec.items
+  local checked = {}
+  for index, item in ipairs(items) do
+    checked[index] = item.is_checked == true or nil
+  end
+  local list = ui.new_list()
+  local top, bottom = 3, 3
+
+  local function draw()
+    local width, height = ui.size()
+    ui.clear()
+    ui.header(1, spec.title)
+    top = 3
+    for _, line in ipairs(spec.text and ui.wrap(spec.text, width - 2) or {}) do
+      if top > height - 5 then
+        break
+      end
+      ui.line(top, line, "dim", 2)
+      top = top + 1
+    end
+    top = spec.text and top + 1 or top
+    bottom = height - 2
+    -- Labels in one column, details after them.
+    local label_width = 0
+    for _, item in ipairs(items) do
+      label_width = math.max(label_width, #item.label)
+    end
+    label_width = math.min(label_width, math.floor(width / 2))
+    local lines, count = {}, 0
+    for index, item in ipairs(items) do
+      local text = (checked[index] and "[x] " or "[ ] ") .. ui.pad(ui.fit(item.label,
+        label_width), label_width)
+      if item.detail then
+        text = text .. "  " .. item.detail
+      end
+      lines[index] = ui.fit(text, width - 3)
+      count = count + (checked[index] and 1 or 0)
+    end
+    ui.draw_list(list, lines, top, bottom)
+    ui.line(height - 1, count .. " of " .. #items .. " ticked", "dim")
+    ui.footer(CHECKLIST_HINTS)
+  end
+
+  while true do
+    draw()
+    local event, a, _, c = os.pullEvent()
+    if event == "char" and a == " " and items[list.selected] then
+      checked[list.selected] = not checked[list.selected] or nil
+    elseif event == "char" and a == "q" then
+      ui.clear()
+      return nil
+    elseif event == "key" and (a == keys.enter or a == keys.numPadEnter) then
+      ui.clear()
+      return checked
+    elseif event == "key" then
+      ui.list_key(list, a, #items, bottom - top + 1)
+    elseif event == "mouse_click" then
+      local index = list.scroll + (c - top) + 1
+      if c >= top and c <= bottom and items[index] then
+        list.selected = index
+        checked[index] = not checked[index] or nil
+      end
+    end
+  end
+end
+
 --- Ask for one or more values in a centred panel. An empty first answer cancels.
 -- @tparam string title
 -- @tparam {table...} fields { label = "Name: ", mask = "*"?, default = "text"? }

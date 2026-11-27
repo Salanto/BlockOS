@@ -176,14 +176,30 @@ family's directory `roles` are declared), `library` (code several applications s
 and `bundle` (no files, only `depends`, e.g. `logistics`). A computer installs only the part it
 needs: a storage node gets `logistics-node`, not the tools. Families: domain (`domain-protocol`,
 `domain`, `domain-tools`, `domain-controller`), logistics, mail (`mail-server`, `mail-client`,
-`mail-tools`), msg, turtle (`turtle-remote`, `turtle-tools`), pkg-server.
+`mail-tools`), msg, turtle (`turtle-remote`, `turtle-tools`), pkg-server, alerts
+(`alerts-protocol`, `alerts-hub`, `alerts-tools`).
 
 Shared kernel/lib helpers worth knowing before writing another copy: `events` (per-coroutine
 event buffering), `lock`, `diskstore` (data on disk drives, spilling to the next one),
-`notices`, `tab_app` (tabbed screens), `discovery` (service lookup with a 60 s cache),
-`net.self_name`/`net.position`, service providers (`ctx.provide`, `services.await`).
+`notices`, `ui.checklist` (let people tick from what exists instead of typing names),
+`alerts` (`alerts.raise`: tell the network's alert hub something needs
+attention; it routes to Discord, webhooks, mail, computers), `tab_app` (tabbed screens),
+`discovery` (service lookup with a 60 s cache), `net.self_name`/`net.position`, service providers (`ctx.provide`, `services.await`).
 When the controller is unreachable, roles degrade open: stale role info is kept and roles open
 to everyone stay usable.
+
+**Alerts are the one way to say something needs attention.** A problem on the computer itself
+(a failed service, missing hardware, a full disk) is a notice with a level:
+`notices.set(key, text, "warn" | "error")` (no level = a message for the user, e.g. new mail).
+Controllers are the alert brokers, so other computers never need the alerts package: joined
+computers send their problems in the status report (and a moment after they change), and the
+domain controller raises and resolves them (`dc_alerts`, `alerts.problem_tracker`), plus its
+own problems and an info alert for computers that stop reporting. The logistics hub raises
+level alerts, silent nodes and failed crafting jobs for its nodes. Without a domain, the alert
+hub raises its own computer's problems. Other code with something to report and a hub it can
+reach calls `alerts.raise` (from a loop: `alerts.sender()`); keys name the problem so repeats
+are dropped and `ok` resolves it. Local outputs (redstone lamps, speaker chimes, the
+`blockos.logistics.alert` feed for logistics boards) stay where they are.
 
 ### On the device
 
@@ -244,7 +260,7 @@ minutes marks the service `failed`. `condition` returning false marks it `n/a`.
 |--------------------|----------------------------------------------------------------|
 | `blockos`          | rednet's built-in `rednet.host` / `rednet.lookup` hostname records |
 | `blockos.announce` | event `announce` `{ hostname, kind, version, services, info, hello? }`, broadcast at boot and every 5 min, **only by computers not in a domain**; a `hello` gets a direct reply |
-| `blockos.domain`   | rpc. join, leave, login, validate, logout, validate_computer, host_update, resolve, list_hosts, service_find/add/del/register/unregister, list_users/groups/computers/services, user_add/del/passwd/enable, group_add/del/addmember/rmmember/set_everyone/set_manager, group_get (any joined computer: role info for modules), computer_role_set/del, computer_assign, list_computer_roles, computer_config (the calling computer's merged roles), computer_remove, profile_get, profile_set `{ apps?, settings? }` (the logged-in user's own roaming profile), route `{ to }` (joined computers: a user's or group's members and the computers they are logged in at; used by the mail server), dc_status. The controller also hosts this protocol under the domain name, so `rednet.lookup("blockos.domain", "home")` finds it. |
+| `blockos.domain`   | rpc. join, leave, login, validate, logout, validate_computer, host_update (`{ hostname, info?, kind?, version?, problems? }`; problems = `notices.problems()`, raised as alerts by the controller), resolve, list_hosts, service_find/add/del/register/unregister, list_users/groups/computers/services, user_add/del/passwd/enable, group_add/del/addmember/rmmember/set_everyone/set_manager, group_get (any joined computer: role info for modules), computer_role_set/del, computer_assign, list_computer_roles, computer_config (the calling computer's merged roles), computer_remove, profile_get, profile_set `{ apps?, settings? }` (the logged-in user's own roaming profile), route `{ to }` (joined computers: a user's or group's members and the computers they are logged in at; used by the mail server), dc_status. The controller also hosts this protocol under the domain name, so `rednet.lookup("blockos.domain", "home")` finds it. |
 | `blockos.manage`   | rpc, served by the `manage` service on every joined computer; domain-admins only. status (version, uptime, user, services, disk, packages, turtle fuel/position, notices), reboot, update (applies roles and updates now, even if someone is logged in), service `{ name, action }`, log `{ lines }`, shell_open `{ width, height }`. |
 | `blockos.manage.shell` | events of a remote shell session (`remote_shell.lua`, `rsh <computer>`): target -> viewer `frame` `{ session, lines = { { y, text, fg, bg } }, x, y, blink }` (changed lines only) and `closed`; viewer -> target `input` `{ session, event }` (keys, chars, paste, mouse, terminate), `ping`, `close`. The session runs a real shell (BlockOS path, as the admin who opened it) in a hidden window; local keyboard input never reaches it; it closes after 60 s without ping. |
 | `blockos.mail`     | rpc, served by `mail-server` (domain service record `mail`; mailboxes on disk drives via `diskstore`). send `{ to (user or group), subject?, text }` (a user, or a joined computer for notices), list `{ folder? }` (inbox or sent), unread, read `{ id, folder? }`, delete `{ id, folder? }`; newest 20 per folder. |
@@ -256,7 +272,9 @@ minutes marks the service `failed`. `condition` returning false marks it `n/a`.
 | `blockos.logistics.node` | controller <-> nodes. Node -> controller event `report` `{ node, totals, blocks, moves, sources, poll_seconds }` every round (full state). Controller -> node rpc (never retried): request `{ item, count, output? }`, set_storage, find_start, find_finish, export_levels, and for ports port_hold `{ seconds? }`, to_port `{ item, count, port }`, from_port `{ port, item, count, output? }`, push_marker `{ port }` (one item into the port, so the controller can pair it with the main-cable inventory that changed), craft `{ item, count }` (when logistics-crafter runs there; reports then carry `crafting = { recipes, jobs }`). In a domain only joined computers may call a node (computer token). |
 | `blockos.remote`   | rpc, served by the `turtle-remote` service on joined turtles. info, act `{ action, slot? }` (domain users; only the actions listed in `turtle_remote.ACTIONS`, plus select). Never retried by the driver, so a lost answer cannot move a turtle twice. look `{ radius? }` (read-only, `turtle_vision`): blocks in front/up/down, and with an Advanced Peripherals Geo Scanner the layers around the turtle as world-axis offsets, plus the heading it worked out; the driver draws it ahead-up (`turtle_view`). follow `{ player, distance? }` / stop (`turtle_follow`: walks after a player using `blockos.players` and GPS, never digs; any act takes over; info carries following, follow_status). |
 | `blockos.players` | rpc, served by `player-locator` on a computer with an Advanced Peripherals Player Detector (service record `players`, else rednet name). where `{ name }` -> `{ name, x, y, z, dimension? }`, online. Open (friends only). |
-| `blockos.logistics.alert` | event `level_alert` `{ server, item, label, count, limit, is_low }`, broadcast by the hub only when an item goes low or recovers. |
+| `blockos.alerts` | served by `alerts-hub` (service record `alerts`, else rednet name). event `alert` `{ source, level (info, warn, error, ok), title, text?, key?, host?, time? }` from any computer (`alerts.raise`, one-way); rpc raise (same args, answered), list (channels without their targets, kinds, active, history), channel_set `{ name, kind, target, min_level?, sources?, resolved? }`, channel_del `{ name }`, test `{ name }` (alerts-admins or domain-admins; open until `domain setup alerts`). Repeats of an active `source/key` at the same level wait 5 min; `ok` resolves one. Channel kinds are `lib/alert_channels/<kind>.lua` (discord, webhook, mail, computer). |
+| `blockos.alerts.notify` | event `alert` (same payload), sent by the hub to computers named by a `computer` channel; `alerts watch` shows them, programs use `alerts.parse`. |
+| `blockos.logistics.alert` | event `level_alert` `{ server, item, label, count, limit, is_low }`, broadcast by the hub only when an item goes low or recovers (also raised to the alert hub as source `logistics`). |
 
 **Wire format** (`net/lib/wire.lua`): every message uses one envelope, so nothing is parsed by
 hand:
@@ -292,7 +310,8 @@ Peer liveness uses the local receive time, never the sender's clock.
 
 - A `.pkg` is `textutils.serialise({ manifest, files = { [path] = content } })`, compressed with
   `lz.lua` (LZ77-style, byte-oriented, "BLZ1" header; plain packages still decode).
-  `index.lua` lists `{ version, depends, optional, size, sum }` per package (size and sum of the
+  `index.lua` lists `{ version, depends, optional, exclusive, kind, description, size, sum }`
+  per package (size and sum of the
   compressed file). Installed files are not compressed. The installers need `lz.lua` before
   they can open `core.pkg`, so it ships next to them on install disks and in releases.
 - Sources (`pkg.disk_source`, `pkg.github_source`, `pkg_remote.source`) share one interface:

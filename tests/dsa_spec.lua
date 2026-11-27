@@ -75,4 +75,73 @@ return function(t)
     end)
     t.ok(dir:is_member("domain-admins", "dave"))
   end)
+
+  -- What the package source offers in the role tests.
+  local PACKAGES = {
+    music = { optional = true, kind = "application", description = "Plays music" },
+    logistics = { optional = true, kind = "bundle", description = "Storage for players" },
+    ["logistics-protocol"] = { optional = true, kind = "protocol" },
+    ["domain-controller"] = { optional = true, exclusive = true, kind = "application" },
+    net = { kind = "base" },
+  }
+
+  t.it("the role picker offers packages worth choosing and assigns only changes", function()
+    t.fresh_import()
+    local role_picker = import("role_picker")
+    local items = role_picker.package_items(PACKAGES, { "music", "gone" })
+    local names = {}
+    for _, item in ipairs(items) do
+      names[#names + 1] = item.name
+    end
+    t.eq(table.concat(names, ","), "logistics,music,gone",
+      "no protocols, base or exclusive packages; a vanished one stays listed")
+    t.eq(items[2].detail, "Plays music")
+    t.ok(items[2].is_checked and items[3].is_checked and not items[1].is_checked)
+    t.eq(table.concat(role_picker.ticked(items, { [1] = true }), ","), "logistics")
+
+    local hosts = {
+      { hostname = "farm", kind = "computer", roles = { "display" } },
+      { hostname = "mine", kind = "turtle", roles = { "miner" } },
+      { hostname = "shop", kind = "computer" },
+    }
+    local computer_items = role_picker.computer_items("display", hosts)
+    t.ok(computer_items[1].is_checked and not computer_items[2].is_checked)
+    t.ok(computer_items[2].detail:find("turtle"), computer_items[2].detail)
+    local changes = role_picker.computer_changes("display", computer_items,
+      { [2] = true, [3] = true })
+    t.eq(#changes, 3, "farm loses it, mine and shop get it")
+    t.eq(#changes[1].roles, 0)
+    t.eq(table.concat(changes[2].roles, ","), "miner,display", "other roles are kept")
+    t.eq(#role_picker.computer_changes("display", computer_items, { [1] = true }), 0,
+      "nothing changed: nothing to assign")
+  end)
+
+  t.it("a checklist ticks with Space, saves with Enter and cancels with q", function()
+    local ui = t.fresh_import()("ui")
+    local items = { { label = "a" }, { label = "b", is_checked = true }, { label = "c" } }
+    local result = t.with_input(function() return ui.checklist({ title = "T", items = items }) end,
+      { { "char", " " }, { "key", keys.down }, { "char", " " }, { "key", keys.down },
+        { "key", keys.enter } })
+    t.ok(result[1] and not result[2] and not result[3], "a ticked, b unticked")
+    t.eq(t.with_input(function() return ui.checklist({ title = "T", items = items }) end,
+      { { "char", " " }, { "char", "q" } }), nil, "q cancels")
+  end)
+
+  t.it("adds a computer role by ticking packages and computers", function()
+    local dir, rpc, handlers = setup()
+    import("role_picker").env.index = function() return { packages = PACKAGES } end
+    run_dsa(rpc, handlers, steps(
+      { { "wait", 0.5 }, { "char", "4" }, { "wait", 0.5 }, { "char", "a" } },
+      type_line("farm-display"),
+      -- Packages: logistics, music. Tick both.
+      { { "wait", 0.3 }, { "char", " " }, { "key", keys.down }, { "char", " " },
+        { "key", keys.enter } },
+      -- Computers: pc1 only. Tick it.
+      { { "wait", 0.5 }, { "char", " " }, { "key", keys.enter } },
+      { { "wait", 0.5 }, { "char", "q" } }))
+    local role = dir.data.computer_roles["farm-display"]
+    t.ok(role, "the role was not created")
+    t.eq(table.concat(role.packages, ","), "logistics,music")
+    t.eq(table.concat(dir.data.computers.pc1.roles or {}, ","), "farm-display")
+  end)
 end

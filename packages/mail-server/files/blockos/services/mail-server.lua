@@ -24,7 +24,7 @@ local function wait_until_ready(ctx, store)
     end
     if missing ~= said then
       ctx.log.warn("%s", missing)
-      notices.set("mail_server", missing)
+      notices.set("mail_server", missing, "warn")
       said = missing
     end
     local timer = os.startTimer(RECHECK_SECONDS)

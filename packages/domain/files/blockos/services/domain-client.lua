@@ -3,7 +3,13 @@
 -- this computer's status to the controller.
 --
 -- The report is one direct message to the controller at boot, after a rename,
--- and every few minutes; no broadcasts.
+-- and every few minutes; no broadcasts. It carries this computer's problems (notices
+-- with a level: a failed service, a missing disk), which the controller raises as
+-- alerts, so it also goes out a moment after they change.
+
+-- Problems often change in bursts (a service crashing and giving up): wait this long
+-- and send them all in one report.
+local PROBLEMS_DELAY_SECONDS = 2
 
 
 local function run(ctx)
@@ -40,6 +46,7 @@ local function run(ctx)
       info = announce.info,
       kind = announce.kind,
       version = announce.version,
+      problems = import("notices").problems(),
     })
     if not ok then
       ctx.log.warn("status report failed: %s", tostring(err))
@@ -62,11 +69,17 @@ local function run(ctx)
 
   local interval = ctx.config.get("blockos.domain.heartbeat_interval", 300)
   local timer = os.startTimer(interval)
+  local problems_timer = nil
   while true do
     local event, id = import("events").pull()
     if event == "timer" and id == timer then
       report()
       timer = os.startTimer(interval)
+    elseif event == import("notices").PROBLEMS_EVENT and not problems_timer then
+      problems_timer = os.startTimer(PROBLEMS_DELAY_SECONDS)
+    elseif event == "timer" and id == problems_timer then
+      problems_timer = nil
+      report()
     elseif event == import("net").RENAME_EVENT then
       sleep(3) -- let the net service register the new name first
       report()

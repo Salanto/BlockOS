@@ -5,6 +5,8 @@
 -- sessions are saved to /etc/blockos/sessions so logins survive a restart;
 -- status reports stay in memory. Every few minutes the
 -- service drops expired sessions and warns when the disk is getting full.
+-- It is the domain's alert broker (dc_alerts): problems in the computers' status
+-- reports, and its own, go to the alert hub (alerts-hub) as alerts.
 -- Only runs once `dcpromo` has created the domain.
 
 local DIRECTORY_FILE = "etc/blockos/directory"
@@ -72,6 +74,14 @@ local function run(ctx)
     pcall(fsx.write_table, sessions_path, dir:saved_sessions())
   end
 
+  local alerts = import("alerts")
+  local notices = import("notices")
+  local sender = alerts.sender()
+  local broker = import("dc_alerts").new(sender.raise)
+  local function own_name()
+    return blockos.net and blockos.net.hostname() or "controller"
+  end
+
   local storage = {
     save = save,
     has_room = has_room,
@@ -101,11 +111,23 @@ local function run(ctx)
         or not has_room()
       if is_low and not was_low then
         log.warn("disk space is low: %d bytes free", disk.free)
+        notices.set("dc_disk", "The domain controller's disk is nearly full: free some space",
+          "warn")
       elseif was_low and not is_low then
         log.info("disk space is fine again: %d bytes free", disk.free)
+        notices.clear("dc_disk")
       end
       was_low = is_low
+      broker.check_offline(dir:list_hosts(now(), os.day("utc")))
       sleep(HOUSEKEEPING_SECONDS)
+    end
+  end
+
+  -- The controller is not joined to its own domain, so it raises its own problems.
+  local function own_problems()
+    while true do
+      broker.own_problems(own_name(), notices.problems())
+      os.pullEvent(notices.PROBLEMS_EVENT)
     end
   end
 
@@ -115,8 +137,13 @@ local function run(ctx)
   end
   log.info("serving domain %s", dir:name())
   parallel.waitForAny(
-    function() rpc.serve(import("domain").PROTOCOL, dc_handlers.new(dir, storage)) end,
-    housekeeping
+    function()
+      rpc.serve(import("domain").PROTOCOL,
+        dc_handlers.new(dir, storage, nil, { on_report = broker.on_report }))
+    end,
+    housekeeping,
+    own_problems,
+    sender.run
   )
 end
 

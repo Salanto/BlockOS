@@ -32,6 +32,9 @@ turtle_vision.MAX_RADIUS = 16
 turtle_vision.SCAN_SECONDS = 2.2
 --- Layers sent around the turtle's height (keeps the answer small).
 turtle_vision.LAYERS = 2
+--- Seconds before asking GPS again after it did not answer. A GPS lookup without hosts in
+-- range waits its whole timeout (2 s), and the driver looks after every key press.
+turtle_vision.GPS_RETRY_SECONDS = 60
 
 --- Hardware access (tests replace these).
 turtle_vision.env = {
@@ -57,6 +60,7 @@ function turtle_vision.new(turtle_api)
     heading = nil, -- 0..3 once known
     pos = { x = 0, y = 0, z = 0 }, -- world (is_gps) or relative to the start
     is_gps = false,
+    gps_failed_at = nil, -- clock of the last GPS lookup that got no answer
     scan = nil, -- { at = pos copy, blocks = { [key] = block }, radius, clock }
   }
 
@@ -84,8 +88,20 @@ function turtle_vision.new(turtle_api)
     local found = env.locate()
     if found then
       vision.pos, vision.is_gps = found, true
+      vision.gps_failed_at = nil
+    else
+      vision.gps_failed_at = env.clock()
     end
     return found
+  end
+
+  -- Ask GPS only while the position is unknown, and not again right after it failed.
+  local function locate_if_due()
+    local failed_at = vision.gps_failed_at
+    local is_due = not failed_at or env.clock() - failed_at >= turtle_vision.GPS_RETRY_SECONDS
+    if not vision.is_gps and is_due then
+      locate()
+    end
   end
 
   -- Learn the heading by matching the block in front against the scan: the neighbour
@@ -150,9 +166,7 @@ function turtle_vision.new(turtle_api)
   function vision.look(radius)
     radius = math.min(math.max(math.floor(radius or turtle_vision.DEFAULT_RADIUS), 1),
       turtle_vision.MAX_RADIUS)
-    if not vision.is_gps then
-      locate()
-    end
+    locate_if_due()
     local seen = near()
     local result = { near = seen, heading = vision.heading,
       pos = vision.is_gps and copy(vision.pos) or nil }
@@ -170,9 +184,7 @@ function turtle_vision.new(turtle_api)
   --- Where the turtle is in the world (GPS once, then followed through its moves).
   -- @treturn table|nil { x, y, z }, nil without GPS
   function vision.position()
-    if not vision.is_gps then
-      locate()
-    end
+    locate_if_due()
     return vision.is_gps and copy(vision.pos) or nil
   end
 

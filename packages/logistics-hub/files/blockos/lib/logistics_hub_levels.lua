@@ -15,6 +15,26 @@ local logistics_hub_levels = {}
 function logistics_hub_levels.attach(hub, internal)
   local options, config, log = internal.options, internal.config, internal.log
   local live_names = internal.live_names
+  local is_stale = internal.is_stale
+
+  -- The hub is the alert broker for its nodes: level alerts, nodes that stop
+  -- reporting and failed crafting jobs go to the network's alert hub (alerts-hub),
+  -- which sends them on to Discord, mail and other computers. The services pass
+  -- options.raise_alert (alerts.raise). Raising never waits for an answer, but finding
+  -- the hub may, so it runs as deferred work where the hub has some.
+  local function raise(list)
+    local raise_alert = options.raise_alert
+    if #list == 0 or not raise_alert then
+      return
+    end
+    local defer = options.defer or function(job) job() end
+    defer(function()
+      for _, fields in ipairs(list) do
+        fields.source = "logistics"
+        raise_alert(fields)
+      end
+    end)
+  end
 
   ---------------------------------------------------------------------------
   -- Levels
@@ -145,6 +165,68 @@ function logistics_hub_levels.attach(hub, internal)
     end
   end
 
+  local function raise_level_alerts(sent)
+    local list = {}
+    for _, alert in ipairs(sent) do
+      local name = alert.label or alert.item
+      list[#list + 1] = {
+        key = alert.item,
+        level = alert.is_low and "warn" or "ok",
+        title = name .. (alert.is_low and " is low" or " is stocked again"),
+        text = string.format("%d of %d (%s)", alert.count, alert.limit, alert.server),
+      }
+    end
+    raise(list)
+  end
+
+  --- Raise an alert for each node that stopped reporting, and resolve it when the
+  -- node is back (the controller calls this every couple of seconds).
+  function hub.check_nodes()
+    local list = {}
+    for name, entry in pairs(hub.nodes) do
+      local stale = is_stale(entry)
+      if stale ~= (entry.is_alerted_stale == true) then
+        entry.is_alerted_stale = stale
+        list[#list + 1] = {
+          key = ("node/" .. name):sub(1, 64),
+          level = stale and "warn" or "ok",
+          title = "Storage node " .. name .. (stale and " stopped reporting" or " reports again"),
+          text = stale and "its items are out of reach until it is back" or nil,
+        }
+      end
+    end
+    raise(list)
+  end
+
+  --- Raise an alert for each crafting job of a node that failed since its last report,
+  -- and resolve it when a job for that item is done (hub.update calls this). Jobs that
+  -- finished before the hub first heard of the node are not raised.
+  -- @tparam table entry The node's entry.
+  function hub.note_crafting(entry)
+    local crafting = entry.report.crafting
+    local seen = entry.jobs_seen_at
+    local newest = seen or 0
+    local list = {}
+    for _, job in ipairs(crafting and crafting.jobs or {}) do
+      if type(job.at) == "number" then
+        newest = math.max(newest, job.at)
+        local is_new = seen and job.at > seen
+        local key = ("craft/" .. tostring(job.item)):sub(1, 64)
+        if is_new and job.state == "failed" then
+          list[#list + 1] = { key = key, level = "warn",
+            title = "Crafting " .. tostring(job.item) .. " failed",
+            text = string.format("%s (%d of %d made on %s)", tostring(job.note or "?"),
+              job.made or 0, job.count or 0, entry.name) }
+        elseif is_new and job.state == "done" then
+          list[#list + 1] = { key = key, level = "ok",
+            title = "Crafting " .. tostring(job.item) .. " works again" }
+        end
+      end
+    end
+    entry.jobs_seen_at = newest
+    raise(list)
+  end
+
   --- Compare the merged totals with the watched items and raise alarms.
   function hub.check_levels()
     hub.levels_due, hub.levels_at = false, logistics_hub.env.clock()
@@ -175,6 +257,7 @@ function logistics_hub_levels.attach(hub, internal)
         table.remove(hub.alerts, 1)
       end
     end
+    raise_level_alerts(sent)
   end
 
   --- Nobody is counting any more: switch lamps and farms off rather than leave them.

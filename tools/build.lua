@@ -129,6 +129,8 @@ for _, name in ipairs(fs.list(fs.combine(repo_dir, "packages"))) do
     optional = bundle.manifest.optional or nil,
     exclusive = bundle.manifest.exclusive or nil,
     kind = bundle.manifest.kind,
+    -- shown when choosing packages (dsa's computer roles)
+    description = bundle.manifest.description,
     size = #raw,
     sum = pkg.checksum(raw),
   }
