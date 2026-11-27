@@ -22,7 +22,7 @@ local function show_inbox()
     ui.print(message.text)
   end
   box.unread = 0
-  blockos.notices.msg = nil
+  import("notices").clear("msg")
 end
 
 local function send(target, text)

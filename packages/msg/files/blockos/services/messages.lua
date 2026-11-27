@@ -36,7 +36,7 @@ local function run()
           table.remove(box.inbox, 1)
         end
         box.unread = box.unread + 1
-        blockos.notices.msg = box.unread .. " new message(s): type 'msg'"
+        import("notices").set("msg", box.unread .. " new message(s): type 'msg'")
         chime()
         os.queueEvent(import("session").NOTICE_EVENT, "msg", event.data)
       end

@@ -256,7 +256,7 @@ function session.run_user(user, user_shell)
   if #profile.apps > 0 and not device.is_advanced() then
     ui.print("Your apps: " .. table.concat(profile.apps, ", "), "dim")
   end
-  for _, notice in pairs(blockos and blockos.notices or {}) do
+  for _, notice in ipairs(import("notices").list()) do
     ui.status(notice, "warn")
   end
 

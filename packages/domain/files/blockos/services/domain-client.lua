@@ -55,8 +55,8 @@ local function run(ctx)
 
   -- Packages with roles that no domain admin set up yet: still open, but say so.
   local pending = import("roles").pending()
-  if #pending > 0 and blockos.notices then
-    blockos.notices.roles = table.concat(pending, ", ") ..
+  if #pending > 0 then
+    import("notices").set("roles", table.concat(pending, ", ") ..
       " not set up for the domain yet: a domain admin can run 'domain setup' (domain-tools)"
   end
 

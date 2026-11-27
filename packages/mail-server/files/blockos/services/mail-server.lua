@@ -10,9 +10,7 @@ local function run(ctx)
 
   if not store.has_place() then
     ctx.log.warn("no disk: put a floppy disk into an attached disk drive")
-    if blockos.notices then
-      blockos.notices.mail_server = "The mail server needs a floppy disk in a disk drive"
-    end
+    import("notices").set("mail_server", "The mail server needs a floppy disk in a disk drive")
   end
   local found, domain = pcall(import, "domain")
   if not (found and domain.is_joined()) then

@@ -299,9 +299,7 @@ local function setup(package)
     ui.status(line, line:find(": no such user") and "warn" or "ok")
   end
   ui.print(package .. " is now managed by the domain.", "ok")
-  if blockos.notices then
-    blockos.notices.roles = nil
-  end
+  import("notices").clear("roles")
 end
 
 --- Run `domain <command> ...` for an admin subcommand.

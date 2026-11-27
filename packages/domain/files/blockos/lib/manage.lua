@@ -56,11 +56,7 @@ function manage.status()
   end
   local net = blockos and blockos.net
   local info = net and net.build_announce and net.build_announce().data.info or {}
-  local notices = {}
-  for _, notice in pairs(blockos and blockos.notices or {}) do
-    notices[#notices + 1] = notice
-  end
-  table.sort(notices)
+  local notices = import("notices").list()
   return {
     hostname = net and net.hostname() or ("#" .. os.getComputerID()),
     kind = blockos and blockos.device and blockos.device.kind() or "computer",

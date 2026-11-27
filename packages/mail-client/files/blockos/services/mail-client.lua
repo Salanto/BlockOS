@@ -26,9 +26,7 @@ local function run()
   end
 
   local function show(notice)
-    if blockos.notices then
-      blockos.notices.mail = notice
-    end
+    import("notices").set("mail", notice)
   end
 
   -- Set for every login, so a notice never shows the previous user's mail.

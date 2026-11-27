@@ -124,8 +124,8 @@ elseif command == "delete" then
 else
   print_usage()
 end
-if blockos.notices then
+do
   local result = call("unread")
   local unread = result and result.unread or 0
-  blockos.notices.mail = unread > 0 and (unread .. " new message(s): type 'mail'") or nil
+  import("notices").set("mail", unread > 0 and (unread .. " new message(s): type 'mail'") or nil)
 end

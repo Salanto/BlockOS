@@ -60,9 +60,8 @@ local function run(ctx)
     for _ in pairs(low_items) do
       count = count + 1
     end
-    if blockos.notices then
-      blockos.notices.logistics = count > 0 and (count .. " item(s) low (see 'logistics')") or nil
-    end
+    import("notices").set("logistics",
+      count > 0 and (count .. " item(s) low (see 'logistics')") or nil)
   end
 
   local function remember(alert, sender)

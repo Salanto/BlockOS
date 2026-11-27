@@ -31,9 +31,7 @@ local function run(ctx)
     if not ok then
       log.error("update failed: %s", tostring(err))
       pending = nil
-      if blockos.notices then
-        blockos.notices.update = nil
-      end
+      import("notices").clear("update")
       return
     end
     log.info("update applied, rebooting")
@@ -67,10 +65,8 @@ local function run(ctx)
       return
     end
     pending = result
-    if blockos.notices then
-      blockos.notices.update = #result.changes ..
-        " package update(s) ready: applied when you log out"
-    end
+    import("notices").set("update", #result.changes ..
+      " package update(s) ready: applied when you log out")
   end
 
   local logged_out = import("session").LOGGED_OUT_EVENT

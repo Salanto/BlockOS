@@ -126,8 +126,8 @@ local function run(ctx)
       end,
       hostname = hostname(),
       title = "Logistics " .. hostname(),
+      log = log.warn,
     })
-    logistics_hub.env.log = log.warn
     hub_entry = {
       hub = hub,
       handlers = logistics_handlers.new(hub),
@@ -153,9 +153,7 @@ local function run(ctx)
     end
     local levels = fsx.read_table(levels_path)
     set_aside(levels_path, ".imported")
-    if blockos.notices then
-      blockos.notices.logistics_levels = nil
-    end
+    import("notices").clear("logistics_levels")
     return levels
   end
 
@@ -197,9 +195,9 @@ local function run(ctx)
       save()
     end
     local has_controller = new_mode == "remote" or local_controller ~= nil
-    if has_controller and fs.exists(levels_path) and blockos.notices then
-      blockos.notices.logistics_levels = "This node's alarms can move to the controller: "
-        .. "run 'logistics levels import " .. hostname() .. "' there"
+    if has_controller and fs.exists(levels_path) then
+      import("notices").set("logistics_levels", "This node's alarms can move to the "
+        .. "controller: run 'logistics levels import " .. hostname() .. "' there")
     end
     if mode ~= new_mode then
       log.info("logistics mode: %s -> %s%s", tostring(mode), new_mode,

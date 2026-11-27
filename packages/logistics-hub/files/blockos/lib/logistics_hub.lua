@@ -65,6 +65,7 @@ end
 --   save      function() -> true | nil, err
 --   hostname  name used in alerts
 --   title     optional, e.g. "Logistics kitchen"
+--   log       optional function(format, ...) for warnings (default: env.log)
 --   transfer  optional function(from_entry, to_entry, item, count, output_handle)
 --             -> { moved, output } | nil, err: carries items between nodes (the
 --             controller's ports); without it items only move within one node
@@ -74,6 +75,7 @@ end
 -- @treturn table hub
 function logistics_hub.new(options)
   local config = logistics.normalise(options.config)
+  local log = options.log or logistics_hub.env.log
   local hub = {
     config = config,
     nodes = {}, -- [name] = { name, report, proxy, seen }
@@ -394,7 +396,7 @@ function logistics_hub.new(options)
         defer(function()
           local result, err = hub.craft(item, math.max(1, wanted))
           if not result then
-            logistics_hub.env.log("crafting %s on %s: %s", item, name, tostring(err))
+            log("crafting %s on %s: %s", item, name, tostring(err))
           end
         end)
       end
@@ -412,7 +414,7 @@ function logistics_hub.new(options)
     local wanted = logistics.output_states(config, states)
     hub.applied_outputs = logistics_alarms.apply_redstone(wanted, hub.applied_outputs)
     for _, item in ipairs(changes.went_low) do
-      logistics_hub.env.log("%s is low: %d of %d", states[item].label, states[item].count,
+      log("%s is low: %d of %d", states[item].label, states[item].count,
         states[item].limit)
     end
     if #changes.went_low > 0 and config.chime then
@@ -738,7 +740,7 @@ function logistics_hub.new(options)
     for _, name in ipairs(live_names(visible)) do
       local ok, err = hub.nodes[name].proxy.find_start(id)
       if not ok then
-        logistics_hub.env.log("find on %s: %s", name, tostring(err))
+        log("find on %s: %s", name, tostring(err))
       end
     end
     return { id = id }

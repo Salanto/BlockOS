@@ -98,8 +98,8 @@ local function run(ctx)
     port_status = ports.status,
     hostname = hostname,
     title = "Logistics" .. (config.name and (" " .. config.name) or ""),
+    log = log.warn,
   })
-  logistics_hub.env.log = log.warn
 
   local handlers, require_admin = logistics_handlers.new(hub)
 
