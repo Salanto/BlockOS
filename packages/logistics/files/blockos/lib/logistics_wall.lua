@@ -186,6 +186,42 @@ function logistics_wall.path(layout, node, from, to)
   return path
 end
 
+-- Where items enter and leave a row: its port, else just after the bus.
+local function port_x(layout, row)
+  for _, cell in ipairs(row.cells) do
+    if cell.block.role == "port" then
+      return cell.x
+    end
+  end
+  return layout.bus_x + 1
+end
+
+--- The cells an item passes when it crosses between nodes: out of node A's port, along
+-- its row to the bus, along the bus (the main cable) and into node B's port.
+-- @tparam table layout
+-- @tparam string from_node
+-- @tparam string to_node
+-- @treturn {table...}|nil
+function logistics_wall.crossing_path(layout, from_node, to_node)
+  local from_row, to_row = layout.by_node[from_node], layout.by_node[to_node]
+  if not (from_row and to_row) then
+    return nil
+  end
+  local bus_x = layout.bus_x
+  local path = {}
+  for x = port_x(layout, from_row), bus_x + 1, -1 do
+    path[#path + 1] = { x = x, y = from_row.y }
+  end
+  local step = to_row.y >= from_row.y and 1 or -1
+  for y = from_row.y, to_row.y, step do
+    path[#path + 1] = { x = bus_x, y = y }
+  end
+  for x = bus_x + 1, port_x(layout, to_row) do
+    path[#path + 1] = { x = x, y = to_row.y }
+  end
+  return path
+end
+
 ------------------------------------------------------------------------------
 -- Drawing
 ------------------------------------------------------------------------------
@@ -391,7 +427,12 @@ function logistics_wall.live(monitor)
       if #wall.recent > 10 then
         table.remove(wall.recent, 1)
       end
-      local path = move.node and logistics_wall.path(layout, move.node, move.from, move.to)
+      local path
+      if move.crossing then
+        path = logistics_wall.crossing_path(layout, move.from_node, move.node)
+      elseif move.node then
+        path = logistics_wall.path(layout, move.node, move.from, move.to)
+      end
       if path and #wall.markers < 12 then
         local char = tostring(move.label or "?"):sub(1, 1):upper()
         wall.markers[#wall.markers + 1] = { path = path, position = 1, char = char }

@@ -161,6 +161,11 @@ return function(t)
     t.eq(count(w.chests.b_out, "iron"), 10)
     t.eq(count(w.chests.a_store, "iron"), 39, "50 - 1 marker - 10")
     t.eq(w.hub.totals().iron.count, 39, "counts drop at once")
+    local crossing = w.hub.moves[#w.hub.moves]
+    t.ok(crossing.crossing, "the crossing is in the move log (for the wall)")
+    t.eq(crossing.from_node, "a")
+    t.eq(crossing.node, "b")
+    t.eq(crossing.count, 10)
   end)
 
   t.it("leftovers in a port are sorted back once the hold is over", function()

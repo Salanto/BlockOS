@@ -75,6 +75,31 @@ return function(t)
     t.eq(wall.path(layout, "nowhere", "a", "b"), nil)
   end)
 
+  t.it("a crossing runs from one row along the bus into the other", function()
+    local wall = t.fresh_import()("logistics_wall")
+    local data = {
+      nodes = { { name = "a" }, { name = "b" } },
+      storages = {
+        { node = "a", handle = "s", role = "storage" },
+        { node = "a", handle = "p", role = "port" },
+        { node = "b", handle = "p", role = "port" },
+      },
+    }
+    local layout = wall.layout(data, 60, 20)
+    local path = assert(wall.crossing_path(layout, "a", "b"))
+    local a_port = layout.by_node.a.cells[2]
+    t.eq(path[1].x, a_port.x, "out of a's port")
+    t.eq(path[1].y, layout.by_node.a.y)
+    t.eq(path[#path].x, layout.by_node.b.cells[1].x, "into b's port")
+    t.eq(path[#path].y, layout.by_node.b.y)
+    local on_bus = false
+    for _, cell in ipairs(path) do
+      on_bus = on_bus or cell.x == layout.bus_x
+    end
+    t.ok(on_bus, "along the main cable")
+    t.eq(wall.crossing_path(layout, "a", "gone"), nil)
+  end)
+
   t.it("the wall draws on colour and greyscale monitors", function()
     local import = t.fresh_import()
     local wall = import("logistics_wall")

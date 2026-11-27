@@ -360,7 +360,7 @@ local function poll_moves(view)
   end
   if view.seq then
     for _, move in ipairs(result.moves) do
-      local is_here = move.node == nil or move.node == view.node
+      local is_here = not move.crossing and (move.node == nil or move.node == view.node)
       local path = is_here and logistics_map.path(view.layout, move.from, move.to)
       if path and #view.markers < MAX_MARKERS then
         local char = tostring(move.label):sub(1, 1):upper()

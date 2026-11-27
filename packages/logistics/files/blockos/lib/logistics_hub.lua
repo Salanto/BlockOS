@@ -55,7 +55,9 @@ function logistics_hub.new(options)
     nodes = {}, -- [name] = { name, report, proxy, seen }
     states = {},
     alerts = {},
-    moves = {}, -- oldest first: { seq, node, from, to, item, label, count }
+    -- oldest first: { seq, node, from, to, item, label, count }, or for a crossing
+    -- between nodes { seq, node (receiving), from_node, crossing = true, item, label, count }
+    moves = {},
     move_seq = 0,
     -- Changes whenever the hub starts, so maps notice that seqs began again.
     move_log = os.epoch("utc"),
@@ -121,6 +123,23 @@ function logistics_hub.new(options)
       if #hub.moves > logistics_hub.MAX_MOVES then
         table.remove(hub.moves, 1)
       end
+    end
+  end
+
+  local function record_crossing(from_node, to_node, item, count)
+    local found = (hub.nodes[from_node].report.totals or {})[item]
+    hub.move_seq = hub.move_seq + 1
+    hub.moves[#hub.moves + 1] = {
+      seq = hub.move_seq,
+      node = to_node,
+      from_node = from_node,
+      crossing = true,
+      item = item,
+      label = found and found.label or item,
+      count = count,
+    }
+    if #hub.moves > logistics_hub.MAX_MOVES then
+      table.remove(hub.moves, 1)
     end
   end
 
@@ -434,6 +453,7 @@ function logistics_hub.new(options)
       if source then
         local crossed, cross_error = transfer(hub.nodes[source], entry, item, count - moved, handle)
         if crossed then
+          record_crossing(source, name, item, crossed.moved or 0)
           took(source, item, crossed.moved or 0)
           moved = moved + (crossed.moved or 0)
           handle = handle or crossed.output
