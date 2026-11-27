@@ -266,6 +266,21 @@ limits and alarms running on the node itself. On other computers, `pkg install l
 `pkg remove storage-monitor`); settings like `blockos.stock.board` move to
 `blockos.logistics.*` by themselves.
 
+## Driving turtles
+
+`pkg install turtle-remote` on the turtle and `pkg install turtle-tools` where you drive from,
+then `remote <turtle>` (`remote list` shows them). `w`/`s` move, `a`/`d` turn, space and `c`
+go up and down, `f`/`r`/`v` dig, `e`/`t`/`g` place.
+
+**The map.** Next to the inventory you see what the turtle sees, from above and turned with
+it, so ahead is always up: `#` walls, `.` floor you can stand on, `~` water (red: lava), `&`
+trees and plants, `C` chests, `@` machines, and the arrow is the turtle. Every turtle knows
+what is directly in front, above and below. Give it a **Geo Scanner** (Advanced Peripherals:
+craft a turtle with one, like a pickaxe) and the map fills in 8 blocks around it. `z`/`x`
+show the level below or above, `l` looks again, `m` switches between map and inventory on
+small screens. The turtle works out which way it faces from GPS after the first step, or by
+comparing the block in front with the scan; until then the map points north and shows `?`.
+
 ## Music
 
 `pkg install music`, then `music <song.dfpwm> [volume]` plays a song on every attached speaker

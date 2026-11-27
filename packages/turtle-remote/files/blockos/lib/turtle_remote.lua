@@ -10,6 +10,7 @@
 -- Operations:
 --   info                        { label, fuel, fuel_limit, selected, slots }
 --   act { action, slot? }       run one action -> { ok, detail, info }
+--   look { radius? }            what it sees (turtle_vision)
 -- @module turtle_remote
 
 local rpc = import("rpc")
@@ -71,6 +72,7 @@ end
 -- @treturn table { [op] = function(request_ctx, args) }
 function turtle_remote.handlers(turtle_api, log, allows, is_joined)
   local handlers = {}
+  local vision = import("turtle_vision").new(turtle_api)
   allows = allows or default_allows
   is_joined = is_joined or function()
     local found, domain = pcall(import, "domain")
@@ -115,9 +117,19 @@ function turtle_remote.handlers(turtle_api, log, allows, is_joined)
     if ok == nil and detail then
       return nil, detail
     end
+    vision.after_action(args.action, ok == true)
     return { ok = ok == true, detail = detail, info = turtle_remote.info(turtle_api) }
   end)
   rpc.once(handlers.act) -- a repeat must never move the turtle twice
+
+  --- What the turtle sees (read-only, so retries are harmless).
+  handlers.look = rpc.with_args(turtle_remote.ARGS.look, function(ctx, args)
+    local user, err = require_driver(ctx)
+    if not user then
+      return nil, err
+    end
+    return vision.look(args.radius)
+  end)
 
   return handlers
 end

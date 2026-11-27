@@ -10,6 +10,7 @@ local args = { ... }
 local ui = blockos.ui
 local rpc = import("rpc")
 local turtle_remote = import("turtle_remote_wire")
+local turtle_view = import("turtle_view")
 
 -- Never retried: a lost answer must not make the turtle move twice.
 local ACT_OPTIONS = { relogin = true, retries = 0 }
@@ -25,10 +26,14 @@ local KEYS = {
 
 local HINTS = {
   "w/s fwd/back  a/d turn  space/c up/down",
-  "f/r/v dig fwd/up/down  e/t/g place",
-  "i suck  o drop  u refuel  1-9 [ ] slot",
-  "q quit",
+  "f/r/v dig  e/t/g place  i/o suck/drop",
+  "u refuel  1-9 [ ] slot  z/x layer  m map",
+  "l look again  q quit",
 }
+
+-- Below this width the map and the inventory take turns (m switches).
+local SIDE_BY_SIDE_WIDTH = 45
+local INVENTORY_WIDTH = 20
 
 local function print_usage()
   print("Usage: remote list | remote <turtle>")
@@ -83,34 +88,55 @@ end
 -- Driving
 ------------------------------------------------------------------------------
 
-local function draw(name, info, message, role)
+-- Inventory as a 4x4 grid of counts; the selected slot is highlighted.
+local function draw_inventory(info, x, y)
+  ui.text_at(x, y, ui.fit("Fuel " .. tostring(info.fuel)
+    .. (type(info.fuel) == "number" and ("/" .. tostring(info.fuel_limit)) or ""),
+    INVENTORY_WIDTH), "text")
+  for row = 0, 3 do
+    for column = 1, 4 do
+      local slot = row * 4 + column
+      local cell = string.format("%3d", info.slots[slot] or 0)
+      local cell_role = slot == info.selected and "title" or "dim"
+      ui.text_at(x + (column - 1) * 5, y + 2 + row, cell, cell_role)
+    end
+  end
+end
+
+-- The map: what the turtle sees, ahead up (see turtle_view).
+local function draw_map(look, view, x, y, width, height)
+  if height < 3 or width < 5 then
+    return
+  end
+  local status, status_role = turtle_view.status_text(look, view.layer)
+  ui.text_at(x, y, ui.fit(status, width), status_role)
+  ui.text_at(x, y + 1, ui.fit(turtle_view.near_text(look), width), "dim")
+  for index, row in ipairs(turtle_view.rows(look, width, height - 2, view.layer)) do
+    for column = 1, #row.text do
+      ui.text_at(x + column - 1, y + 1 + index, row.text:sub(column, column), row.roles[column])
+    end
+  end
+end
+
+local function draw(name, info, look, view, message, role)
   local width, height = ui.size()
   ui.clear()
   ui.header(1, "Remote " .. ui.GLYPHS.dot .. " " .. name, blockos.user and blockos.user.name)
-  if info then
-    local fuel = tostring(info.fuel)
-    if type(info.fuel) == "number" then
-      fuel = fuel .. "/" .. tostring(info.fuel_limit)
-    end
-    ui.line(3, "Fuel " .. fuel .. "   slot " .. tostring(info.selected), "text")
-    -- Inventory as a 4x4 grid of counts; the selected slot is highlighted.
-    for row = 0, 3 do
-      local x = 1
-      for column = 1, 4 do
-        local slot = row * 4 + column
-        local cell = string.format("%3d", info.slots[slot] or 0)
-        local cell_role = slot == info.selected and "title" or "dim"
-        ui.text_at(x, 5 + row, cell, cell_role)
-        x = x + 5
-      end
-    end
-  end
   local hint_top = height - #HINTS
+  local body_height = hint_top - 3 -- rows 3 .. above the message line
+  local is_wide = width >= SIDE_BY_SIDE_WIDTH
+  if info and (is_wide or not view.show_map) then
+    draw_inventory(info, 1, 3)
+  end
+  if look and (is_wide or view.show_map) then
+    local map_x = is_wide and (INVENTORY_WIDTH + 2) or 1
+    draw_map(look, view, map_x, 3, width - map_x + 1, body_height)
+  end
   for index, hint in ipairs(HINTS) do
     ui.line(hint_top + index, ui.fit(hint, width), "faint")
   end
   if message then
-    ui.line(hint_top - 1, message, role or "dim")
+    ui.line(hint_top, ui.fit(message, width), role or "dim")
   end
 end
 
@@ -145,12 +171,26 @@ local function drive(name)
     return fail(name .. ": " .. tostring(err))
   end
 
+  -- What the turtle sees; asked again after every action (read-only, safe to retry).
+  local function look_now()
+    return rpc.call(id, turtle_remote.PROTOCOL, "look", {}, { relogin = true })
+  end
+  local look = look_now()
+  local view = { layer = 0, show_map = true }
+
   local message, role = "Ready.", "ok"
   while true do
-    draw(name, info, message, role)
+    draw(name, info, look, view, message, role)
     local _, char = os.pullEvent("char")
     if char == "q" then
       break
+    end
+    if char == "z" or char == "x" then
+      view.layer = math.max(-2, math.min(2, view.layer + (char == "x" and 1 or -1)))
+    elseif char == "m" then
+      view.show_map = not view.show_map
+    elseif char == "l" then
+      look = look_now() or look
     end
     local request = request_for(char, info)
     if request then
@@ -159,6 +199,7 @@ local function drive(name)
         message, role = tostring(call_error), "error"
       else
         info = result.info
+        look = look_now() or look
         local label = request.action:gsub("_", " ")
         if result.ok then
           message, role = label, "ok"
