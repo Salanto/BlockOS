@@ -9,12 +9,13 @@ return function(t)
       b_store = { { name = "dirt", count = 8 } },
       b_port = {},
       b_out = {},
+      farm = {}, -- a farm's chest on the main cable, nobody's port
     }
     -- name -> chest, per network
     local networks = {
       a = { chest_1 = "a_store", chest_2 = "a_port" },
       b = { chest_1 = "b_store", chest_2 = "b_port", chest_3 = "b_out" },
-      main = { chest_10 = "a_port", chest_11 = "b_port" },
+      main = { chest_10 = "a_port", chest_11 = "b_port", chest_12 = "farm" },
     }
     local function api_for(network)
       local names = networks[network]
@@ -206,5 +207,46 @@ return function(t)
     w.node_b.port_hold(nil, "stuck")
     w.advance(20)
     t.ok(not w.node_b.ports_held(), "a hold that never finished runs out")
+  end)
+
+  t.it("pairing looks for the marker item itself, not any chest that filled", function()
+    local w = setup()
+    local proxy = w.node_a.proxy()
+    local marker = proxy.push_marker
+    proxy.push_marker = function(port)
+      w.chests.farm[1] = { name = "wheat", count = 9 } -- the farm fills meanwhile
+      return marker(port)
+    end
+    t.eq(w.ports.pair("a", "chest_2", proxy), "chest_10")
+    proxy.push_marker = function(port)
+      w.chests.farm[2] = { name = "iron", count = 1 } -- the same item: can't tell
+      return marker(port)
+    end
+    w.ports.unpair("a", "chest_2")
+    local found, err = w.ports.pair("a", "chest_2", proxy)
+    t.eq(found, nil)
+    t.ok(err:find("candidates"), err)
+  end)
+
+  t.it("a chest already paired to one port is never paired to another", function()
+    local w = setup()
+    t.eq(w.ports.pair("a", "chest_2", w.node_a.proxy()), "chest_10")
+    t.eq(w.ports.pair("b", "chest_2", w.node_b.proxy()), "chest_11")
+    local taken = {}
+    for _, main in pairs(w.config.ports) do
+      t.ok(not taken[main], "each chest pairs once")
+      taken[main] = true
+    end
+  end)
+
+  t.it("a crossing that never reaches the node's side drops the wrong pairing", function()
+    local w = setup()
+    w.ports.pair("a", "chest_2", w.node_a.proxy())
+    w.config.ports["b/chest_2"] = "chest_12" -- wrongly paired to the farm chest
+    w.report()
+    local _, err = w.hub.request("iron", 5)
+    t.ok(err and err:find("wrong chest"), tostring(err))
+    t.eq(w.config.ports["b/chest_2"], nil, "paired again on the next report")
+    t.eq(count(w.chests.farm, "iron"), 5, "the log says where the items went")
   end)
 end

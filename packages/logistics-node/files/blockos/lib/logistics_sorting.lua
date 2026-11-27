@@ -250,7 +250,16 @@ function logistics_sorting.from_port(inventories, port_handle, item, count, outp
     return nil, "no output chest: give one the 'output' role in the Storage tab"
   end
   local moved = take_from(port, output, item, count, on_move)
-  return { moved = moved, output = output.handle }
+  -- What is still in the port (an output that was full): tells a full output from a
+  -- port the items never reached.
+  local left = 0
+  local ok, slots = pcall(port.source.list, port.handle)
+  for _, stack in pairs(ok and slots or {}) do
+    if stack.name == item then
+      left = left + stack.count
+    end
+  end
+  return { moved = moved, output = output.handle, left = left }
 end
 
 --- Put one item from storage into a port, so the controller can tell which block on

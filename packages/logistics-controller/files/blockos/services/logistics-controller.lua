@@ -85,10 +85,34 @@ local function run(ctx)
   end
 
   local hostname = blockos.net and blockos.net.hostname() or ("#" .. os.getComputerID())
+  -- Slow work (pairing a port, asking a node to craft) runs in its own loop, not in
+  -- the one receiving reports: waiting for an rpc answer there swallows other nodes'
+  -- reports.
+  local WORK_EVENT = "logistics_controller_work"
+  local work = {}
+  local function defer(job)
+    work[#work + 1] = job
+    os.queueEvent(WORK_EVENT)
+  end
+  local function work_loop()
+    while true do
+      local job = table.remove(work, 1)
+      if job then
+        local done, job_error = pcall(job)
+        if not done then
+          log.warn("controller work failed: %s", tostring(job_error))
+        end
+      else
+        os.pullEvent(WORK_EVENT)
+      end
+    end
+  end
+
   local ports = logistics_ports.new(config, save)
   local hub = logistics_hub.new({
     config = config,
     save = save,
+    defer = defer,
     transfer = ports.transfer,
     port_status = ports.status,
     hostname = hostname,
@@ -157,17 +181,20 @@ local function run(ctx)
       or remote_proxy(rpc, sender, logistics_client.NODE_PROTOCOL)
     hub.update(name, event.data, proxy)
     for _, handle in ipairs(ports.check(name, event.data.blocks)) do
-      local main, err = ports.pair(name, handle, proxy)
-      if main then
-        log.info("port %s/%s is %s on the main cable", name, handle, main)
-      else
-        log.warn("pairing port %s/%s: %s", name, handle, tostring(err))
-      end
+      defer(function()
+        local main, err = ports.pair(name, handle, proxy)
+        if main then
+          log.info("port %s/%s is %s on the main cable", name, handle, main)
+        else
+          log.warn("pairing port %s/%s: %s", name, handle, tostring(err))
+        end
+      end)
     end
   end
 
   local ok, err = pcall(parallel.waitForAny,
     function() rpc.serve(logistics_client.PROTOCOL, handlers) end,
+    work_loop,
     function()
       while true do
         local _, sender, message, protocol = os.pullEvent("rednet_message")

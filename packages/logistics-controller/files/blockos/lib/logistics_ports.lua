@@ -10,9 +10,12 @@
 -- by that node's next round, so nothing gets stranded.
 --
 -- Pairing is automatic: when a node reports a block with the role "port", the
--- controller asks the node to drop one item into it and looks which inventory on the
--- main cable changed. Pairings are kept in the controller's config (`ports`,
--- "node/handle" -> name on the main cable).
+-- controller asks the node to drop one item into it and looks for the inventory on the
+-- main cable where exactly that item went up by one. No crossing runs meanwhile, and a
+-- chest that is already another port is never chosen. Pairings are kept in the
+-- controller's config (`ports`, "node/handle" -> name on the main cable). A crossing
+-- whose items arrive in a port but never reach the node's side means the pairing is
+-- wrong: it is dropped and done again.
 -- @module logistics_ports
 
 local logistics_ports = {}
@@ -30,23 +33,28 @@ local function key(node, handle)
   return node .. "/" .. handle
 end
 
--- Items per inventory on the main cable.
-local function main_totals()
+--- Most seconds a crossing waits for a pairing to finish.
+logistics_ports.PAIRING_WAIT = 10
+
+-- How many of one item each inventory on the main cable holds.
+local function main_counts(item, skip)
   local api = logistics_ports.env.peripheral
-  local totals = {}
+  local counts = {}
   for _, name in ipairs(api.getNames()) do
-    if api.hasType(name, "inventory") then
+    if not skip[name] and api.hasType(name, "inventory") then
       local ok, slots = pcall(function() return api.wrap(name).list() end)
       if ok and slots then
-        local total = 0
+        local count = 0
         for _, stack in pairs(slots) do
-          total = total + stack.count
+          if stack.name == item then
+            count = count + stack.count
+          end
         end
-        totals[name] = total
+        counts[name] = count
       end
     end
   end
-  return totals
+  return counts
 end
 
 -- Push up to `count` of an item from one main-cable inventory to another.
@@ -78,7 +86,18 @@ end
 -- @treturn table ports
 function logistics_ports.new(config, save)
   config.ports = config.ports or {}
-  local ports = { attempts = {} }
+  local ports = { attempts = {}, is_pairing = false, crossings = 0 }
+
+  -- Chests already paired to a port (never chosen for another).
+  local function paired_chests(except)
+    local taken = {}
+    for paired, main in pairs(config.ports) do
+      if paired ~= except then
+        taken[main] = true
+      end
+    end
+    return taken
+  end
 
   --- After a report: drop pairings of blocks that are no longer ports, and list the
   -- ports that still need pairing (not tried in the last RETRY_SECONDS).
@@ -122,24 +141,57 @@ function logistics_ports.new(config, save)
   -- @treturn[2] string error message
   function ports.pair(node, handle, proxy)
     ports.attempts[key(node, handle)] = logistics_ports.env.clock()
-    local before = main_totals()
-    local marked, err = proxy.push_marker(handle)
-    if not marked then
-      return nil, err
+    if ports.crossings > 0 then
+      return nil, "items are crossing right now; trying again later"
     end
-    local changed = {}
-    for name, total in pairs(main_totals()) do
-      if total > (before[name] or 0) then
-        changed[#changed + 1] = name
+    ports.is_pairing = true
+    local ok, result, err = pcall(function()
+      -- The marker's item is known only afterwards: count everything before.
+      local skip = paired_chests(key(node, handle))
+      local api = logistics_ports.env.peripheral
+      local before = {}
+      for _, name in ipairs(api.getNames()) do
+        if not skip[name] and api.hasType(name, "inventory") then
+          local listed, slots = pcall(function() return api.wrap(name).list() end)
+          before[name] = listed and slots or {}
+        end
       end
+      local marked, mark_error = proxy.push_marker(handle)
+      if not marked then
+        return nil, mark_error
+      end
+      local changed = {}
+      for name, count in pairs(main_counts(marked.item, skip)) do
+        local had = 0
+        for _, stack in pairs(before[name] or {}) do
+          if stack.name == marked.item then
+            had = had + stack.count
+          end
+        end
+        if count == had + 1 then
+          changed[#changed + 1] = name
+        end
+      end
+      if #changed ~= 1 then
+        return nil, "could not tell which block on the main cable is the port ("
+          .. #changed .. " candidates); is its second modem on the controller's cable and red?"
+      end
+      config.ports[key(node, handle)] = changed[1]
+      save()
+      return changed[1]
+    end)
+    ports.is_pairing = false
+    if not ok then
+      return nil, tostring(result)
     end
-    if #changed ~= 1 then
-      return nil, "could not tell which block on the main cable is the port ("
-        .. #changed .. " changed); is its second modem on the controller's cable and red?"
-    end
-    config.ports[key(node, handle)] = changed[1]
+    return result, err
+  end
+
+  --- Forget a pairing that turned out wrong; it is paired again on the next report.
+  function ports.unpair(node, handle)
+    config.ports[key(node, handle)] = nil
+    ports.attempts[key(node, handle)] = nil
     save()
-    return changed[1]
   end
 
   --- A node's first paired port.
@@ -171,6 +223,25 @@ function logistics_ports.new(config, save)
   -- @treturn[2] nil
   -- @treturn[2] string error message
   function ports.transfer(from_entry, to_entry, item, count, output)
+    local waited = 0
+    while ports.is_pairing and waited < logistics_ports.PAIRING_WAIT do
+      sleep(0.5)
+      waited = waited + 0.5
+    end
+    if ports.is_pairing then
+      return nil, "a port is being paired; try again in a moment"
+    end
+    ports.crossings = ports.crossings + 1
+    local ok, result, err = pcall(ports.cross, from_entry, to_entry, item, count, output)
+    ports.crossings = ports.crossings - 1
+    if not ok then
+      return nil, tostring(result)
+    end
+    return result, err
+  end
+
+  -- The crossing itself (see the module comment).
+  function ports.cross(from_entry, to_entry, item, count, output)
     local from_handle, from_main = ports.port_of(from_entry.name)
     local to_handle, to_main = ports.port_of(to_entry.name)
     for name, handle in pairs({ [from_entry.name] = from_handle, [to_entry.name] = to_handle }) do
@@ -197,6 +268,14 @@ function logistics_ports.new(config, save)
       hold)
     if not delivered then
       return nil, deliver_error
+    end
+    if (delivered.moved or 0) == 0 and (delivered.left or 0) == 0 then
+      -- The items went into the chest we think is the port, but the node does not see
+      -- them: that chest is not its port. Pair it again; whatever landed in the wrong
+      -- chest has to be picked up by hand (the log says where).
+      ports.unpair(to_entry.name, to_handle)
+      return nil, "the port of " .. to_entry.name .. " seems paired to the wrong chest ("
+        .. to_main .. "); pairing it again"
     end
     return { moved = delivered.moved, output = delivered.output, seq = sent.seq }
   end

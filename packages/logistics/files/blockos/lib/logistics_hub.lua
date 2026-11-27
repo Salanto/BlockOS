@@ -64,6 +64,8 @@ end
 --             -> { moved, output } | nil, err: carries items between nodes (the
 --             controller's ports); without it items only move within one node
 --   port_status  optional function(node, handle) -> "paired" | "pairing", for ports
+--   defer     optional function(job): run slow work (asking a node to craft) later,
+--             outside the caller (the controller's work loop); default: right away
 -- @treturn table hub
 function logistics_hub.new(options)
   local config = logistics.normalise(options.config)
@@ -316,10 +318,13 @@ function logistics_hub.new(options)
         local watch = config.watches[item]
         local wanted = logistics.recovery_level(watch) - state.count
         hub.craft_asked[item] = now
-        local result, err = hub.craft(item, math.max(1, wanted))
-        if not result then
-          logistics_hub.env.log("crafting %s on %s: %s", item, name, tostring(err))
-        end
+        local defer = options.defer or function(job) job() end
+        defer(function()
+          local result, err = hub.craft(item, math.max(1, wanted))
+          if not result then
+            logistics_hub.env.log("crafting %s on %s: %s", item, name, tostring(err))
+          end
+        end)
       end
     end
   end
