@@ -50,6 +50,9 @@ end
 local root_terminal = term.native()
 if expected_type == "basic" then
   root_terminal = basic_terminal()
+else -- EXPERIMENT: advanced on an invisible window too
+  local w, h = term.native().getSize()
+  root_terminal = window.create(term.native(), 1, 1, w, h, false)
 end
 term.redirect(root_terminal)
 
