@@ -77,7 +77,7 @@ function mail_app.list_line(message, folder, width, now)
   local mark = message.is_read and " " or "*"
   local age = mail_app.age(message.time, now)
   local who_w = math.min(12, math.max(4, math.floor(width / 4)))
-  local subject_w = math.max(1, width - who_w - #age - 4)
+  local subject_w = math.max(1, width - who_w - #age - 3)
   return mark .. ui.pad(ui.fit(who, who_w), who_w) .. " " ..
     ui.pad(ui.fit(mail_app.subject(message), subject_w), subject_w) .. " " .. age
 end

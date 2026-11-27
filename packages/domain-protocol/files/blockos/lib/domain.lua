@@ -13,6 +13,64 @@ local rpc = import("rpc")
 
 local domain = {}
 
+domain.PROTOCOL = "blockos.domain"
+domain.ADMINS = "domain-admins"
+
+local function membership_path()
+  return paths.top("etc/blockos/domain")
+end
+
+--- @treturn table|nil { name, controller_id, computer_token } when joined.
+function domain.membership()
+  return fsx.read_table(membership_path())
+end
+
+--- @treturn boolean
+function domain.is_joined()
+  return domain.membership() ~= nil
+end
+
+--- @treturn string|nil The domain name.
+function domain.name()
+  local membership = domain.membership()
+  return membership and membership.name
+end
+
+local function save_membership(membership)
+  fsx.write_table(membership_path(), membership)
+end
+
+rpc.set_computer_token_provider(function()
+  local membership = domain.membership()
+  return membership and membership.computer_token
+end)
+
+-- When a program finds the login expired (e.g. after 24 hours), ask for the
+-- password once instead of failing.
+rpc.set_relogin_handler(function()
+  local user = blockos and blockos.user
+  if not (user and user.source == "domain") then
+    return nil
+  end
+  local ui = blockos.ui
+  ui.print("Your login has expired.", "warn")
+  local ok, password = pcall(ui.prompt, "Password for " .. user.name .. ": ", { mask = "*" })
+  if not ok then
+    return nil
+  end
+  local session = domain.login(user.name, password)
+  if not session then
+    ui.print("Login incorrect.", "error")
+    return nil
+  end
+  user.token = session.token
+  user.groups = session.groups
+  user.is_admin = domain.is_admin(user)
+  return session.token
+end)
+
+-- Call the controller. If it stops answering (for example it was moved and now
+-- has another computer ID), look it up again by domain name once.
 --- Logging in waits at most this long for the controller (2 tries of half each),
 -- and skips looking for a moved controller: a player should not stare at the login
 -- screen when the controller is down (local accounts still work).
