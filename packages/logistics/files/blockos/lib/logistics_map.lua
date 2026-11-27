@@ -481,7 +481,7 @@ function logistics_map.run(connection)
   local next_poll, next_layout = os.clock() + POLL_SECONDS, os.clock() + LAYOUT_SECONDS
   while true do
     draw(view)
-    local event, a, b, c = os.pullEvent()
+    local event, a, b, c = import("events").pull()
     if event == "timer" and a == frame then
       advance_markers(view)
       if os.clock() >= next_poll then

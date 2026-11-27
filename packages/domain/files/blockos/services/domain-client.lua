@@ -123,7 +123,7 @@ local function run(ctx)
   local interval = ctx.config.get("blockos.domain.heartbeat_interval", 300)
   local timer = os.startTimer(interval)
   while true do
-    local event, id, message, protocol = os.pullEvent()
+    local event, id, message, protocol = import("events").pull()
     if event == "rednet_message" and protocol == domain.MAIL_PROTOCOL then
       on_mail(id, message)
     elseif event == "timer" and id == timer then

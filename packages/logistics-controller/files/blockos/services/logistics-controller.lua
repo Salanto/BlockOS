@@ -145,6 +145,7 @@ local function run(ctx)
       hub.check_levels()
       return { added = added }
     end)
+  rpc.once(handlers.import_levels) -- the node hands its levels over only once
 
   blockos.logistics_hub = {
     hub = hub,

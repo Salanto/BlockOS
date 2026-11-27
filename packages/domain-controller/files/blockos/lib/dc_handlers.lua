@@ -502,6 +502,7 @@ function dc_handlers.new(dir, storage, clock)
     end
     return result, err
   end)
+  rpc.once(handlers.mail_send) -- a repeat must not deliver the mail twice
 
   local function own_mail(fn)
     return function(ctx, args)

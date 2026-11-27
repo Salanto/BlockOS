@@ -554,7 +554,17 @@ function logistics_node.new(options)
       from_port = node.from_port,
       push_marker = node.push_marker,
       craft = function(item, count) return node.craft(item, count) end,
+      export_levels = function() return node.export_levels_or_none() end,
     }
+  end
+
+  --- The lone-mode levels for the controller (the node service sets
+  -- node.export_levels).
+  function node.export_levels_or_none()
+    if not node.export_levels then
+      return nil, "this node keeps no levels"
+    end
+    return node.export_levels()
   end
 
   --- Start crafting (the controller asks when a watched item is low).
@@ -566,10 +576,8 @@ function logistics_node.new(options)
   end
 
   --- Handlers for the controller (protocol "blockos.logistics.node").
-  -- @tparam[opt] function export_levels function() -> levels | nil, err (lone-mode
-  --   levels this node kept, for `logistics levels import` on the controller)
   -- @tparam[opt] function is_joined function() -> boolean (default: ask the domain)
-  function node.handlers(export_levels, is_joined)
+  function node.handlers(is_joined)
     is_joined = is_joined or function()
       local found, domain = pcall(import, "domain")
       return found and domain.is_joined()
@@ -589,7 +597,7 @@ function logistics_node.new(options)
         return fn(args or {})
       end
     end
-    return {
+    local handlers = {
       request = rpc.with_args(ARGS.request, guarded(function(args)
         return node.request(args.item, math.floor(args.count), args.output)
       end)),
@@ -613,12 +621,15 @@ function logistics_node.new(options)
         return node.craft(args.item, math.floor(args.count))
       end)),
       export_levels = guarded(function()
-        if not export_levels then
-          return nil, "this node keeps no levels"
-        end
-        return export_levels()
+        return node.export_levels_or_none()
       end),
     }
+    -- Moving items (and handing levels over) must never happen twice for one request.
+    for _, op in ipairs({ "request", "to_port", "from_port", "push_marker", "craft",
+      "export_levels" }) do
+      rpc.once(handlers[op])
+    end
+    return handlers
   end
 
   return node

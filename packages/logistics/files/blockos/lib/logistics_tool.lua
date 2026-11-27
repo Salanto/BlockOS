@@ -490,7 +490,7 @@ function logistics_tool.run(connection)
   refresh()
   while true do
     draw()
-    local event, value = os.pullEvent()
+    local event, value = import("events").pull()
     if event == "char" then
       local number = tonumber(value)
       if number then

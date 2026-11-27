@@ -139,4 +139,31 @@ return function(t)
     t.eq(result, 1, "the retry got the first run's answer")
     t.eq(runs, 1, "the handler ran once")
   end)
+
+  t.it("events that arrive while a call waits are kept for the caller's loop", function()
+    local import = t.fresh_import()
+    local rpc = import("rpc")
+    local events = import("events")
+    local handlers = {
+      slow = function()
+        sleep(0.2)
+        return true
+      end,
+    }
+    with_server(rpc, handlers, function()
+      local timer = os.startTimer(0.05) -- the caller's own timer fires mid-call
+      os.queueEvent("my_alert", 7)
+      t.ok(rpc.call(ME, PROTOCOL, "slow", nil, { timeout = 1 }))
+      local name, value = events.pull("my_alert")
+      t.eq(name, "my_alert")
+      t.eq(value, 7, "the alert was not lost")
+      -- Other timers (the server's sleep) are kept too; the caller's is among them.
+      local found = false
+      while events.count() > 0 and not found do
+        local name, fired = events.pull()
+        found = name == "timer" and fired == timer
+      end
+      t.ok(found, "the caller's timer was kept too")
+    end)
+  end)
 end

@@ -75,7 +75,7 @@ local function run(ctx)
   local timer = os.startTimer(FIRST_CHECK_SECONDS)
   local poll = nil
   while true do
-    local event, id = os.pullEvent()
+    local event, id = import("events").pull()
     if event == "timer" and id == timer then
       check(false)
       timer = os.startTimer(ctx.config.get("blockos.domain.update_interval", 1800))

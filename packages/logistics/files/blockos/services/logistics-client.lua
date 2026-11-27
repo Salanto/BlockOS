@@ -302,7 +302,7 @@ local function run(ctx)
   local frame_timer = os.startTimer(FRAME_SECONDS)
   local next_moves = 0
   while true do
-    local event, a, b, c = os.pullEvent()
+    local event, a, b, c = import("events").pull()
     if event == "rednet_message" and c == logistics_alarms.ALERT_PROTOCOL then
       on_alert_message(a, b)
     elseif event == "timer" and a == timer then

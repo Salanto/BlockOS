@@ -133,6 +133,7 @@ function turtle_remote.handlers(turtle_api, log, allows)
     end
     return { ok = ok == true, detail = detail, info = turtle_remote.info(turtle_api) }
   end)
+  rpc.once(handlers.act) -- a repeat must never move the turtle twice
 
   return handlers
 end

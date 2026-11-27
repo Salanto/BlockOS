@@ -10,11 +10,11 @@
 -- Handlers return a result, or nil and an error message. A handler that has
 -- nothing to return should return true.
 --
--- Retries are safe: a retry resends the same request id, and the server runs each
--- (sender, id) once. A repeat that arrives while the first copy still runs is
--- dropped (its answer is on the way); a repeat of a finished one gets the same
--- answer again. So a lost answer never makes an operation (e.g. moving items) happen
--- twice.
+-- Retries are safe: a retry resends the same request id. A repeat that arrives while
+-- the first copy still runs is dropped (its answer is on the way). Operations marked
+-- with rpc.once (moving items, sending mail, driving a turtle) also keep their answer
+-- for a while, so a repeat of a finished one gets that answer instead of running
+-- again: a lost answer never makes them happen twice. Reads simply run again.
 -- @module rpc
 
 local wire = import("wire")
@@ -30,6 +30,18 @@ local MAX_WORKERS = 16
 -- How long a server remembers a request it ran (for repeats), and how many.
 local REMEMBER_SECONDS = 120
 local MAX_REMEMBERED = 200
+
+-- Handlers marked with rpc.once (weak keys: handler tables can be rebuilt).
+local once_handlers = setmetatable({}, { __mode = "k" })
+
+--- Mark a handler whose operation must never run twice for one request (it moves
+-- items, sends mail, drives a turtle): its answer is kept for repeats.
+-- @tparam function handler
+-- @treturn function The same handler.
+function rpc.once(handler)
+  once_handlers[handler] = true
+  return handler
+end
 
 local request_counter = 0
 
@@ -118,19 +130,24 @@ function rpc.is_response(message)
   return wire.parse(message, "response") ~= nil
 end
 
+-- Everything else that arrives meanwhile is kept for the caller's loop (see events):
+-- a service's own timer or an alert must not get lost while it waits for an answer.
 local function wait_for_reply(request_id, protocol, timeout)
+  local events = import("events")
   local timer = os.startTimer(timeout)
   while true do
-    local event, a, b, c = os.pullEvent()
-    if event == "timer" and a == timer then
+    local event = table.pack(os.pullEvent())
+    local name, a, b, c = event[1], event[2], event[3], event[4]
+    if name == "timer" and a == timer then
       return nil
     end
-    local is_reply = event == "rednet_message" and c == protocol
+    local is_reply = name == "rednet_message" and c == protocol
       and rpc.is_response(b) and b.reply_to == request_id
     if is_reply then
       os.cancelTimer(timer)
       return b
     end
+    events.keep(table.unpack(event, 1, event.n))
   end
 end
 
@@ -255,13 +272,35 @@ function rpc.serve(protocol, handlers)
   local workers = {}
   local remembered, remembered_count = {}, 0 -- [sender/id] = { at, response? }
 
+  local function forget(key)
+    if remembered[key] then
+      remembered[key] = nil
+      remembered_count = remembered_count - 1
+    end
+  end
+
+  -- Drop answers older than REMEMBER_SECONDS; over the limit, the oldest finished ones
+  -- go first, but never one a client may still retry (the limit is soft).
   local function forget_old()
     local now = os.clock()
+    local finished = {}
     for key, entry in pairs(remembered) do
-      if now - entry.at > REMEMBER_SECONDS or remembered_count > MAX_REMEMBERED then
-        remembered[key] = nil
-        remembered_count = remembered_count - 1
+      if entry.response and now - entry.at > REMEMBER_SECONDS then
+        forget(key)
+      elseif entry.response then
+        finished[#finished + 1] = { key = key, at = entry.at }
       end
+    end
+    if remembered_count <= MAX_REMEMBERED then
+      return
+    end
+    table.sort(finished, function(a, b) return a.at < b.at end)
+    local retry_window = 2 * rpc.DEFAULT_TIMEOUT * (1 + rpc.DEFAULT_RETRIES)
+    for _, old in ipairs(finished) do
+      if remembered_count <= MAX_REMEMBERED or now - old.at < retry_window then
+        break
+      end
+      forget(old.key)
     end
   end
 
@@ -291,10 +330,16 @@ function rpc.serve(protocol, handlers)
     local entry = { at = os.clock() }
     remembered[key] = entry
     remembered_count = remembered_count + 1
+    local is_once = once_handlers[handlers[request.op]] == true
     local worker = {
       coroutine = coroutine.create(function()
-        entry.response = rpc.handle(handlers, sender, request)
-        transport.send(sender, entry.response, protocol)
+        local response = rpc.handle(handlers, sender, request)
+        if is_once then
+          entry.response, entry.at = response, os.clock()
+        else
+          forget(key) -- a read: a repeat may simply run again
+        end
+        transport.send(sender, response, protocol)
       end),
     }
     if resume(worker) then

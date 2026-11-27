@@ -444,6 +444,10 @@ function logistics_handlers.new(hub)
     return result
   end))
 
+  -- Moving items and starting crafts must never happen twice for one request.
+  for _, op in ipairs({ "request", "craft", "supply" }) do
+    rpc.once(handlers[op])
+  end
   return handlers, require_admin
 end
 

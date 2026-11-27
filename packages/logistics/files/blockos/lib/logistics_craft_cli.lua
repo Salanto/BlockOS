@@ -185,7 +185,7 @@ local function teach(crafter, item)
     local timer = os.startTimer(0.5)
     draw(crafter.teach_poll())
     while true do
-      local event, value = os.pullEvent()
+      local event, value = import("events").pull()
       if event == "timer" and value == timer then
         draw(crafter.teach_poll())
         timer = os.startTimer(0.5)

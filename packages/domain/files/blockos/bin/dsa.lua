@@ -508,7 +508,7 @@ if type(health) == "table" and not health.has_room then
 end
 while true do
   draw()
-  local event, a, _, c = os.pullEvent()
+  local event, a, _, c = import("events").pull()
   if event == "char" then
     if not on_char(a) then
       break
