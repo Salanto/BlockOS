@@ -41,6 +41,10 @@ directory.MAX_INFO_BYTES = 1024
 directory.MAX_ROLE_BYTES = 1024
 directory.MAX_ROLES_PER_COMPUTER = 8
 
+--- Mail: messages kept per user (the oldest go first) and the longest message.
+directory.MAX_MAIL = 20
+directory.MAX_MAIL_LENGTH = 300
+
 --- Largest roaming profile (serialised) and how many apps it may list.
 directory.MAX_PROFILE_BYTES = 1024
 directory.MAX_PROFILE_APPS = 8
@@ -96,6 +100,7 @@ function directory.load(data, sessions)
   data.services = data.services or {}
   data.computer_roles = data.computer_roles or {}
   data.profiles = data.profiles or {}
+  data.mail = data.mail or {}
   for _, group in ipairs(directory.BUILTIN_GROUPS) do
     data.groups[group] = data.groups[group] or { members = {} }
   end
@@ -148,11 +153,108 @@ function Directory:remove_user(name)
   end
   self.data.users[name] = nil
   self.data.profiles[name] = nil
+  self.data.mail[name] = nil
   for _, group in pairs(self.data.groups) do
     group.members[name] = nil
   end
   self:end_sessions_of(name)
   return true
+end
+
+------------------------------------------------------------------------------
+-- Mail
+------------------------------------------------------------------------------
+
+-- Who a message to `to` reaches: one user, or every member of a group.
+local function recipients_of(self, to)
+  if self.data.users[to] then
+    return { to }
+  end
+  if not self.data.groups[to] then
+    return nil, "no user or group called " .. tostring(to)
+  end
+  local names = {}
+  for name in pairs(self.data.users) do
+    if self:is_member(to, name) then
+      names[#names + 1] = name
+    end
+  end
+  table.sort(names)
+  return names
+end
+
+--- Send a message to a user or to every member of a group.
+-- @tparam string from Sender: a user name, or a computer's hostname for notices.
+-- @tparam string to User or group.
+-- @tparam string text
+-- @tparam number time Seconds since the epoch (UTC).
+-- @treturn[1] number How many users got it.
+-- @treturn[2] nil
+-- @treturn[2] string error message
+function Directory:send_mail(from, to, text, time)
+  if type(text) ~= "string" or text == "" then
+    return nil, "the message is empty"
+  end
+  if #text > directory.MAX_MAIL_LENGTH then
+    return nil, "messages may be at most " .. directory.MAX_MAIL_LENGTH .. " characters"
+  end
+  local names, err = recipients_of(self, to)
+  if not names then
+    return nil, err
+  end
+  self.data.mail_seq = (self.data.mail_seq or 0) + 1
+  for _, name in ipairs(names) do
+    local box = self.data.mail[name] or {}
+    box[#box + 1] = { id = self.data.mail_seq, from = from, to = to, text = text, time = time }
+    while #box > directory.MAX_MAIL do
+      table.remove(box, 1)
+    end
+    self.data.mail[name] = box
+  end
+  return #names
+end
+
+--- A user's messages, newest first.
+-- @tparam string name
+-- @treturn {table...} { id, from, to, text, time, is_read? }
+function Directory:list_mail(name)
+  local box = self.data.mail[name] or {}
+  local list = {}
+  for index = #box, 1, -1 do
+    list[#list + 1] = box[index]
+  end
+  return list
+end
+
+--- How many unread messages a user has.
+function Directory:unread_mail(name)
+  local count = 0
+  for _, message in ipairs(self.data.mail[name] or {}) do
+    if not message.is_read then
+      count = count + 1
+    end
+  end
+  return count
+end
+
+--- Mark a message read, or delete it.
+-- @tparam string name
+-- @tparam number id
+-- @tparam boolean is_delete
+function Directory:change_mail(name, id, is_delete)
+  local box = self.data.mail[name] or {}
+  for index, message in ipairs(box) do
+    if message.id == id then
+      if is_delete then
+        table.remove(box, index)
+      else
+        message.is_read = true
+      end
+      self.data.mail[name] = #box > 0 and box or nil
+      return true
+    end
+  end
+  return nil, "no such message"
 end
 
 ------------------------------------------------------------------------------

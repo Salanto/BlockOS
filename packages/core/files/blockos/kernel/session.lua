@@ -68,8 +68,8 @@ end
 -- @tparam string source multishell.lua
 -- @treturn string|nil The changed source, or nil if the rom's file looks different.
 function session.patch_multishell(source)
-  local patched, count = source:gsub('}, "/rom/programs/shell%.lua"%)',
-    '}, "/rom/programs/shell.lua", ...)', 1)
+  local patched, count = source:gsub(
+    "(launchProcess%(%s*true%s*,.-[\"']/?rom/programs/shell%.lua[\"'])%s*%)", "%1, ...)", 1)
   if count ~= 1 then
     return nil
   end

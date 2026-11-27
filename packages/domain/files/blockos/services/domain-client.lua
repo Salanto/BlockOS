@@ -22,8 +22,32 @@ local function run(ctx)
   end
   ctx.log.info("member of domain %s", domain.name())
 
+  -- Unread mail of the logged-in domain user, as a notice (at login and with every
+  -- status report).
+  local function mail_notice(user)
+    if not (user and user.source == "domain" and user.token) then
+      return nil
+    end
+    local result = domain.call_as(user.token, "mail_unread")
+    local unread = result and result.unread or 0
+    if unread == 0 then
+      return nil
+    end
+    return unread .. " new message" .. (unread == 1 and "" or "s") .. ": type 'mail'"
+  end
+
+  local function check_mail()
+    if blockos.notices then
+      blockos.notices.mail = mail_notice(blockos.user)
+    end
+  end
+
   -- Roaming profiles: a domain user's apps and roaming settings, on any computer.
+  -- The mail notice is set for every login, so it never shows the previous user's.
   import("session").set_login_hook("domain-profile", function(user)
+    if blockos.notices then
+      blockos.notices.mail = mail_notice(user)
+    end
     if user.source ~= "domain" or not user.token then
       return nil
     end
@@ -67,6 +91,7 @@ local function run(ctx)
     local event, id = os.pullEvent()
     if event == "timer" and id == timer then
       report()
+      check_mail()
       timer = os.startTimer(interval)
     elseif event == HEARTBEAT_EVENT then
       sleep(3) -- let the net service register the new name first

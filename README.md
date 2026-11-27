@@ -85,6 +85,11 @@ blockos.logistics.server kitchen` makes every terminal you log into use that con
 `profile` shows yours, `profile keys` which settings can follow you. Profile settings apply
 only while you are logged in and never change the computer's own settings.
 
+**Mail.** `mail send bob the iron farm is jammed` leaves Bob a message; he sees "1 new message"
+when he logs in anywhere (or within a few minutes if he is logged in). `mail send miners ...`
+reaches every member of a group. `mail` lists yours, `mail read 1` shows one, `mail delete 1`
+removes it. The controller keeps the newest 20 per player.
+
 ## A package server
 
 On a computer with disk drives (attach as many as you like with wired modems):

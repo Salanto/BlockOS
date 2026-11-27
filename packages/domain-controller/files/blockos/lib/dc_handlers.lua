@@ -18,6 +18,9 @@
 --                                 <module>-... roles managed by themselves
 --   computer_config               a joined computer: what it should have installed and set
 --   profile_get, profile_set      the logged-in user's own roaming profile
+--   mail_send                     a logged-in user, or a joined computer (notices)
+--   mail_list, mail_read,         the logged-in user's own mailbox
+--   mail_delete, mail_unread
 --   list_users, list_groups,      any logged-in domain user (read only)
 --   list_computers, list_services,
 --   list_computer_roles,
@@ -69,6 +72,8 @@ local ARGS = {
     settings = { type = "table", optional = true },
   },
   computer_assign = { hostname = NAME, roles = "table" },
+  mail_send = { to = NAME, text = { type = "string", max = 300 } },
+  mail_id = { id = "number" },
   profile_set = {
     apps = { type = "table", optional = true },
     settings = { type = "table", optional = true },
@@ -452,6 +457,57 @@ function dc_handlers.new(dir, storage, clock)
       return dir:set_everyone(args.group, args.everyone)
     end)
   end)
+
+  -- Mail ---------------------------------------------------------------------
+
+  -- From a user, or from a joined computer (system notices, signed by its hostname).
+  handlers.mail_send = with_args(ARGS.mail_send, function(ctx, args)
+    local from
+    if ctx.token then
+      local user, err = require_user(ctx)
+      if not user then
+        return nil, err
+      end
+      from = user.name
+    else
+      local hostname, err = require_computer(ctx)
+      if not hostname then
+        return nil, err
+      end
+      from = hostname
+    end
+    local time = now()
+    return change(function()
+      local sent, err = dir:send_mail(from, args.to, args.text, time)
+      return sent and { sent = sent }, err
+    end)
+  end)
+
+  local function own_mail(fn)
+    return function(ctx, args)
+      local user, err = require_user(ctx)
+      if not user then
+        return nil, err
+      end
+      return fn(user.name, args or {})
+    end
+  end
+
+  handlers.mail_list = own_mail(function(name)
+    return dir:list_mail(name)
+  end)
+
+  handlers.mail_unread = own_mail(function(name)
+    return { unread = dir:unread_mail(name) }
+  end)
+
+  handlers.mail_read = with_args(ARGS.mail_id, own_mail(function(name, args)
+    return change(function() return dir:change_mail(name, args.id, false) end)
+  end))
+
+  handlers.mail_delete = with_args(ARGS.mail_id, own_mail(function(name, args)
+    return change(function() return dir:change_mail(name, args.id, true) end)
+  end))
 
   -- Roaming profiles: each user reads and changes only their own.
   function handlers.profile_get(ctx)
