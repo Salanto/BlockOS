@@ -35,24 +35,22 @@ local results = { passed = 0, failed = 0, skipped = 0, lines = {} }
 -- Headless CraftOS-PC always reports a colour terminal. BlockOS only tells basic
 -- from advanced through term.isColour(), so a basic computer is simulated with a
 -- terminal that reports no colour support. Windows created on top of it inherit that.
+--
+-- The native terminal itself, with only isColour replaced: no window in between.
+-- With a window as the root terminal, headless CraftOS-PC slowed the whole computer
+-- down more and more over a run (the release build went from 1 s to minutes, and runs
+-- hit the CI time limit), visible or not; advanced runs on a window did the same.
 local function basic_terminal()
-  local width, height = term.native().getSize()
-  -- Invisible: a visible window redraws the whole native screen every time it scrolls,
-  -- and headless CraftOS-PC turns each redraw into output, which made basic runs slow
-  -- and erratic (minutes instead of seconds). The window still keeps its contents.
-  local screen = window.create(term.native(), 1, 1, width, height, false)
   local function no_colour()
     return false
   end
-  return setmetatable({ isColour = no_colour, isColor = no_colour }, { __index = screen })
+  return setmetatable({ isColour = no_colour, isColor = no_colour },
+    { __index = term.native() })
 end
 
 local root_terminal = term.native()
 if expected_type == "basic" then
   root_terminal = basic_terminal()
-else -- EXPERIMENT: advanced on an invisible window too
-  local w, h = term.native().getSize()
-  root_terminal = window.create(term.native(), 1, 1, w, h, false)
 end
 term.redirect(root_terminal)
 
@@ -311,7 +309,6 @@ local function run_specs()
     end
   end
   table.sort(spec_files)
-  table.insert(spec_files, 1, "integration_spec.lua") -- EXPERIMENT: first and in place
 
   for _, file in ipairs(spec_files) do
     local started = now()

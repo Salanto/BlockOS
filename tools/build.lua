@@ -193,11 +193,3 @@ for _, name in ipairs(optional) do
 end
 
 print("Built BlockOS " .. version .. " into " .. out_dir)
-do -- EXPERIMENT
-  local lz = { stats = rawget(_G, "LZ_STATS") }
-  local line = string.format("EXPERIMENT lz yields=%d wait=%dms skipped=%d last=%s clock=%.1f",
-    lz.stats.yields, lz.stats.wait, lz.stats.skipped, tostring(lz.stats.last_skipped), os.clock())
-  local handle = fs.open("/test-progress.txt", "a")
-  handle.write(line .. "\n")
-  handle.close()
-end

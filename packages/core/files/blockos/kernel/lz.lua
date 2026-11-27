@@ -34,22 +34,10 @@ local SECONDS_BETWEEN_YIELDS = 0.5
 -- Let other coroutines run during long work: CC stops code that runs too long
 -- without yielding. Time-based, because the work per step varies a lot.
 local last_yield = os.clock()
-lz.stats = rawget(_G, "LZ_STATS") or { yields = 0, wait = 0, skipped = 0 } -- EXPERIMENT
-rawset(_G, "LZ_STATS", lz.stats)
 local function take_a_breath_if_needed()
   if os.clock() - last_yield >= SECONDS_BETWEEN_YIELDS then
-    local started = os.epoch("utc")
     os.queueEvent("blockos_lz")
-    while true do
-      local event = os.pullEvent()
-      if event == "blockos_lz" then
-        break
-      end
-      lz.stats.skipped = lz.stats.skipped + 1
-      lz.stats.last_skipped = event
-    end
-    lz.stats.yields = lz.stats.yields + 1
-    lz.stats.wait = lz.stats.wait + (os.epoch("utc") - started)
+    os.pullEvent("blockos_lz")
     last_yield = os.clock()
   end
 end
