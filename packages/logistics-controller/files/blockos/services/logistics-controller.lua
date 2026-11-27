@@ -25,8 +25,8 @@ local function remote_proxy(rpc, id, protocol)
       return call("request", { item = item, count = count, output = output }, 12)
     end,
     set_storage = function(change) return call("set_storage", change) end,
-    find_start = function(id) return call("find_start", { id = id }) end,
-    find_finish = function(id) return call("find_finish", { id = id }) end,
+    find_start = function(search) return call("find_start", { id = search }) end,
+    find_finish = function(search) return call("find_finish", { id = search }) end,
     export_levels = function() return call("export_levels") end,
     port_hold = function(seconds, hold)
       return call("port_hold", { seconds = seconds, hold = hold })
