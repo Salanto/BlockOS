@@ -145,9 +145,9 @@ return function(t)
     t.eq(#node.report().moves, 1)
     t.eq(#node.report().moves, 0, "moves go out once")
     local client = import("logistics_client")
-    local report = node.report()
-    report.node = "node-1"
-    t.ok(client.report_event(report), "a node's report passes its own schema")
+    local next_report = node.report()
+    next_report.node = "node-1"
+    t.ok(client.report_event(next_report), "a node's report passes its own schema")
     t.ok(not client.report_event({ node = "node-1" }), "no totals: refused before sending")
   end)
 
