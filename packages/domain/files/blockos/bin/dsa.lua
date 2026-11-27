@@ -33,7 +33,7 @@ local tabs = {
       return string.format("%-20s %s%s", group.name, members, manager)
     end,
     hints = { { "a", "Add" }, { "d", "Delete" }, { "m", "Member+" }, { "x", "Member-" },
-      { "e", "Everyone" } },
+      { "e", "Everyone" }, { "b", "Managed by" } },
   },
   {
     title = "Computers",
@@ -212,6 +212,20 @@ actions[2] = {
       local everyone = not group.everyone
       run("group_set_everyone", { group = group.name, everyone = everyone },
         group.name .. (everyone and " now includes everyone." or " now lists its members."))
+    end
+  end,
+  -- Which group may change this one without a domain admin (empty: only domain admins).
+  b = function(group)
+    if not group then
+      return
+    end
+    local answers = ui.form("Who manages " .. group.name,
+      { { label = "Group (- = domain admins only): ", default = group.managed_by } })
+    if answers then
+      local manager = answers[1] ~= "-" and answers[1] or nil
+      run("group_set_manager", { group = group.name, managed_by = manager },
+        manager and (group.name .. " is managed by " .. manager .. ".")
+          or (group.name .. " is managed by domain admins only."))
     end
   end,
 }
