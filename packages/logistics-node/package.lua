@@ -5,4 +5,6 @@ return {
   description = "A logistics node: reads and sorts one storage network",
   depends = { logistics = ">=0.1.0-0" },
   optional = true,
+  -- Takes over the old storage-monitor package (its config is migrated on first start).
+  replaces = { "storage-monitor" },
 }

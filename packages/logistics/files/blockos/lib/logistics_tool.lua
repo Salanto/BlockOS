@@ -343,9 +343,9 @@ function logistics_tool.run(connection)
     title = "Nodes",
     load = function() return connection.call("nodes") end,
     describe = function(row)
-      local state = row.is_stale and "STALE" or "ok"
+      local health = row.is_stale and "STALE" or "ok"
       return string.format("%-14s %3d chests %5d items %5ss %s", ui.fit(row.name, 14),
-        row.blocks, row.items, tostring(row.age), state)
+        row.blocks, row.items, tostring(row.age), health)
     end,
     role = function(row) return row.is_stale and "warn" or nil end,
     hints = { { "d", "Forget" } },

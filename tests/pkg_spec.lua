@@ -127,6 +127,24 @@ return function(t)
     t.ok(not pkg.apply({}, { remove = { "core" } }), "core must not be removable")
   end)
 
+  t.it("a package that replaces another removes it but keeps shared files", function()
+    local import = t.fresh_import()
+    local pkg, paths = import("pkg"), import("paths")
+    pkg.apply({ core_package(import, "0.1.0") })
+    local shared = "blockos/lib/storage_sources/inventory.lua"
+    local old = make_package(import, "old-monitor", "0.1.0",
+      { [shared] = "return 1", ["blockos/bin/stock.lua"] = "print(1)" },
+      { depends = { core = ">=0.1" }, optional = true })
+    t.ok(pkg.apply({ old }))
+    local new = make_package(import, "new-node", "0.2.0",
+      { [shared] = "return 2" },
+      { depends = { core = ">=0.1" }, optional = true, replaces = { "old-monitor" } })
+    t.ok(pkg.apply({ new }))
+    t.eq(pkg.installed()["old-monitor"], nil, "the replaced package is gone")
+    t.ok(not fs.exists(paths.root() .. "/bin/stock.lua"))
+    t.ok(fs.exists(paths.root() .. "/lib/storage_sources/inventory.lua"), "the shared file stays")
+  end)
+
   t.it("select picks required, installed and requested packages with dependencies", function()
     local import = t.fresh_import()
     local pkg = import("pkg")

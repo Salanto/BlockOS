@@ -87,7 +87,7 @@ Things to keep in mind:
 ## Design principles
 
 - **Fun first (friends only):** we only play with friends, so when realism and fun disagree,
-  fun wins. Default to open (e.g. stock computers are viewable by everyone), avoid extra
+  fun wins. Default to open (e.g. logistics is usable by everyone), avoid extra
   password prompts and admin chores, give common actions a short path, and don't add
   permission tiers or safety rules that only matter against strangers. Keep only safeguards
   against *accidents* (bad updates, full disks, missed events).
@@ -226,9 +226,10 @@ minutes marks the service `failed`. `condition` returning false marks it `n/a`.
 | `blockos.manage`   | rpc, served by the `manage` service on every joined computer; domain-admins only. status (version, uptime, user, services, disk, packages, turtle fuel/position, notices), reboot, update (applies roles and updates now, even if someone is logged in), service `{ name, action }`, log `{ lines }`, shell_open `{ width, height }`. |
 | `blockos.manage.shell` | events of a remote shell session (`remote_shell.lua`, `rsh <computer>`): target -> viewer `frame` `{ session, lines = { { y, text, fg, bg } }, x, y, blink }` (changed lines only) and `closed`; viewer -> target `input` `{ session, event }` (keys, chars, paste, mouse, terminate), `ping`, `close`. The session runs a real shell (BlockOS path, as the admin who opened it) in a hidden window; local keyboard input never reaches it; it closes after 60 s without ping. |
 | `blockos.pkg`      | rpc. index (filtered by the caller's groups), fetch `{ name }` (raw .pkg), publish `{ raw }` (domain-admins). |
-| `blockos.stock`    | rpc. status, alerts (viewers, admins or listed computers); catalog, watches, storages, moves `{ since? }` (with a `log` id that changes on restart), find_start, find_finish, request `{ item, count, output? }` (viewers, admins); outputs, watch, unwatch, watch_all, settings, test_sound, access, set_access, set_storage `{ storage, role?, label?, forget? }` (admins). Items and chests may be named by id, label or part of it. Found via the domain service record `stock` / `stock-<name>`. |
+| `blockos.logistics` | rpc, served by the hub (the controller; a lone node only to its own terminal). status, alerts, catalog (with per-node counts), watches, nodes, storages (with node), moves `{ since? }` (with a `log` id that changes on restart), find_start, find_finish, request `{ item, count, output? }` (logistics-users); outputs, watch, unwatch, watch_all, settings, test_sound, set_storage `{ storage, role?, label?, forget? }`, forget_node, import_levels `{ node }` (logistics-admins or domain-admins). Open until `domain setup logistics`; a node whose role `logistics-node-<node>` exists is only visible to its members. Items and chests may be named by id, label or part of it; chests also as `node/name`. Found via the domain service record `logistics` / `logistics-<name>`, else rednet name. |
+| `blockos.logistics.node` | controller <-> nodes. Node -> controller event `report` `{ node, totals, blocks, moves, sources, poll_seconds }` every round (full state). Controller -> node rpc (never retried): request `{ item, count, output? }`, set_storage, find_start, find_finish, export_levels. In a domain only joined computers may call a node (computer token). |
 | `blockos.remote`   | rpc, served by the `turtle-remote` service on joined turtles. info, act `{ action, slot? }` (domain users; only the actions listed in `turtle_remote.ACTIONS`, plus select). Never retried by the driver, so a lost answer cannot move a turtle twice. |
-| `blockos.stock.alert` | event `stock_alert` `{ server, item, label, count, limit, is_low }`, sent directly to each computer on the stock computer's access list, only when an item goes low or recovers. |
+| `blockos.logistics.alert` | event `level_alert` `{ server, item, label, count, limit, is_low }`, broadcast by the hub only when an item goes low or recovers. |
 
 **Wire format** (`net/lib/wire.lua`): every message uses one envelope, so nothing is parsed by
 hand:
@@ -275,7 +276,8 @@ Peer liveness uses the local receive time, never the sender's clock.
 - Manifest flags: `optional` (not in the base install), `exclusive` (must run alone),
   `media_only` (path prefixes kept in the package for building disks but not installed),
   `roles` (directory roles for managed mode: `{ { name, default = "everyone" | "installer" |
-  "nobody", description } }`, kept in `packages.db` for `roles.lua`).
+  "nobody", description } }`, kept in `packages.db` for `roles.lua`), `replaces` (names of
+  packages it takes over: installing it removes them, files it shares with them stay).
 - **Storage housekeeping:** `blockos status` shows where disk space goes; `blockos cleanup`
   deletes the previous version (no rollback afterwards) and the old log. Boot finishes or
   removes interrupted `.tmp` writes in `/etc/blockos`. The domain controller saves only
@@ -314,16 +316,18 @@ Peer liveness uses the local receive time, never the sender's clock.
 ## Roadmap
 
 - **Done (milestone 2):** rpc layer, domain controller with DNS, package server.
-- **Milestone 3:** StorageMonitor (`storage-monitor` package): stock watching with limits,
-  redstone/relay lamps, a speaker sound (note, Minecraft sound or .dfpwm file), monitor and
-  Create Display Board boards, alerts to listed computers, a per-computer access list, refill
-  targets and reactions on other computers (level-triggered: they poll status, alerts only
-  speed them up); the shared wire format. Item logistics on top: per-inventory roles
-  (storage/input/output/ignore) and labels, inputs sorted into storage, requests to outputs.
-- **Next:** remote control for PCs (turtles done: `turtle-remote` package, `remote <turtle>`),
-  built on rpc, wire and domain logins. More
-  storage sources (e.g. an ME/RS bridge) as separate packages adding
-  `lib/storage_sources/<kind>.lua`.
+- **Milestone 3 (done):** stock watching (limits, refill targets, redstone/relay lamps, a
+  speaker sound, monitor and Create Display Link boards, reactions on other computers), item
+  logistics (chest roles, sorting, requests, the network map), managed mode and computer
+  roles in the directory, remote admin (`rsh`, dsa).
+- **Logistics family** (replaces `storage-monitor`): `logistics` (tools, hub, levels),
+  `logistics-node` (one per storage network; its storage modem is closed for rednet via
+  `blockos.net.closed_sides`, sources only see it through `logistics_scope`; works alone in
+  lone mode), `logistics-controller` (merges nodes, routes requests, levels). Next: positions
+  and depots (`near` routing, `logistics_api` for programs), then ports on a wired main cable
+  so items cross between nodes, then the wall board. Later: crafting, AE2 and courier modules.
+- **Then:** roaming profiles, mail. More storage sources (e.g. an ME/RS bridge) as packages
+  adding `lib/storage_sources/<kind>.lua`.
 - **Later:** uninstall of BlockOS itself, local IPC via custom events, tab completion,
   pocket computer support.
 

@@ -30,7 +30,7 @@ end
 
 -- First start: take over an old storage-monitor config, find the storage modem.
 local function first_setup(fsx, logistics, logistics_node, log)
-  local node_config, levels = nil, nil
+  local node_config, levels
   local old_path = file("OLD_FILE")
   local old = fs.exists(old_path) and fsx.read_table(old_path)
   if old then

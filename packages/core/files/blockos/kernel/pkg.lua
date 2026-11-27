@@ -685,6 +685,15 @@ function pkg.apply(new_packages, options)
     end
     removed[name] = true
   end
+  -- A package that took over another one (manifest `replaces`) removes it, so
+  -- installing logistics-node retires storage-monitor.
+  for _, bundle in ipairs(new_packages) do
+    for _, name in ipairs(bundle.manifest.replaces or {}) do
+      if name ~= "core" then
+        removed[name] = true
+      end
+    end
+  end
 
   local current = pkg.installed(root)
   local tree, outside, db, manifests = plan_tree(new_packages, current, root, removed)
