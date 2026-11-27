@@ -57,7 +57,7 @@ local function run(ctx)
   local pending = import("roles").pending()
   if #pending > 0 then
     import("notices").set("roles", table.concat(pending, ", ") ..
-      " not set up for the domain yet: a domain admin can run 'domain setup' (domain-tools)"
+      " not set up for the domain yet: a domain admin can run 'domain setup' (domain-tools)")
   end
 
   local interval = ctx.config.get("blockos.domain.heartbeat_interval", 300)
