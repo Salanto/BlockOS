@@ -25,6 +25,8 @@ logistics_hub.MAX_ALERTS = 20
 logistics_hub.MAX_MOVES = 50
 --- A node is shown as stale after this many rounds without a report.
 logistics_hub.STALE_ROUNDS = 3
+--- Seconds before a low item is asked to be crafted again (when no job shows up).
+logistics_hub.CRAFT_RETRY_SECONDS = 60
 
 --- Clock and time of day (tests replace these).
 logistics_hub.env = {
@@ -62,6 +64,7 @@ function logistics_hub.new(options)
     -- Changes whenever the hub starts, so maps notice that seqs began again.
     move_log = os.epoch("utc"),
     applied_outputs = {},
+    craft_asked = {}, -- [item] = clock of the last craft asked for a low item
   }
 
   function hub.save()
@@ -196,10 +199,105 @@ function logistics_hub.new(options)
   -- Levels
   ---------------------------------------------------------------------------
 
+  ---------------------------------------------------------------------------
+  -- Crafting (nodes with logistics-crafting report their recipes and jobs)
+  ---------------------------------------------------------------------------
+
+  --- The node that can craft an item, if any.
+  function hub.crafter_for(item, visible)
+    for _, name in ipairs(hub.node_names(visible)) do
+      local crafting = hub.nodes[name].report.crafting
+      for _, craftable in ipairs(crafting and crafting.recipes or {}) do
+        if craftable == item then
+          return name
+        end
+      end
+    end
+    return nil
+  end
+
+  --- Every item some node can craft: [item] = node.
+  function hub.craftable(visible)
+    local items = {}
+    for _, name in ipairs(hub.node_names(visible)) do
+      local crafting = hub.nodes[name].report.crafting
+      for _, item in ipairs(crafting and crafting.recipes or {}) do
+        items[item] = items[item] or name
+      end
+    end
+    return items
+  end
+
+  --- Crafting jobs of every node (running, waiting, and the last few finished).
+  function hub.jobs(visible)
+    local rows = {}
+    for _, name in ipairs(hub.node_names(visible)) do
+      local crafting = hub.nodes[name].report.crafting
+      for _, job in ipairs(crafting and crafting.jobs or {}) do
+        local row = { node = name }
+        for key, value in pairs(job) do
+          row[key] = value
+        end
+        rows[#rows + 1] = row
+      end
+    end
+    return rows
+  end
+
+  local function has_open_job(name, item)
+    local crafting = hub.nodes[name].report.crafting
+    for _, job in ipairs(crafting and crafting.jobs or {}) do
+      local is_open = job.state == "queued" or job.state == "running" or job.state == "waiting"
+      if job.item == item and is_open then
+        return true
+      end
+    end
+    return false
+  end
+
+  --- Ask the node with the recipe to craft an item.
+  function hub.craft(item, count, visible)
+    local name = hub.crafter_for(item, visible)
+    if not name then
+      return nil, "no node has a recipe for " .. item
+    end
+    local proxy = hub.nodes[name].proxy
+    if not proxy.craft then
+      return nil, "node " .. name .. " cannot be asked to craft"
+    end
+    local result, err = proxy.craft(item, count)
+    if not result then
+      return nil, err
+    end
+    result.node = name
+    return result
+  end
+
+  -- Keep stocked: a low watched item that a node can craft is crafted up to its refill
+  -- target (or just above the limit), unless a job for it is already open.
+  local function request_crafts(states)
+    local now = logistics_hub.env.clock()
+    for item, state in pairs(states) do
+      local name = state.is_low and hub.crafter_for(item)
+      local asked = hub.craft_asked[item]
+      local is_due = not asked or now - asked >= logistics_hub.CRAFT_RETRY_SECONDS
+      if name and is_due and not has_open_job(name, item) then
+        local watch = config.watches[item]
+        local wanted = logistics.recovery_level(watch) - state.count
+        hub.craft_asked[item] = now
+        local result, err = hub.craft(item, math.max(1, wanted))
+        if not result then
+          logistics_hub.env.log("crafting %s on %s: %s", item, name, tostring(err))
+        end
+      end
+    end
+  end
+
   --- Compare the merged totals with the watched items and raise alarms.
   function hub.check_levels()
     local states, changes = logistics.evaluate(config, hub.totals(), hub.states)
     hub.states = states
+    request_crafts(states)
     hub.updated = logistics_hub.env.time()
 
     local wanted = logistics.output_states(config, states)
@@ -537,6 +635,28 @@ function logistics_hub.new(options)
       end
     end
     return changed
+  end
+
+  --- Bring an ingredient from other nodes into a machine of `node` (asked by its
+  -- crafter when its own storage lacks it). Needs ports.
+  function hub.supply(node, item, count, target)
+    local entry = hub.nodes[node]
+    if not entry then
+      return nil, "no node called " .. tostring(node)
+    end
+    if not options.transfer then
+      return nil, "items cannot cross between nodes here"
+    end
+    local source = richest(item, nil, node)
+    if not source then
+      return nil, "no other node has " .. item
+    end
+    local result, err = options.transfer(hub.nodes[source], entry, item, count, target)
+    if result then
+      record_crossing(source, node, item, result.moved or 0)
+      took(source, item, result.moved or 0)
+    end
+    return result, err
   end
 
   return hub

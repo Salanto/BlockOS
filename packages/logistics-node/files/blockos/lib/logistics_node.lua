@@ -12,7 +12,8 @@
 --                       role?, label?, pos?, clear_pos?, forget? }, find_start, find_finish,
 --                       export_levels; ports (M3): port_hold { seconds }, to_port { item,
 --                       count, port }, from_port { port, item, count, output? },
---                       push_marker { port }
+--                       push_marker { port }; crafting: craft { item, count } (when the
+--                       logistics-crafting package runs on this node)
 -- In a domain only joined computers may call a node (computer token); without one it
 -- is open, like everything standalone.
 -- @module logistics_node
@@ -59,6 +60,7 @@ local ARGS = {
     output = { type = "string", optional = true, max = 64 },
   },
   push_marker = { port = { type = "string", max = 64 } },
+  craft = { item = { type = "string", max = 128 }, count = { type = "number", min = 1 } },
 }
 
 --- Clock (tests replace it).
@@ -227,7 +229,64 @@ function logistics_node.new(options)
       moves = moves,
       sources = node.sources_read,
       poll_seconds = config.poll_seconds,
+      -- What this node can craft and is crafting (logistics-crafting sets node.crafter).
+      crafting = node.crafter and node.crafter.summary() or nil,
     }
+  end
+
+  -- Crafting (used on this computer by logistics-crafting; no network) ------
+
+  --- Move items from storage into a machine block.
+  function node.supply(item, count, machine)
+    local result, err = logistics_sorting.supply(node.inventories, item, count, machine,
+      record_move)
+    if result then
+      local found = node.totals[item]
+      if found then
+        found.count = math.max(0, found.count - result.moved)
+      end
+    end
+    return result, err
+  end
+
+  --- What is in a block right now: [item] = count (read live, not from the round).
+  function node.contents(handle)
+    for _, inventory in ipairs(node.inventories) do
+      if inventory.handle == handle and type(inventory.source.list) == "function" then
+        local ok, slots = pcall(inventory.source.list, handle)
+        if not ok then
+          return nil, tostring(slots)
+        end
+        local items = {}
+        for _, stack in pairs(slots) do
+          items[stack.name] = (items[stack.name] or 0) + stack.count
+        end
+        return items
+      end
+    end
+    return nil, "no block called " .. tostring(handle)
+  end
+
+  --- Empty a block into storage.
+  function node.retrieve(handle)
+    return logistics_sorting.empty_block(node.inventories, handle, record_move)
+  end
+
+  --- Stored count of an item (from the last round, lowered by what left since).
+  function node.stored(item)
+    local found = node.totals[item]
+    return found and found.count or 0
+  end
+
+  --- The machine blocks of this node.
+  function node.machines()
+    local list = {}
+    for _, inventory in ipairs(node.inventories) do
+      if inventory.role == "machine" then
+        list[#list + 1] = inventory.handle
+      end
+    end
+    return list
   end
 
   -- Blocks found now, plus configured ones that are missing (to forget them).
@@ -383,7 +442,16 @@ function logistics_node.new(options)
       to_port = node.to_port,
       from_port = node.from_port,
       push_marker = node.push_marker,
+      craft = function(item, count) return node.craft(item, count) end,
     }
+  end
+
+  --- Start crafting (the controller asks when a watched item is low).
+  function node.craft(item, count)
+    if not node.crafter then
+      return nil, "this node does not craft (install logistics-crafting)"
+    end
+    return node.crafter.start(item, count)
   end
 
   --- Handlers for the controller (protocol "blockos.logistics.node").
@@ -428,6 +496,9 @@ function logistics_node.new(options)
       end)),
       push_marker = rpc.with_args(ARGS.push_marker, guarded(function(args)
         return node.push_marker(args.port)
+      end)),
+      craft = rpc.with_args(ARGS.craft, guarded(function(args)
+        return node.craft(args.item, math.floor(args.count))
       end)),
       export_levels = guarded(function()
         if not export_levels then

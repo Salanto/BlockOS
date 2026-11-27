@@ -156,6 +156,7 @@ local function run(ctx)
 
   local function on_controller_found(id, label)
     controller_id = id
+    node.controller_id = id -- logistics-crafting asks it for missing ingredients
     if config.controller == nil then
       config.controller = label
       save()

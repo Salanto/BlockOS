@@ -186,6 +186,53 @@ function logistics_sorting.to_port(inventories, item, count, port_handle, on_mov
   return logistics_sorting.deliver(inventories, item, count, port, on_move)
 end
 
+--- Move items from storage into a machine block (a crafting supply step).
+-- @treturn[1] table { moved, output }
+-- @treturn[2] nil
+-- @treturn[2] string error message
+function logistics_sorting.supply(inventories, item, count, machine_handle, on_move)
+  local machine = find_block(inventories, "machine", machine_handle)
+  if not machine then
+    return nil, "no machine called " .. tostring(machine_handle)
+  end
+  return logistics_sorting.deliver(inventories, item, count, machine, on_move)
+end
+
+--- Move everything out of one block into storage (crafting results, or what is left
+-- after a failed attempt).
+-- @treturn[1] number Items moved.
+-- @treturn[2] nil
+-- @treturn[2] string error message
+function logistics_sorting.empty_block(inventories, handle, on_move)
+  local block = nil
+  for _, inventory in ipairs(inventories) do
+    if inventory.handle == handle and can_move(inventory.source) then
+      block = inventory
+    end
+  end
+  if not block then
+    return nil, "no block called " .. tostring(handle)
+  end
+  local ok, slots = pcall(block.source.list, block.handle)
+  if not ok then
+    return nil, tostring(slots)
+  end
+  local moved = 0
+  for slot, stack in pairs(slots) do
+    local _, err = sort_slot(inventories, block, slot, stack, logistics_sorting.MAX_MOVES,
+      function(from, to, item, count)
+        moved = moved + count
+        if on_move then
+          on_move(from, to, item, count)
+        end
+      end)
+    if err then
+      return moved > 0 and moved or nil, err
+    end
+  end
+  return moved
+end
+
 --- Move items that arrived in a port on to an output.
 -- @treturn[1] table { moved, output }
 -- @treturn[2] nil
@@ -193,7 +240,9 @@ end
 function logistics_sorting.from_port(inventories, port_handle, item, count, output_handle,
     on_move)
   local port = find_block(inventories, "port", port_handle)
+  -- Usually an output; a crafting node also has ingredients brought to a machine.
   local output = find_output(inventories, output_handle)
+    or (output_handle and find_block(inventories, "machine", output_handle))
   if not port then
     return nil, "no port called " .. tostring(port_handle)
   end

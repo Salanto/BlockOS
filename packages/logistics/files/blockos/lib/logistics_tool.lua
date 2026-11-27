@@ -1,5 +1,5 @@
 --- The logistics tool's full-screen interface (tabs: Overview, Catalog, Alarms,
--- Alerts, Storage, Nodes) and the formatting it shares with the `logistics`
+-- Alerts, Storage, Nodes, Crafting) and the formatting it shares with the `logistics`
 -- command. Kept apart from bin/logistics.lua so the command stays argument
 -- parsing and dispatch.
 -- @module logistics_tool
@@ -386,6 +386,55 @@ function logistics_tool.run(connection)
       d = function(row)
         if ui.confirm("Forget node " .. row.name .. "? (It comes back if it reports.)") then
           run("forget_node", { node = row.name }, row.name .. " forgotten.")
+        end
+      end,
+    },
+  }
+
+  -- Crafting: jobs first, then what can be crafted.
+  tabs[7] = {
+    title = "Crafting",
+    load = function()
+      local recipes, err = connection.call("recipes")
+      if not recipes then
+        return nil, err
+      end
+      local rows = {}
+      for _, job in ipairs(connection.call("jobs") or {}) do
+        job.is_job = true
+        rows[#rows + 1] = job
+      end
+      for _, recipe in ipairs(recipes) do
+        rows[#rows + 1] = recipe
+      end
+      return rows
+    end,
+    describe = function(row)
+      if row.is_job then
+        return string.format("%-8s %-18s %d/%d %s", row.state, ui.fit(row.item, 18),
+          row.made or 0, row.count or 0, row.note or "")
+      end
+      return string.format("%-20s %7d  on %s", ui.fit(row.label, 20), row.count, row.node)
+    end,
+    role = function(row)
+      if row.is_job and row.state == "failed" then
+        return "error"
+      elseif row.is_job and row.state == "waiting" then
+        return "warn"
+      end
+      return row.is_job and "dim" or nil
+    end,
+    hints = { { "c", "Craft" } },
+    keys = {
+      c = function(row)
+        if row.is_job then
+          return set_message("Pick an item below the jobs.", "warn")
+        end
+        local answers = ui.form("Craft " .. row.label, { { label = "How many: ", default = "1" } })
+        if answers then
+          local count = tonumber(answers[1]) or 1
+          run("craft", { item = row.item, count = count },
+            "Crafting " .. count .. " " .. row.label .. " on " .. row.node .. ".")
         end
       end,
     },

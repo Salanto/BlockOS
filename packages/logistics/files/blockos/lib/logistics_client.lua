@@ -29,10 +29,11 @@ logistics_client.REPORT_SCHEMA = {
   sources = { type = "number", optional = true },
   poll_seconds = { type = "number", optional = true },
   pos = { type = "table", optional = true },
+  crafting = { type = "table", optional = true }, -- { recipes = {item...}, jobs = {...} }
 }
 
 --- Operations that move items or wait for every node: not retried, longer timeout.
-logistics_client.SLOW_OPS = { request = true, find_start = true, find_finish = true }
+logistics_client.SLOW_OPS = { request = true, find_start = true, find_finish = true, craft = true }
 logistics_client.SLOW_TIMEOUT = 15
 
 config.define("blockos.logistics.server", {

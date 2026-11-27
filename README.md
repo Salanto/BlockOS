@@ -156,6 +156,7 @@ real levels, so a missed alert (an unloaded chunk) never leaves the farm running
 - **ignore** (the default for everything else: furnaces, machines, trash cans): never counted
   or touched, so sorting never fills a machine by accident.
 - **port**: how items cross between nodes (see below).
+- **machine**: a crafting machine's block (see Crafting); never counted or sorted into.
 
 Give chests labels with `l`. To find out which chest is which, press `f` and drop any item into
 it (sorting pauses meanwhile). A chest whose modem was re-placed gets a new name; its old entry
@@ -183,6 +184,22 @@ local logistics_api = import("logistics_api")
 local result, err = logistics_api.request("minecraft:coal", 16, { here = true })
 -- result.pos is where the depot is, result.moved how many are waiting there
 ```
+
+**Crafting.** `pkg install logistics-crafting` on a node next to its machines (a Create mixer's
+basin, a press's depot, a deployer's chest...), and give those blocks the **machine** role.
+Then teach a recipe by doing it once: `logistics craft teach create:brass_ingot`, put the
+ingredients into the machines yourself, and press Enter once the result is there. The node
+saves what went where and how long it took (adjust with `logistics craft show/step/set`, or
+write a recipe by hand with `logistics craft new`). For Create's sequenced assembly, list the
+scrap item (`logistics craft set <item> scrap create:...`): a run that ends in scrap empties
+the machines back into storage and starts over, up to the recipe's retries.
+
+Watched items keep themselves stocked: when one drops below its limit and a node has a recipe,
+that node crafts it up to the refill target. Ingredients come from the node's own storage
+first; missing ones are brought from other nodes through the ports, straight into the machine.
+The crafter talks to its node on the same computer, so watching the machines adds no network
+traffic. `logistics craft` (or the Crafting tab) shows what can be crafted and the jobs;
+`logistics craft brass 16` starts one by hand.
 
 `logistics map` (or `m` in the Storage tab) shows a node as a map: inputs and outputs on the
 left, storage on the right with fill bars, and items flying along the lines as they are sorted

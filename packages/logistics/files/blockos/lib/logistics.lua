@@ -139,7 +139,9 @@ end
 --   port      also on the main cable: items cross to other nodes through it (the
 --             controller moves them port to port); anything left in it is sorted
 --             back into storage like an input
-logistics.ROLES = { "storage", "input", "output", "ignore", "port" }
+--   machine   a crafting machine's block (logistics-crafting supplies it and takes the
+--             results out); never counted or sorted into
+logistics.ROLES = { "storage", "input", "output", "ignore", "port", "machine" }
 logistics.DEFAULT_ROLE = "storage"
 logistics.MAX_LABEL_LENGTH = 32
 

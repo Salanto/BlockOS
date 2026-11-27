@@ -36,6 +36,7 @@ local function remote_proxy(rpc, id, protocol)
       return call("from_port", { port = port, item = item, count = count, output = output }, 12)
     end,
     push_marker = function(port) return call("push_marker", { port = port }) end,
+    craft = function(item, count) return call("craft", { item = item, count = count }) end,
   }
 end
 

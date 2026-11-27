@@ -3,7 +3,7 @@
 --
 -- Who may do what follows the module roles (see roles.lua):
 --   standalone, or in a domain before `domain setup logistics`: open to everyone
---   managed:  logistics-users    look, request items, find chests
+--   managed:  logistics-users    look, request items, find chests, start crafting
 --             logistics-admins   also levels, alarms, storage roles, nodes
 --             (domain-admins count as logistics admins)
 --   a node whose role logistics-node-<node> exists is only seen by its members
@@ -54,6 +54,14 @@ local ARGS = {
     near = { type = "table", optional = true },
   },
   depots = { near = { type = "table", optional = true } },
+  craft = { item = ITEM, count = { type = "number", min = 1 } },
+  -- A node's crafter asks for an ingredient it lacks, to go into one of its machines.
+  supply = {
+    node = { type = "string", max = 32 },
+    item = ITEM,
+    count = { type = "number", min = 1 },
+    target = { type = "string", max = 64 },
+  },
   node = { node = { type = "string", max = 32 } },
 }
 
@@ -159,6 +167,7 @@ function logistics_handlers.new(hub)
   end)
 
   handlers.catalog = user_op(function(_, _, visible)
+    local craftable = hub.craftable(visible)
     local items = {}
     for item, found in pairs(hub.totals(visible)) do
       items[#items + 1] = {
@@ -167,6 +176,7 @@ function logistics_handlers.new(hub)
         count = found.count,
         nodes = found.nodes,
         is_watched = hub.config.watches[item] ~= nil,
+        can_craft = craftable[item] ~= nil,
       }
     end
     table.sort(items, function(a, b) return tostring(a.label) < tostring(b.label) end)
@@ -304,6 +314,57 @@ function logistics_handlers.new(hub)
     -- `log` changes when the hub restarts: seqs then start again at 1.
     return { log = hub.move_log, seq = hub.move_seq, moves = newer }
   end))
+
+  -- Crafting --------------------------------------------------------------
+
+  handlers.jobs = user_op(function(_, _, visible)
+    return hub.jobs(visible)
+  end)
+
+  --- Items some node can craft (also ones not in storage at all).
+  handlers.recipes = user_op(function(_, _, visible)
+    local rows = {}
+    for item, node in pairs(hub.craftable(visible)) do
+      local found = hub.totals(visible)[item]
+      rows[#rows + 1] = { item = item, node = node, label = found and found.label or item,
+        count = found and found.count or 0 }
+    end
+    table.sort(rows, function(a, b) return tostring(a.label) < tostring(b.label) end)
+    return rows
+  end)
+
+  handlers.craft = with_args(ARGS.craft, user_op(function(_, args, visible)
+    -- Craftable items may have none in storage yet: look among the recipes too.
+    local names = {}
+    for item, found in pairs(hub.totals(visible)) do
+      names[item] = { label = found.label }
+    end
+    for item in pairs(hub.craftable(visible)) do
+      names[item] = names[item] or { label = item }
+    end
+    local item, err = logistics.find_item(names, args.item)
+    if not item then
+      return nil, err
+    end
+    local result, craft_error = hub.craft(item, math.floor(args.count), visible)
+    if not result then
+      return nil, craft_error
+    end
+    result.label = names[item].label
+    return result
+  end))
+
+  -- From a node's crafter: a joined computer in a domain, anyone without one.
+  handlers.supply = with_args(ARGS.supply, function(ctx, args)
+    local found, domain = pcall(import, "domain")
+    if found and domain.is_joined() and not ctx.local_admin then
+      local computer, err = rpc.require_computer(ctx)
+      if not computer then
+        return nil, err
+      end
+    end
+    return hub.supply(args.node, args.item, math.floor(args.count), args.target)
+  end)
 
   --- Output chests with a position, nearest first when `near` is given.
   handlers.depots = with_args(ARGS.depots, user_op(function(_, args, visible)

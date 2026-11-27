@@ -29,6 +29,8 @@
 --   logistics node private <node>      managed mode: only members of the role
 --                                      logistics-node-<node> see that node's items
 --   logistics node side <side>         on a node: which modem is the storage network
+--   logistics craft [<item> [count]]  crafting: what can be made, jobs, start one
+--                                      (logistics craft help: teaching and recipes)
 --   logistics rename <name> | --clear  on the controller: register as logistics-<name>
 --   --server <name>                    use the controller "logistics-<name>"
 local args = { ... }
@@ -56,6 +58,7 @@ local function print_usage()
   print("       logistics react add <item> <target> <side> | remove <item> | list")
   print("       logistics levels import <node>")
   print("       logistics node forget|private <node> | side <side>")
+  print("       logistics craft [<item> [count]] | craft help")
   print("       logistics rename <name> | rename --clear")
 end
 
@@ -564,6 +567,8 @@ elseif command == "board" then
   end
 elseif command == "node" and options.words[2] == "side" then
   set_node_side(options.words[3])
+elseif command == "craft" then
+  import("logistics_craft_cli").run(options.words, function() return connect(options) end)
 elseif command == nil or REMOTE_COMMANDS[command] then
   local connection = connect(options)
   if not connection then
