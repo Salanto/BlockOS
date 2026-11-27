@@ -275,8 +275,8 @@ go up and down, `f`/`r`/`v` dig, `e`/`t`/`g` place.
 **The map.** Next to the inventory you see what the turtle sees, from above and turned with
 it, so ahead is always up: `#` walls, `.` floor you can stand on, `~` water (red: lava), `&`
 trees and plants, `C` chests, `@` machines, and the arrow is the turtle. Every turtle knows
-what is directly in front, above and below. Give it a **Geo Scanner** (Advanced Peripherals:
-craft a turtle with one, like a pickaxe) and the map fills in 8 blocks around it. `z`/`x`
+what is directly in front, above and below. Make it a **Geoscanning Turtle** (Advanced
+Peripherals' Geo Scanner on a turtle) and the map fills in 8 blocks around it. `z`/`x`
 show the level below or above, `l` looks again, `m` switches between map and inventory on
 small screens. The turtle works out which way it faces from GPS after the first step, or by
 comparing the block in front with the scan; until then the map points north and shows `?`.
