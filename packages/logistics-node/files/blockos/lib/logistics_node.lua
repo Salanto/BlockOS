@@ -170,7 +170,8 @@ function logistics_node.new(options)
     local now = logistics_node.env.clock()
     if now >= node.sort_paused_until then
       local skip_ports = node.ports_held()
-      local _, sort_failures = logistics_sorting.sort_inputs(inventories, record_move, skip_ports)
+      local _, sort_failures = node.lock.exclusive(logistics_sorting.sort_inputs, inventories,
+        record_move, skip_ports)
       for _, failure in ipairs(sort_failures) do
         failures[#failures + 1] = failure
       end
@@ -538,6 +539,17 @@ function logistics_node.new(options)
     return import("logistics_client").node_handlers(node, function(ctx)
       return rpc.require_computer_if_joined(ctx, is_joined)
     end)
+  end
+
+  -- Moves take turns (sorting, requests, crossings, crafting supplies): each works on the
+  -- chests as they are, not half-way through another's moves. Reading stays outside.
+  node.lock = import("lock").new()
+  for _, name in ipairs({ "request", "to_port", "from_port", "push_marker", "supply",
+    "retrieve", "recycle" }) do
+    local move = node[name]
+    node[name] = function(...)
+      return node.lock.exclusive(move, ...)
+    end
   end
 
   return node
