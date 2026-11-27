@@ -35,7 +35,10 @@ local results = { passed = 0, failed = 0, skipped = 0, lines = {} }
 -- terminal that reports no colour support. Windows created on top of it inherit that.
 local function basic_terminal()
   local width, height = term.native().getSize()
-  local screen = window.create(term.native(), 1, 1, width, height)
+  -- Invisible: a visible window redraws the whole native screen every time it scrolls,
+  -- and headless CraftOS-PC turns each redraw into output, which made basic runs slow
+  -- and erratic (minutes instead of seconds). The window still keeps its contents.
+  local screen = window.create(term.native(), 1, 1, width, height, false)
   local function no_colour()
     return false
   end
