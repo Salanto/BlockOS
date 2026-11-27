@@ -26,7 +26,7 @@ logistics_client.REPORT_SCHEMA = {
   seq = { type = "number", optional = true },
   boot = { type = "number", optional = true },
   totals = "table",
-  blocks = "table",
+  blocks = { type = "table", optional = true }, -- left out when unchanged
   moves = { type = "table", optional = true },
   sources = { type = "number", optional = true },
   poll_seconds = { type = "number", optional = true },

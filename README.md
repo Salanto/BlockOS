@@ -157,6 +157,8 @@ real levels, so a missed alert (an unloaded chunk) never leaves the farm running
   or touched, so sorting never fills a machine by accident.
 - **port**: how items cross between nodes (see below).
 - **machine**: a crafting machine's block (see Crafting); never counted or sorted into.
+- **recycle**: the input of a recycling setup (Create crushing wheels, a mill...): scrap from
+  failed crafts goes here instead of into storage.
 
 Give chests labels with `l`. To find out which chest is which, press `f` and drop any item into
 it (sorting pauses meanwhile). A chest whose modem was re-placed gets a new name; its old entry
@@ -192,7 +194,10 @@ ingredients into the machines yourself, and press Enter once the result is there
 saves what went where and how long it took (adjust with `logistics craft show/step/set`, or
 write a recipe by hand with `logistics craft new`). For Create's sequenced assembly, list the
 scrap item (`logistics craft set <item> scrap create:...`): a run that ends in scrap empties
-the machines back into storage and starts over, up to the recipe's retries.
+the machines and starts over, up to the recipe's retries. The scrap goes to a **recycle**
+chest when the node has one (scrap already in storage follows within half a minute); point the
+recycler's output at an input chest and what it recovers is sorted back into storage, ready
+for the next run.
 
 Jobs run side by side as long as they use different machines; two recipes for the same
 basin take turns. Built three mixers? Make them a group, `logistics craft group mixers basin_1

@@ -71,13 +71,18 @@ end)
 
 -- Call the controller. If it stops answering (for example it was moved and now
 -- has another computer ID), look it up again by domain name once.
+--- Logging in waits at most this long for the controller (2 tries of half each),
+-- and skips looking for a moved controller: a player should not stare at the login
+-- screen when the controller is down (local accounts still work).
+domain.QUICK_SECONDS = 5
+
 local function call(op, args, options)
   local membership = domain.membership()
   if not membership then
     return nil, "this computer is not in a domain"
   end
   local result, err = rpc.call(membership.controller_id, domain.PROTOCOL, op, args, options)
-  if result or not tostring(err):find("no answer") then
+  if result or not tostring(err):find("no answer") or (options and options.is_quick) then
     return result, err
   end
 
@@ -125,7 +130,9 @@ end
 -- @treturn[2] string error message
 function domain.profile_get(token)
   if token then
-    return call("profile_get", nil, { token = token })
+    -- At login: quick (see QUICK_SECONDS); the answer also carries unread mail.
+    return call("profile_get", nil, { token = token, timeout = domain.QUICK_SECONDS / 2,
+      retries = 1, is_quick = true })
   end
   return domain.call("profile_get")
 end
@@ -202,7 +209,9 @@ end
 -- @treturn[2] nil
 -- @treturn[2] string error message
 function domain.login(name, password)
-  return call("login", { name = name, password = password })
+  return call("login", { name = name, password = password }, {
+    timeout = domain.QUICK_SECONDS / 2, retries = 1, is_quick = true,
+  })
 end
 
 --- Who is behind a user token? Asks the controller every time (no cache).

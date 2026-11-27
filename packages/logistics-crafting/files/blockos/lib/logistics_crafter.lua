@@ -16,8 +16,10 @@
 -- storage (leftovers would fake a result); a run counts what really came out.
 --
 -- A failed attempt (timeout, listed scrap, nothing came out) empties the run's blocks
--- into storage and starts that run again, up to the recipe's retries; then the job
--- fails.
+-- and starts that run again, up to the recipe's retries; then the job fails. Listed
+-- scrap goes to the node's recycle block when it has one (what the recycler recovers
+-- comes back through an input chest), everything else into storage. Scrap already in
+-- storage is sent to the recycler now and then too.
 -- @module logistics_crafter
 
 local logistics_recipes = import("logistics_recipes")
@@ -32,6 +34,8 @@ logistics_crafter.MAX_JOBS = 8
 logistics_crafter.HISTORY = 5
 --- Teaching ends by itself after this long (a forgotten teach would stop all jobs).
 logistics_crafter.TEACH_SECONDS = 600
+--- Seconds between sending scrap found in storage to the recycler.
+logistics_crafter.RECYCLE_SECONDS = 30
 
 --- Split a block reference: "@group:2" -> "group", 2; "@group" -> "group", 1.
 -- @treturn string|nil group name (nil for a plain block)
@@ -61,7 +65,8 @@ function logistics_crafter.new(options)
   local groups = options.groups or {}
   local clock = options.clock or function() return os.clock() end
   local log = options.log
-  local crafter = { jobs = {}, history = {}, teaching = nil, claims = {}, groups = groups }
+  local crafter = { jobs = {}, history = {}, teaching = nil, claims = {}, groups = groups,
+    recycled_at = nil }
 
   local function note(level, format, ...)
     if log and log[level] then
@@ -327,9 +332,58 @@ function logistics_crafter.new(options)
     end_run(job, run)
   end
 
-  -- A failed attempt: everything in the run's blocks goes back to storage (scrap
-  -- included), then the run starts again or the job gives up.
+  -- Listed scrap in the run's blocks goes to the recycler (when there is one).
+  local function recycle_scrap(recipe, run)
+    if #recipe.scrap == 0 or not (node.has_recycler and node.has_recycler()) then
+      return
+    end
+    for _, block in ipairs(run.blocks) do
+      local contents = node.contents(block) or {}
+      for _, item in ipairs(recipe.scrap) do
+        if (contents[item] or 0) > 0 then
+          node.recycle(item, contents[item], block)
+        end
+      end
+    end
+  end
+
+  -- Every listed scrap item of any recipe.
+  local function scrap_items()
+    local items, seen = {}, {}
+    for _, recipe in pairs(recipes) do
+      for _, item in ipairs(recipe.scrap or {}) do
+        if not seen[item] then
+          seen[item] = true
+          items[#items + 1] = item
+        end
+      end
+    end
+    return items
+  end
+
+  -- Scrap that ended up in storage anyway (from before there was a recycler, or from a
+  -- player) goes to the recycler as well.
+  local function recycle_stored()
+    local now = clock()
+    if crafter.recycled_at and now - crafter.recycled_at < logistics_crafter.RECYCLE_SECONDS then
+      return
+    end
+    crafter.recycled_at = now
+    if not (node.has_recycler and node.has_recycler()) then
+      return
+    end
+    for _, item in ipairs(scrap_items()) do
+      local stored = node.stored(item)
+      if stored > 0 then
+        node.recycle(item, stored)
+      end
+    end
+  end
+
+  -- A failed attempt: scrap to the recycler, the rest of the run's blocks back to
+  -- storage, then the run starts again or the job gives up.
   local function attempt_failed(job, recipe, run, why)
+    recycle_scrap(recipe, run)
     empty_run(run)
     run.attempt = run.attempt + 1
     if run.attempt > recipe.retries then
@@ -461,6 +515,7 @@ function logistics_crafter.new(options)
         tick_job(job)
       end
     end
+    recycle_stored()
   end
 
   ---------------------------------------------------------------------------

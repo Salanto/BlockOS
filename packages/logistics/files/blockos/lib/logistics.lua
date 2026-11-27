@@ -141,7 +141,10 @@ end
 --             back into storage like an input
 --   machine   a crafting machine's block (logistics-crafting supplies it and takes the
 --             results out); never counted or sorted into
-logistics.ROLES = { "storage", "input", "output", "ignore", "port", "machine" }
+--   recycle   the input of a recycling setup (e.g. Create crushing wheels): scrap from
+--             failed crafts goes here instead of into storage; point the recycler's
+--             output at an input chest and what it recovers is sorted back
+logistics.ROLES = { "storage", "input", "output", "ignore", "port", "machine", "recycle" }
 logistics.DEFAULT_ROLE = "storage"
 logistics.MAX_LABEL_LENGTH = 32
 

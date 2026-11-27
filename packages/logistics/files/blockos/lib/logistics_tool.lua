@@ -278,11 +278,12 @@ function logistics_tool.run(connection)
   -- changed meanwhile is the one. Sorting pauses meanwhile, so the input
   -- chest and its targets do not change on their own.
   local function find_chest()
-    if not run("find_start", nil, nil) then
+    local started = run("find_start", nil, nil)
+    if not started then
       return
     end
     local is_done = ui.confirm("Drop any item into the chest, then choose yes.")
-    local changed = connection.call("find_finish") or {}
+    local changed = connection.call("find_finish", { id = started.id }) or {}
     if not is_done then
       return set_message(nil)
     end
@@ -297,11 +298,12 @@ function logistics_tool.run(connection)
       end
       row = changed[ui.menu({ title = "Several chests changed", items = names })]
     end
-    local actions = { "Set label", "Storage", "Input", "Output", "Ignore", "Port", "Cancel" }
+    local actions = { "Set label", "Storage", "Input", "Output", "Ignore", "Port", "Machine",
+      "Recycle", "Cancel" }
     local choice = ui.menu({ title = "Found " .. row.label, items = actions })
     if choice == 1 then
       set_label(row)
-    elseif choice <= 6 then
+    elseif choice <= 8 then
       set_role(row, actions[choice]:lower())
     end
   end
@@ -356,7 +358,7 @@ function logistics_tool.run(connection)
         ui.fit(row.label, 16), row.role, fill, depot)
     end,
     role = function(row) return row.role == "ignore" and "faint" or nil end,
-    hints = { { "m", "Map" }, { "f", "Find" }, { "l", "Label" }, { "s/i/o/x/t", "Role" },
+    hints = { { "m", "Map" }, { "f", "Find" }, { "l", "Label" }, { "s/i/o/x/t/c/y", "Role" },
       { "p", "Position" }, { "d", "Forget" } },
     keys = {
       m = function() logistics_tool.show_map(connection) end,
@@ -368,6 +370,8 @@ function logistics_tool.run(connection)
       o = function(row) set_role(row, "output") end,
       x = function(row) set_role(row, "ignore") end,
       t = function(row) set_role(row, "port") end,
+      c = function(row) set_role(row, "machine") end,
+      y = function(row) set_role(row, "recycle") end,
       d = forget,
     },
   }

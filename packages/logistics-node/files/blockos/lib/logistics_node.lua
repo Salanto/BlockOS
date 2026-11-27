@@ -30,6 +30,9 @@ local logistics_node = {}
 
 --- Moves kept for the next report (the rest are dropped; they are only animations).
 logistics_node.MAX_MOVES = 50
+--- The block list goes out only when it changed, or at least every this many reports
+-- (a lost report is corrected by then). Item counts go out every round.
+logistics_node.BLOCKS_EVERY = 6
 --- Sorting pauses while someone finds a chest, at most this long.
 logistics_node.FIND_PAUSE_SECONDS = 60
 --- Ports are left alone this long while items cross (or a marker is read).
@@ -152,6 +155,7 @@ function logistics_node.new(options)
     totals = {},
     sources_read = nil, -- nil until the first read, so tools do not show "no storage"
     sort_paused_until = 0,
+    finds = {}, -- [id] = { before, touched, until_clock }: players finding a chest
     holds = {}, -- [crossing] = clock until which ports are left alone
     report_seq = 0,
     -- Changes whenever the node starts, so the controller knows seqs began again.
@@ -160,6 +164,10 @@ function logistics_node.new(options)
   local pending_moves = {}
 
   local function record_move(from, to, item, count)
+    -- Blocks the node changed itself are no answer to "which chest did I drop into?".
+    for _, find in pairs(node.finds) do
+      find.touched[from], find.touched[to] = true, true
+    end
     pending_moves[#pending_moves + 1] = { from = from, to = to, item = item, count = count }
     if #pending_moves > logistics_node.MAX_MOVES then
       table.remove(pending_moves, 1)
@@ -243,6 +251,15 @@ function logistics_node.new(options)
     local moves = pending_moves
     pending_moves = {}
     node.report_seq = node.report_seq + 1
+    local blocks = node.list_storages()
+    local blocks_text = textutils.serialise(blocks, { compact = true })
+    local is_due = node.report_seq - (node.blocks_sent_at or -math.huge)
+      >= logistics_node.BLOCKS_EVERY
+    if blocks_text ~= node.blocks_sent or is_due then
+      node.blocks_sent, node.blocks_sent_at = blocks_text, node.report_seq
+    else
+      blocks = nil -- unchanged: the controller keeps the last list
+    end
     local totals = {}
     for item, found in pairs(node.totals) do
       totals[item] = { count = found.count, label = found.label }
@@ -251,7 +268,7 @@ function logistics_node.new(options)
       seq = node.report_seq,
       boot = node.boot,
       totals = totals,
-      blocks = node.list_storages(),
+      blocks = blocks,
       moves = moves,
       sources = node.sources_read,
       poll_seconds = config.poll_seconds,
@@ -291,6 +308,30 @@ function logistics_node.new(options)
       end
     end
     return nil, "no block called " .. tostring(handle)
+  end
+
+  --- Does this node have a recycle block?
+  function node.has_recycler()
+    for _, inventory in ipairs(node.inventories) do
+      if inventory.role == "recycle" then
+        return true
+      end
+    end
+    return false
+  end
+
+  --- Send items to the recycle block: from a block (a machine's scrap) or storage.
+  -- @treturn number Items moved.
+  function node.recycle(item, count, from)
+    local moved = logistics_sorting.to_recycle(node.inventories, item, count, from,
+      record_move) or 0
+    if not from then
+      local found = node.totals[item]
+      if found then
+        found.count = math.max(0, found.count - moved)
+      end
+    end
+    return moved
   end
 
   --- Empty a block into storage.
@@ -401,23 +442,45 @@ function logistics_node.new(options)
 
   --- Find a chest, step 1: pause sorting (so only the player changes chests) and
   -- remember what is in every block.
-  function node.find_start()
-    node.sort_paused_until = logistics_node.env.clock() + logistics_node.FIND_PAUSE_SECONDS
-    node.find_before = live_totals()
+  -- Sorting stays paused while any search is open (each runs out by itself).
+  local function update_pause()
+    local latest = 0
+    local now = logistics_node.env.clock()
+    for id, find in pairs(node.finds) do
+      if find.until_clock <= now then
+        node.finds[id] = nil
+      else
+        latest = math.max(latest, find.until_clock)
+      end
+    end
+    node.sort_paused_until = latest
+  end
+
+  -- Several players may search at once: each search has its own id and snapshot.
+  function node.find_start(id)
+    id = id or "local"
+    node.finds[id] = {
+      before = live_totals(),
+      touched = {},
+      until_clock = logistics_node.env.clock() + logistics_node.FIND_PAUSE_SECONDS,
+    }
+    update_pause()
     return true
   end
 
   --- Find a chest, step 2: the blocks whose contents changed; sorting resumes.
-  function node.find_finish()
-    local before = node.find_before or {}
+  function node.find_finish(id)
+    id = id or "local"
+    local find = node.finds[id] or { before = {}, touched = {} }
     local changed = {}
     for handle, total in pairs(live_totals()) do
-      if before[handle] and before[handle] ~= total then
+      local before = find.before[handle]
+      if before and before ~= total and not find.touched[handle] then
         changed[#changed + 1] = { handle = handle, label = logistics.storage_name(config, handle) }
       end
     end
-    node.find_before = nil
-    node.sort_paused_until = 0
+    node.finds[id] = nil
+    update_pause()
     return changed
   end
 
@@ -531,8 +594,8 @@ function logistics_node.new(options)
         return node.request(args.item, math.floor(args.count), args.output)
       end)),
       set_storage = rpc.with_args(ARGS.set_storage, guarded(node.set_storage)),
-      find_start = guarded(node.find_start),
-      find_finish = guarded(node.find_finish),
+      find_start = guarded(function(args) return node.find_start(args.id) end),
+      find_finish = guarded(function(args) return node.find_finish(args.id) end),
       port_hold = rpc.with_args(ARGS.port_hold, guarded(function(args)
         return node.port_hold(args.seconds, args.hold)
       end)),

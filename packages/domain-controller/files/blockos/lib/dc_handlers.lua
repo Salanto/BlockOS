@@ -515,7 +515,10 @@ function dc_handlers.new(dir, storage, clock)
     if not user then
       return nil, err
     end
-    return dir:get_profile(user.name)
+    -- Unread mail rides along, so a login needs one call to the controller.
+    local profile = dir:get_profile(user.name)
+    profile.unread = dir:unread_mail(user.name)
+    return profile
   end
 
   handlers.profile_set = with_args(ARGS.profile_set, function(ctx, args)

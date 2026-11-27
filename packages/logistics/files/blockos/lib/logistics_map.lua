@@ -389,7 +389,7 @@ end
 -- What can be done with one chest: label, role, and for outputs a request.
 local function chest_menu(view, node)
   local actions = { "Set label", "Role: storage", "Role: input", "Role: output",
-    "Role: ignore", "Role: port" }
+    "Role: ignore", "Role: port", "Role: machine", "Role: recycle" }
   if node.role == "output" then
     actions[#actions + 1] = "Get items here"
   end

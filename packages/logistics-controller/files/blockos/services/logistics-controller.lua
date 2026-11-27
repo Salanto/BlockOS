@@ -25,8 +25,8 @@ local function remote_proxy(rpc, id, protocol)
       return call("request", { item = item, count = count, output = output }, 12)
     end,
     set_storage = function(change) return call("set_storage", change) end,
-    find_start = function() return call("find_start") end,
-    find_finish = function() return call("find_finish") end,
+    find_start = function(id) return call("find_start", { id = id }) end,
+    find_finish = function(id) return call("find_finish", { id = id }) end,
     export_levels = function() return call("export_levels") end,
     port_hold = function(seconds, hold)
       return call("port_hold", { seconds = seconds, hold = hold })
@@ -192,7 +192,7 @@ local function run(ctx)
     local proxy = (entry and entry.proxy.id == sender) and entry.proxy
       or remote_proxy(rpc, sender, logistics_client.NODE_PROTOCOL)
     hub.update(name, event.data, proxy)
-    for _, handle in ipairs(ports.check(name, event.data.blocks)) do
+    for _, handle in ipairs(ports.check(name, hub.nodes[name].report.blocks)) do
       defer(function()
         local main, err = ports.pair(name, handle, proxy)
         if main then
@@ -207,6 +207,13 @@ local function run(ctx)
   local ok, err = pcall(parallel.waitForAny,
     function() rpc.serve(logistics_client.PROTOCOL, handlers) end,
     work_loop,
+    function()
+      -- Levels held back by the 2 s limit are checked here.
+      while true do
+        sleep(logistics_hub.LEVELS_SECONDS)
+        hub.check_levels_if_due()
+      end
+    end,
     function()
       while true do
         local _, sender, message, protocol = os.pullEvent("rednet_message")

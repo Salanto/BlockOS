@@ -29,6 +29,9 @@ logistics_hub.STALE_ROUNDS = 3
 logistics_hub.CRAFT_RETRY_SECONDS = 60
 --- Seconds before an item whose last job failed is asked again.
 logistics_hub.CRAFT_BACKOFF_SECONDS = 300
+--- Levels (alarms, keep-stocked) are checked at most this often: with many nodes a
+-- report arrives every second or so, and one check covers them all.
+logistics_hub.LEVELS_SECONDS = 2
 
 -- How many of an item a node has: its last report, minus moves made since that the
 -- report does not include yet (they wait in entry.pending until a report with their
@@ -204,6 +207,9 @@ function logistics_hub.new(options)
     if is_same_run and (report.seq or 0) < (old.seq or 0) then
       return -- a late report: the newer one is already here
     end
+    if report.blocks == nil and old then
+      report.blocks = old.blocks -- unchanged since the last list (see logistics_node)
+    end
     entry.report, entry.proxy, entry.seen = report, proxy, logistics_hub.env.clock()
     -- Moves this report includes no longer need subtracting (all of them when the
     -- node restarted: its counts are fresh).
@@ -216,7 +222,18 @@ function logistics_hub.new(options)
     entry.pending = kept
     hub.nodes[name] = entry
     record_moves(name, report.moves)
-    hub.check_levels()
+    hub.levels_due = true
+    hub.check_levels_if_due()
+  end
+
+  --- Check the levels if a report came in and the last check is old enough (the
+  -- controller also calls this every couple of seconds, for reports held back).
+  function hub.check_levels_if_due()
+    local now = logistics_hub.env.clock()
+    local is_old = not hub.levels_at or now - hub.levels_at >= logistics_hub.LEVELS_SECONDS
+    if hub.levels_due and is_old then
+      hub.check_levels()
+    end
   end
 
   --- Forget a node (it was taken down for good).
@@ -386,6 +403,7 @@ function logistics_hub.new(options)
 
   --- Compare the merged totals with the watched items and raise alarms.
   function hub.check_levels()
+    hub.levels_due, hub.levels_at = false, logistics_hub.env.clock()
     local states, changes = logistics.evaluate(config, hub.totals(), hub.states)
     hub.states = states
     request_crafts(states)
@@ -714,21 +732,23 @@ function logistics_hub.new(options)
   end
 
   --- Find a chest, step 1: every visible node pauses sorting and remembers its blocks.
+  -- @treturn string The search's id (find_finish needs it: searches may overlap).
   function hub.find_start(visible)
+    local id = string.format("f%d-%d", math.random(0, 0x7fffffff), os.epoch("utc"))
     for _, name in ipairs(live_names(visible)) do
-      local ok, err = hub.nodes[name].proxy.find_start()
+      local ok, err = hub.nodes[name].proxy.find_start(id)
       if not ok then
         logistics_hub.env.log("find on %s: %s", name, tostring(err))
       end
     end
-    return true
+    return { id = id }
   end
 
   --- Find a chest, step 2: the blocks whose contents changed, on any visible node.
-  function hub.find_finish(visible)
+  function hub.find_finish(visible, id)
     local changed = {}
     for _, name in ipairs(live_names(visible)) do
-      for _, block in ipairs(hub.nodes[name].proxy.find_finish() or {}) do
+      for _, block in ipairs(hub.nodes[name].proxy.find_finish(id) or {}) do
         changed[#changed + 1] = { node = name, handle = block.handle, label = block.label }
       end
     end

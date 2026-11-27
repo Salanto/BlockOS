@@ -385,8 +385,8 @@ function logistics_handlers.new(hub)
     return hub.find_start(visible)
   end)
 
-  handlers.find_finish = user_op(function(_, _, visible)
-    return hub.find_finish(visible)
+  handlers.find_finish = user_op(function(_, args, visible)
+    return hub.find_finish(visible, type(args.id) == "string" and args.id or nil)
   end)
 
   handlers.set_storage = with_args(ARGS.set_storage, function(ctx, args)

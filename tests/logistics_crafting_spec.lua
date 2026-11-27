@@ -93,6 +93,17 @@ return function(t)
     function node.machines()
       return { "basin", "basin2", "depot" }
     end
+    machines.recycler = {}
+    function node.has_recycler()
+      return world.has_recycler == true
+    end
+    function node.recycle(item, count, from)
+      local source = from and machines[from] or store
+      local moved = math.min(count, source[item] or 0)
+      source[item] = (source[item] or 0) - moved
+      machines.recycler[item] = (machines.recycler[item] or 0) + moved
+      return moved
+    end
     local world = { node = node, machines = machines, store = store, now = 0, result = BRASS }
     -- Both basins mix copper and zinc; the depot presses andesite and a nugget.
     function world.mix()
@@ -413,4 +424,16 @@ return function(t)
       to = "furnace", slot = 2 })
     t.eq(step.slot, 2, "a step can name the slot")
   end)
+
+  t.it("scrap goes to the recycler instead of storage, also old scrap", function()
+    local world = new_world({ [COPPER] = 9, [ZINC] = 9, [SCRAP] = 4 })
+    world.has_recycler = true
+    world.result = SCRAP
+    local crafter = new_crafter(world)
+    crafter.start(BRASS, 1)
+    run(world, crafter, 30)
+    t.eq(world.machines.recycler[SCRAP], 7, "3 failed attempts plus the 4 from before")
+    t.eq(world.store[SCRAP], 0, "nothing left in storage")
+  end)
+
 end

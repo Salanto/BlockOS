@@ -200,6 +200,27 @@ function logistics_sorting.supply(inventories, item, count, machine_handle, on_m
   return logistics_sorting.deliver(inventories, item, count, machine, on_move, to_slot)
 end
 
+--- Send items to the recycler: out of one block (scrap left in a machine), or out of
+-- storage when no block is given.
+-- @treturn[1] number Items moved (0 when there is no recycle block).
+-- @treturn[2] nil
+-- @treturn[2] string error message
+function logistics_sorting.to_recycle(inventories, item, count, from_handle, on_move)
+  local recycler = find_block(inventories, "recycle")
+  if not recycler then
+    return 0
+  end
+  if not from_handle then
+    return logistics_sorting.deliver(inventories, item, count, recycler, on_move).moved
+  end
+  for _, inventory in ipairs(inventories) do
+    if inventory.handle == from_handle and can_move(inventory.source) then
+      return (take_from(inventory, recycler, item, count, on_move))
+    end
+  end
+  return nil, "no block called " .. tostring(from_handle)
+end
+
 --- Move everything out of one block into storage (crafting results, or what is left
 -- after a failed attempt).
 -- @treturn[1] number Items moved.

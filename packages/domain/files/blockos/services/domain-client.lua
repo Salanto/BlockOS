@@ -22,6 +22,13 @@ local function run(ctx)
   end
   ctx.log.info("member of domain %s", domain.name())
 
+  local function unread_notice(unread)
+    if (unread or 0) == 0 then
+      return nil
+    end
+    return unread .. " new message" .. (unread == 1 and "" or "s") .. ": type 'mail'"
+  end
+
   -- Unread mail of the logged-in domain user, as a notice (at login and with every
   -- status report).
   local function mail_notice(user)
@@ -29,11 +36,7 @@ local function run(ctx)
       return nil
     end
     local result = domain.call_as(user.token, "mail_unread")
-    local unread = result and result.unread or 0
-    if unread == 0 then
-      return nil
-    end
-    return unread .. " new message" .. (unread == 1 and "" or "s") .. ": type 'mail'"
+    return unread_notice(result and result.unread)
   end
 
   local function check_mail()
@@ -46,15 +49,20 @@ local function run(ctx)
   end
 
   -- Roaming profiles: a domain user's apps and roaming settings, on any computer.
-  -- The mail notice is set for every login, so it never shows the previous user's.
+  -- One quick call at login: the profile carries the unread mail too. The mail notice
+  -- is set for every login, so it never shows the previous user's.
   import("session").set_login_hook("domain-profile", function(user)
     if blockos.notices then
-      blockos.notices.mail = mail_notice(user)
+      blockos.notices.mail = nil
     end
     if user.source ~= "domain" or not user.token then
       return nil
     end
-    return domain.profile_get(user.token)
+    local profile = domain.profile_get(user.token)
+    if profile and blockos.notices then
+      blockos.notices.mail = unread_notice(profile.unread)
+    end
+    return profile
   end)
 
   local function report()
