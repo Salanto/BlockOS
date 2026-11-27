@@ -8,7 +8,7 @@
 
 local CHECK_SECONDS = 300
 
-local function run(ctx)
+local function run()
   local events = import("events")
   local mail_client = import("mail_client")
   local mail_protocol = import("mail_protocol")
