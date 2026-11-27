@@ -98,6 +98,14 @@ computer installs what its roles list and keeps all its packages up to date from
 server by itself: within 30 minutes, at boot, or right away with `domain update` on it. Updates
 apply when nobody is logged in; otherwise you get a notice and it happens after you log out.
 
+Roles describe what a computer should look like, and the computer works towards it, a bit like
+Puppet or Terraform. Normally that only adds and updates packages. Press `k` on a role
+(**keep only**, or `domain computer only <role> on`) and its computers also remove packages
+none of their roles list, so a temporary app installed by hand is gone at the next update.
+BlockOS itself, the `domain` package and whatever the kept packages need always stay. To see
+what would happen first, press `i` on a computer in `dsa` (the **Plan** at the bottom: `+`
+install, `~` update, `-` remove, `=` setting) or run `domain update --plan` on it.
+
 **Remote admin.** Domain admins manage any joined computer from `dsa` (Computers tab): `i` shows
 its health (version, services, disk, turtle fuel and position), `u` updates it now, `b` reboots
 it, `s` starts or stops a service, `l` reads its log, and `c` opens a **remote shell**: its

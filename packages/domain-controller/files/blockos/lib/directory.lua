@@ -692,14 +692,21 @@ end
 -- @tparam string name e.g. "logistics-node"
 -- @tparam {string...} packages Packages computers with this role should have.
 -- @tparam[opt] table settings [blockos.* key] = value, applied on those computers.
+-- @tparam[opt] boolean prune Keep only these: computers with the role remove optional
+--   packages none of their roles list. nil keeps what the role had (older tools do not
+--   send it, and must not switch it off).
 -- @treturn[1] true
 -- @treturn[2] nil
 -- @treturn[2] string error message
-function Directory:set_computer_role(name, packages, settings)
+function Directory:set_computer_role(name, packages, settings, prune)
   if not is_valid_name(name) then
     return nil, "invalid computer role name"
   end
-  local role = { packages = packages, settings = settings or {} }
+  local old = self.data.computer_roles[name]
+  if prune == nil then
+    prune = old and old.prune
+  end
+  local role = { packages = packages, settings = settings or {}, prune = prune or nil }
   local ok, err = check_role(role)
   if not ok then
     return nil, err
@@ -749,7 +756,8 @@ function Directory:assign_computer_roles(hostname, roles)
   return true
 end
 
---- @treturn {table...} { name, packages, settings, computers = { hostnames } } sorted by name.
+--- @treturn {table...} { name, packages, settings, prune?, computers = { hostnames } } sorted
+--   by name.
 function Directory:list_computer_roles()
   local list = {}
   for name, role in pairs(self.data.computer_roles) do
@@ -766,6 +774,7 @@ function Directory:list_computer_roles()
       name = name,
       packages = role.packages,
       settings = role.settings,
+      prune = role.prune,
       computers = computers,
     }
   end
@@ -774,18 +783,19 @@ function Directory:list_computer_roles()
 end
 
 --- What one computer should have: its roles merged (packages joined, later roles'
--- settings win).
+-- settings win, keep-only when any of its roles says so).
 -- @tparam string hostname
--- @treturn table|nil { roles, packages, settings }
+-- @treturn table|nil { roles, packages, settings, prune? }
 function Directory:computer_config(hostname)
   local computer = self.data.computers[hostname]
   if not computer then
     return nil
   end
-  local packages, seen, settings = {}, {}, {}
+  local packages, seen, settings, prune = {}, {}, {}, nil
   for _, name in ipairs(computer.roles or {}) do
     local role = self.data.computer_roles[name]
     if role then
+      prune = prune or role.prune
       for _, package in ipairs(role.packages) do
         if not seen[package] then
           seen[package] = true
@@ -798,7 +808,8 @@ function Directory:computer_config(hostname)
     end
   end
   table.sort(packages)
-  return { roles = computer.roles or {}, packages = packages, settings = settings }
+  return { roles = computer.roles or {}, packages = packages, settings = settings,
+    prune = prune }
 end
 
 ------------------------------------------------------------------------------
