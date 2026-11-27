@@ -23,6 +23,8 @@ logistics_client.OLD_FILE = "etc/blockos/storage-monitor"
 logistics_client.REPORT_TOPIC = "report"
 logistics_client.REPORT_SCHEMA = {
   node = { type = "string", max = 32 },
+  seq = { type = "number", optional = true },
+  boot = { type = "number", optional = true },
   totals = "table",
   blocks = "table",
   moves = { type = "table", optional = true },
@@ -32,9 +34,10 @@ logistics_client.REPORT_SCHEMA = {
   crafting = { type = "table", optional = true }, -- { recipes = {item...}, jobs = {...} }
 }
 
---- Operations that move items or wait for every node: not retried, longer timeout.
+--- Operations that move items or wait for every node: a long timeout (a crossing
+-- between nodes is a chain of calls). Retrying is safe: rpc runs a request once.
 logistics_client.SLOW_OPS = { request = true, find_start = true, find_finish = true, craft = true }
-logistics_client.SLOW_TIMEOUT = 15
+logistics_client.SLOW_TIMEOUT = 30
 
 config.define("blockos.logistics.server", {
   description = "Which logistics controller this computer uses (its name); empty: the default.",
@@ -143,11 +146,11 @@ function logistics_client.connect(name, options)
     is_local = false,
     describe = label,
     call = function(op, args)
-      -- A request is never retried (a lost answer must not deliver twice), and the
-      -- controller waits for the node, which moves items a tick per stack.
+      -- The controller waits for the nodes, which move items a tick per stack. A
+      -- retry of a lost answer never moves items twice (rpc runs a request once).
       local call_options = { relogin = relogin }
       if logistics_client.SLOW_OPS[op] then
-        call_options.retries, call_options.timeout = 0, logistics_client.SLOW_TIMEOUT
+        call_options.timeout = logistics_client.SLOW_TIMEOUT
       end
       return rpc.call(server_id, logistics_client.PROTOCOL, op, args, call_options)
     end,

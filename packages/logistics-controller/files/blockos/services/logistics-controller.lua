@@ -13,11 +13,11 @@ local function config_path()
   return import("paths").top(import("logistics_client").CONTROLLER_FILE)
 end
 
--- How the controller acts on a node elsewhere. Never retried: a lost answer must not
--- move items twice.
+-- How the controller acts on a node elsewhere. A retry is safe (rpc runs a request
+-- once), so a lost answer neither moves items twice nor fails a move that happened.
 local function remote_proxy(rpc, id, protocol)
   local function call(op, args, timeout)
-    return rpc.call(id, protocol, op, args, { retries = 0, timeout = timeout or 5 })
+    return rpc.call(id, protocol, op, args, { retries = 1, timeout = timeout or 5 })
   end
   return {
     id = id,
@@ -28,12 +28,15 @@ local function remote_proxy(rpc, id, protocol)
     find_start = function() return call("find_start") end,
     find_finish = function() return call("find_finish") end,
     export_levels = function() return call("export_levels") end,
-    port_hold = function() return call("port_hold") end,
-    to_port = function(item, count, port)
-      return call("to_port", { item = item, count = count, port = port }, 12)
+    port_hold = function(seconds, hold)
+      return call("port_hold", { seconds = seconds, hold = hold })
     end,
-    from_port = function(port, item, count, output)
-      return call("from_port", { port = port, item = item, count = count, output = output }, 12)
+    to_port = function(item, count, port, hold)
+      return call("to_port", { item = item, count = count, port = port, hold = hold }, 12)
+    end,
+    from_port = function(port, item, count, output, hold)
+      return call("from_port", { port = port, item = item, count = count, output = output,
+        hold = hold }, 12)
     end,
     push_marker = function(port) return call("push_marker", { port = port }) end,
     craft = function(item, count) return call("craft", { item = item, count = count }) end,

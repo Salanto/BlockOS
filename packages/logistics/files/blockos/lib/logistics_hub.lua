@@ -28,6 +28,21 @@ logistics_hub.STALE_ROUNDS = 3
 --- Seconds before a low item is asked to be crafted again (when no job shows up).
 logistics_hub.CRAFT_RETRY_SECONDS = 60
 
+-- How many of an item a node has: its last report, minus moves made since that the
+-- report does not include yet (they wait in entry.pending until a report with their
+-- seq arrives). A report never overwrites a fresher count this way, and a move is
+-- never subtracted twice.
+local function count_on(entry, item)
+  local found = (entry.report.totals or {})[item]
+  local count = found and found.count or 0
+  for _, move in ipairs(entry.pending or {}) do
+    if move.item == item then
+      count = count - move.count
+    end
+  end
+  return math.max(0, count)
+end
+
 --- Clock and time of day (tests replace these).
 logistics_hub.env = {
   clock = function() return os.clock() end,
@@ -98,11 +113,13 @@ function logistics_hub.new(options)
   function hub.totals(visible)
     local totals = {}
     for _, name in ipairs(hub.node_names(visible)) do
-      for item, found in pairs(hub.nodes[name].report.totals or {}) do
+      local entry = hub.nodes[name]
+      for item, found in pairs(entry.report.totals or {}) do
+        local count = count_on(entry, item)
         local total = totals[item] or { count = 0, label = found.label, nodes = {} }
-        total.count = total.count + found.count
+        total.count = total.count + count
         total.label = total.label or found.label
-        total.nodes[name] = (total.nodes[name] or 0) + found.count
+        total.nodes[name] = (total.nodes[name] or 0) + count
         totals[item] = total
       end
     end
@@ -152,8 +169,22 @@ function logistics_hub.new(options)
   -- @tparam table report See the module comment.
   -- @tparam table proxy How to act on the node.
   function hub.update(name, report, proxy)
-    local entry = hub.nodes[name] or { name = name }
+    local entry = hub.nodes[name] or { name = name, pending = {} }
+    local old = entry.report
+    local is_same_run = old and report.boot ~= nil and report.boot == old.boot
+    if is_same_run and (report.seq or 0) < (old.seq or 0) then
+      return -- a late report: the newer one is already here
+    end
     entry.report, entry.proxy, entry.seen = report, proxy, logistics_hub.env.clock()
+    -- Moves this report includes no longer need subtracting (all of them when the
+    -- node restarted: its counts are fresh).
+    local kept = {}
+    for _, move in ipairs(entry.pending or {}) do
+      if is_same_run and move.seq and move.seq > (report.seq or 0) then
+        kept[#kept + 1] = move
+      end
+    end
+    entry.pending = kept
     hub.nodes[name] = entry
     record_moves(name, report.moves)
     hub.check_levels()
@@ -389,8 +420,7 @@ function logistics_hub.new(options)
     local best, best_count = nil, 0
     local holding = nil
     for _, name in ipairs(hub.node_names(visible)) do
-      local found = (hub.nodes[name].report.totals or {})[item]
-      local count = found and found.count or 0
+      local count = count_on(hub.nodes[name], item)
       if count > 0 then
         holding = holding or name
         if count > best_count and has_output(name) then
@@ -438,8 +468,7 @@ function logistics_hub.new(options)
   local function pick_depot(item, count, near, visible)
     local fallback = nil
     for _, depot in ipairs(hub.depots(near, visible)) do
-      local found = (hub.nodes[depot.node].report.totals or {})[item]
-      local stored = found and found.count or 0
+      local stored = count_on(hub.nodes[depot.node], item)
       if stored >= count then
         return depot
       end
@@ -456,16 +485,19 @@ function logistics_hub.new(options)
 
   -- The counts drop at once, so the Catalog and a second request do not see items that
   -- already left (the next report corrects any difference).
-  local function took(name, item, moved)
-    local found = (hub.nodes[name].report.totals or {})[item]
-    if found then
-      found.count = math.max(0, found.count - moved)
+  -- The counts drop at once until the node's report includes the move (`seq`: the
+  -- first report that does; without one, the next report).
+  local function took(name, item, moved, seq)
+    local entry = hub.nodes[name]
+    if entry and moved > 0 then
+      entry.pending = entry.pending or {}
+      entry.pending[#entry.pending + 1] = { item = item, count = moved,
+        seq = seq or ((entry.report.seq or 0) + 1) }
     end
   end
 
   local function stored_on(name, item)
-    local found = (hub.nodes[name].report.totals or {})[item]
-    return found and found.count or 0
+    return count_on(hub.nodes[name], item)
   end
 
   -- The node with the most of an item, other than `except`.
@@ -543,7 +575,7 @@ function logistics_hub.new(options)
       end
       moved = result.moved or 0
       handle = handle or result.output
-      took(name, item, moved)
+      took(name, item, moved, result.seq)
     end
 
     if transfer and moved < count then
@@ -552,7 +584,7 @@ function logistics_hub.new(options)
         local crossed, cross_error = transfer(hub.nodes[source], entry, item, count - moved, handle)
         if crossed then
           record_crossing(source, name, item, crossed.moved or 0)
-          took(source, item, crossed.moved or 0)
+          took(source, item, crossed.moved or 0, crossed.seq)
           moved = moved + (crossed.moved or 0)
           handle = handle or crossed.output
         elseif moved == 0 then
@@ -654,7 +686,7 @@ function logistics_hub.new(options)
     local result, err = options.transfer(hub.nodes[source], entry, item, count, target)
     if result then
       record_crossing(source, node, item, result.moved or 0)
-      took(source, item, result.moved or 0)
+      took(source, item, result.moved or 0, result.seq)
     end
     return result, err
   end

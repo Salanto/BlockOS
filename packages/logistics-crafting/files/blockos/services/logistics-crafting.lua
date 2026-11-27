@@ -29,7 +29,7 @@ local function run(ctx)
   end
 
   -- An ingredient this node lacks: the controller carries it from another node
-  -- straight into the machine (never retried: it must not arrive twice).
+  -- straight into the machine (a retry is safe: rpc runs a request once).
   local function fetch(item, count, machine)
     if not node.controller_id then
       return nil, "no controller to bring it from another node"
@@ -37,7 +37,7 @@ local function run(ctx)
     local hostname = blockos.net and blockos.net.hostname() or ("#" .. os.getComputerID())
     return rpc.call(node.controller_id, logistics_client.PROTOCOL, "supply",
       { node = hostname, item = item, count = count, target = machine },
-      { retries = 0, timeout = 20 })
+      { retries = 1, timeout = 30 })
   end
 
   local crafter = logistics_crafter.new({

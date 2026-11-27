@@ -6,8 +6,11 @@
 -- inventory read costs a game tick, so one computer reading a whole base is slow.
 --
 -- Protocol "blockos.logistics.node" (wire):
---   node -> controller  event "report" { node, totals, blocks, moves, sources,
---                       poll_seconds } (full state each round, so it corrects itself)
+--   node -> controller  event "report" { node, seq, boot, totals, blocks, moves,
+--                       sources, poll_seconds } (full state each round, so it corrects
+--                       itself; seq counts reports since `boot`, so a late report is
+--                       recognised, and moves answer with the seq that first includes
+--                       them)
 --   controller -> node  rpc request { item, count, output? }, set_storage { storage,
 --                       role?, label?, pos?, clear_pos?, forget? }, find_start, find_finish,
 --                       export_levels; ports (M3): port_hold { seconds }, to_port { item,
@@ -47,17 +50,22 @@ local ARGS = {
     clear_pos = { type = "boolean", optional = true },
     forget = { type = "boolean", optional = true },
   },
-  port_hold = { seconds = { type = "number", min = 1, optional = true } },
+  -- `hold` names one crossing: each holds the ports until its own last step.
+  port_hold = { seconds = { type = "number", min = 1, optional = true },
+    hold = { type = "string", optional = true, max = 40 },
+  },
   to_port = {
     item = { type = "string", max = 128 },
     count = { type = "number", min = 1 },
     port = { type = "string", max = 64 },
+    hold = { type = "string", optional = true, max = 40 },
   },
   from_port = {
     port = { type = "string", max = 64 },
     item = { type = "string", max = 128 },
     count = { type = "number", min = 1 },
     output = { type = "string", optional = true, max = 64 },
+    hold = { type = "string", optional = true, max = 40 },
   },
   push_marker = { port = { type = "string", max = 64 } },
   craft = { item = { type = "string", max = 128 }, count = { type = "number", min = 1 } },
@@ -132,7 +140,10 @@ function logistics_node.new(options)
     totals = {},
     sources_read = nil, -- nil until the first read, so tools do not show "no storage"
     sort_paused_until = 0,
-    ports_held_until = 0,
+    holds = {}, -- [crossing] = clock until which ports are left alone
+    report_seq = 0,
+    -- Changes whenever the node starts, so the controller knows seqs began again.
+    boot = os.epoch("utc"),
   }
   local pending_moves = {}
 
@@ -172,7 +183,7 @@ function logistics_node.new(options)
     node.inventories, node.totals, node.sources_read = inventories, totals, blocks
     local now = logistics_node.env.clock()
     if now >= node.sort_paused_until then
-      local skip_ports = now < node.ports_held_until
+      local skip_ports = node.ports_held()
       local _, sort_failures = logistics_sorting.sort_inputs(inventories, record_move, skip_ports)
       for _, failure in ipairs(sort_failures) do
         failures[#failures + 1] = failure
@@ -219,11 +230,14 @@ function logistics_node.new(options)
   function node.report()
     local moves = pending_moves
     pending_moves = {}
+    node.report_seq = node.report_seq + 1
     local totals = {}
     for item, found in pairs(node.totals) do
       totals[item] = { count = found.count, label = found.label }
     end
     return {
+      seq = node.report_seq,
+      boot = node.boot,
       totals = totals,
       blocks = node.list_storages(),
       moves = moves,
@@ -316,6 +330,11 @@ function logistics_node.new(options)
     if result and found then
       found.count = math.max(0, found.count - result.moved)
     end
+    if result then
+      -- The first report that already counts this move (the hub lowers its own count
+      -- only until that report arrives).
+      result.seq = node.report_seq + 1
+    end
     return result, err
   end
 
@@ -399,35 +418,52 @@ function logistics_node.new(options)
     end
   end
 
-  --- Leave ports alone for a while: items are about to cross.
-  function node.port_hold(seconds)
+  --- Are the ports left alone right now (some crossing still under way)?
+  function node.ports_held()
+    local now = logistics_node.env.clock()
+    for crossing, until_clock in pairs(node.holds) do
+      if until_clock > now then
+        return true
+      end
+      node.holds[crossing] = nil
+    end
+    return false
+  end
+
+  --- Leave ports alone for a while: items of one crossing are about to arrive. Each
+  -- crossing has its own hold, so one finishing never releases another.
+  -- @tparam[opt] number seconds
+  -- @tparam[opt] string hold The crossing's name.
+  function node.port_hold(seconds, hold)
     local until_clock = logistics_node.env.clock() + (seconds or logistics_node.PORT_HOLD_SECONDS)
-    node.ports_held_until = math.max(node.ports_held_until, until_clock)
+    hold = hold or "local"
+    node.holds[hold] = math.max(node.holds[hold] or 0, until_clock)
     return true
   end
 
   --- Move items from storage into a port (the first step of a crossing).
-  function node.to_port(item, count, port)
-    node.port_hold()
+  function node.to_port(item, count, port, hold)
+    node.port_hold(nil, hold)
     local result, err = logistics_sorting.to_port(node.inventories, item, count, port, record_move)
     if result then
       took(item, result.moved)
+      result.seq = node.report_seq + 1
     end
     return result, err
   end
 
-  --- Move items that arrived in a port on to an output (the last step); ports are
-  -- sorted again from the next round.
-  function node.from_port(port, item, count, output)
+  --- Move items that arrived in a port on to an output (the last step); this crossing
+  -- stops holding the ports (others may still).
+  function node.from_port(port, item, count, output, hold)
     local result, err = logistics_sorting.from_port(node.inventories, port, item, count, output,
       record_move)
-    node.ports_held_until = 0
+    node.holds[hold or "local"] = nil
     return result, err
   end
 
   --- Put one item into a port so the controller can pair it with the main cable.
   function node.push_marker(port)
-    node.port_hold()
+    node.port_hold(nil, "marker")
     return logistics_sorting.push_marker(node.inventories, port, record_move)
   end
 
@@ -486,13 +522,14 @@ function logistics_node.new(options)
       find_start = guarded(node.find_start),
       find_finish = guarded(node.find_finish),
       port_hold = rpc.with_args(ARGS.port_hold, guarded(function(args)
-        return node.port_hold(args.seconds)
+        return node.port_hold(args.seconds, args.hold)
       end)),
       to_port = rpc.with_args(ARGS.to_port, guarded(function(args)
-        return node.to_port(args.item, math.floor(args.count), args.port)
+        return node.to_port(args.item, math.floor(args.count), args.port, args.hold)
       end)),
       from_port = rpc.with_args(ARGS.from_port, guarded(function(args)
-        return node.from_port(args.port, args.item, math.floor(args.count), args.output)
+        return node.from_port(args.port, args.item, math.floor(args.count), args.output,
+          args.hold)
       end)),
       push_marker = rpc.with_args(ARGS.push_marker, guarded(function(args)
         return node.push_marker(args.port)

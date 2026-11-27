@@ -9,6 +9,12 @@
 -- handler) to have its arguments checked against a wire schema before it runs.
 -- Handlers return a result, or nil and an error message. A handler that has
 -- nothing to return should return true.
+--
+-- Retries are safe: a retry resends the same request id, and the server runs each
+-- (sender, id) once. A repeat that arrives while the first copy still runs is
+-- dropped (its answer is on the way); a repeat of a finished one gets the same
+-- answer again. So a lost answer never makes an operation (e.g. moving items) happen
+-- twice.
 -- @module rpc
 
 local wire = import("wire")
@@ -21,6 +27,9 @@ rpc.LOGIN_REQUIRED = "login required"
 rpc.PERMISSION_DENIED = "permission denied"
 
 local MAX_WORKERS = 16
+-- How long a server remembers a request it ran (for repeats), and how many.
+local REMEMBER_SECONDS = 120
+local MAX_REMEMBERED = 200
 
 local request_counter = 0
 
@@ -244,6 +253,17 @@ end
 -- @tparam table handlers { [op] = function(request_ctx, args) }
 function rpc.serve(protocol, handlers)
   local workers = {}
+  local remembered, remembered_count = {}, 0 -- [sender/id] = { at, response? }
+
+  local function forget_old()
+    local now = os.clock()
+    for key, entry in pairs(remembered) do
+      if now - entry.at > REMEMBER_SECONDS or remembered_count > MAX_REMEMBERED then
+        remembered[key] = nil
+        remembered_count = remembered_count - 1
+      end
+    end
+  end
 
   local function resume(worker, ...)
     local ok, filter = coroutine.resume(worker.coroutine, ...)
@@ -255,13 +275,26 @@ function rpc.serve(protocol, handlers)
   end
 
   local function start_worker(sender, request)
+    local key = tostring(sender) .. "/" .. tostring(request.id)
+    local seen = remembered[key]
+    if seen then
+      if seen.response then
+        transport.send(sender, seen.response, protocol)
+      end
+      return
+    end
     if #workers >= MAX_WORKERS then
       transport.send(sender, wire.response(request.id, false, "server busy"), protocol)
       return
     end
+    forget_old()
+    local entry = { at = os.clock() }
+    remembered[key] = entry
+    remembered_count = remembered_count + 1
     local worker = {
       coroutine = coroutine.create(function()
-        transport.send(sender, rpc.handle(handlers, sender, request), protocol)
+        entry.response = rpc.handle(handlers, sender, request)
+        transport.send(sender, entry.response, protocol)
       end),
     }
     if resume(worker) then

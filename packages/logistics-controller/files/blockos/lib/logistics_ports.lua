@@ -179,8 +179,10 @@ function logistics_ports.new(config, save)
           .. "storage network and the main cable the 'port' role"
       end
     end
-    to_entry.proxy.port_hold()
-    local sent, send_error = from_entry.proxy.to_port(item, count, from_handle)
+    -- Each crossing holds the ports under its own name until its last step.
+    local hold = string.format("x%d-%d", math.random(0, 0x7fffffff), os.epoch("utc"))
+    to_entry.proxy.port_hold(nil, hold)
+    local sent, send_error = from_entry.proxy.to_port(item, count, from_handle, hold)
     if not sent then
       return nil, send_error
     end
@@ -191,11 +193,12 @@ function logistics_ports.new(config, save)
     if carried == 0 then
       return nil, "the port of " .. to_entry.name .. " is full"
     end
-    local delivered, deliver_error = to_entry.proxy.from_port(to_handle, item, carried, output)
+    local delivered, deliver_error = to_entry.proxy.from_port(to_handle, item, carried, output,
+      hold)
     if not delivered then
       return nil, deliver_error
     end
-    return { moved = delivered.moved, output = delivered.output }
+    return { moved = delivered.moved, output = delivered.output, seq = sent.seq }
   end
 
   return ports

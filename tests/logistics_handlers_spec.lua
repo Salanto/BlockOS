@@ -250,4 +250,31 @@ return function(t)
     t.ok(watch, "iron was not watched")
     t.eq(watch and watch.limit, 12)
   end)
+
+  t.it("a request lowers counts until the report that includes it; late reports are ignored",
+    function()
+      local import = t.fresh_import()
+      import("logistics_alarms").env.broadcast = function() end
+      local hub = import("logistics_hub").new({ config = {}, save = function() return true end })
+      local proxy = {
+        request = function(_, count) return { moved = count, output = "out", seq = 6 } end,
+      }
+      local function report(seq, iron, boot)
+        hub.update("main", { seq = seq, boot = boot or 1,
+          totals = { iron = { count = iron, label = "Iron" } },
+          blocks = { { handle = "out", role = "output" } } }, proxy)
+      end
+      report(5, 100)
+      assert(hub.request("iron", 10))
+      t.eq(hub.totals().iron.count, 90, "lowered at once")
+      report(4, 100)
+      t.eq(hub.totals().iron.count, 90, "a late report changes nothing")
+      report(5, 100)
+      t.eq(hub.totals().iron.count, 90, "a report from before the move keeps it subtracted")
+      report(6, 90)
+      t.eq(hub.totals().iron.count, 90, "the report with the move: not subtracted twice")
+      assert(hub.request("iron", 10))
+      report(1, 80, 2)
+      t.eq(hub.totals().iron.count, 80, "after a node restart its counts are fresh")
+    end)
 end
