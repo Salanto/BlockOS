@@ -16,11 +16,9 @@ local function run(ctx)
   local path = import("paths").top(RECIPES_FILE)
   local groups_path = import("paths").top(GROUPS_FILE)
 
-  -- The node service starts first; wait until its node exists.
-  while not blockos.logistics_node do
-    sleep(1)
-  end
-  local node = blockos.logistics_node
+  -- The node service starts first; wait until it provides its node.
+  local services = import("services")
+  local node = services.await("logistics.node")
 
   local recipes = fs.exists(path) and fsx.read_table(path) or {}
   local groups = fs.exists(groups_path) and fsx.read_table(groups_path) or {}
@@ -52,20 +50,19 @@ local function run(ctx)
     log = ctx.log,
   })
   node.crafter = crafter
-  blockos.logistics_crafter = crafter
+  ctx.provide("logistics.crafter", crafter)
 
   local ok, err = pcall(function()
     while true do
       -- The node service restarted: start over with its new node (a restart of this
       -- service; running jobs are asked for again by the controller).
-      if blockos.logistics_node ~= node then
+      if services.get("logistics.node") ~= node then
         error("the logistics node restarted", 0)
       end
       crafter.tick()
       sleep(1)
     end
   end)
-  blockos.logistics_crafter = nil
   if node.crafter == crafter then
     node.crafter = nil
   end

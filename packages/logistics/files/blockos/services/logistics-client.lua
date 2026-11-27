@@ -53,7 +53,7 @@ local function run(ctx)
   -- [server .. "/" .. item] = { alert, id }, while low; id is the computer
   -- that sent the alert, so the notice can be checked with it later.
   local low_items = {}
-  blockos.logistics_alerts = blockos.logistics_alerts or {}
+  local recent_alerts = {}
 
   local function update_notice()
     local count = 0
@@ -66,7 +66,7 @@ local function run(ctx)
   end
 
   local function remember(alert, sender)
-    local alerts = blockos.logistics_alerts
+    local alerts = recent_alerts
     alerts[#alerts + 1] = alert
     if #alerts > MAX_ALERTS then
       table.remove(alerts, 1)
@@ -90,7 +90,7 @@ local function run(ctx)
   -- The status rows of the hub with this ID.
   local function status_rows(id)
     if id == os.getComputerID() then
-      local local_hub = blockos.logistics_hub
+      local local_hub = import("services").get("logistics.hub")
       if not local_hub then
         return nil, "no hub runs here any more"
       end
@@ -143,7 +143,7 @@ local function run(ctx)
   -- the sender).
   local seen_local = 0
   local function check_local_alerts()
-    local local_hub = blockos.logistics_hub
+    local local_hub = import("services").get("logistics.hub")
     if not local_hub then
       return
     end

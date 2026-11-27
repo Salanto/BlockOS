@@ -98,7 +98,9 @@ local function run(ctx)
     return nil, "could not save the node config (is the disk full?)"
   end
   local node = logistics_node.new({ config = config, save = save, sources = sources, log = log })
-  blockos.logistics_node = node
+  -- Programs and logistics-crafting find this node here (withdrawn when it stops).
+  ctx.provide("logistics.node", node)
+  local services = import("services")
 
   local function hostname()
     return blockos.net and blockos.net.hostname() or ("#" .. os.getComputerID())
@@ -107,10 +109,10 @@ local function run(ctx)
   -- Lone mode -------------------------------------------------------------
 
   local levels_path = file("LEVELS_FILE")
-  local hub = nil
+  local hub, hub_entry = nil, nil
 
   local function start_hub()
-    if blockos.logistics_controller then
+    if services.get("logistics.controller") then
       return -- a controller runs on this computer: it is the hub
     end
     local levels = fs.exists(levels_path) and fsx.read_table(levels_path) or {}
@@ -126,20 +128,20 @@ local function run(ctx)
       title = "Logistics " .. hostname(),
     })
     logistics_hub.env.log = log.warn
-    blockos.logistics_hub = {
+    hub_entry = {
       hub = hub,
       handlers = logistics_handlers.new(hub),
       config = hub.config,
       describe = hostname() .. " (no controller)",
     }
+    ctx.provide("logistics.hub", hub_entry)
   end
 
   local function stop_hub()
     if hub then
       hub.stop()
-      if blockos.logistics_hub and blockos.logistics_hub.hub == hub then
-        blockos.logistics_hub = nil
-      end
+      ctx.withdraw("logistics.hub", hub_entry)
+      hub_entry = nil
       hub = nil
     end
   end
@@ -173,7 +175,7 @@ local function run(ctx)
   local missed_lookups = 0
 
   local function enter(new_mode, id, label)
-    local local_controller = blockos.logistics_controller
+    local local_controller = services.get("logistics.controller")
     if new_mode == "here" then
       controller_id = nil
       if local_controller then
@@ -217,7 +219,7 @@ local function run(ctx)
 
   local function look_for_controller()
     -- A controller started or stopped on this computer: the hub here changes owner.
-    local has_local = blockos.logistics_controller ~= nil
+    local has_local = services.get("logistics.controller") ~= nil
     local owns_hub = hub ~= nil
     if mode == "here" and has_local == owns_hub then
       enter("here")
@@ -289,8 +291,9 @@ local function run(ctx)
     local report = node.report()
     report.node = hostname()
     report.pos = position
-    if mode == "here" and blockos.logistics_controller then
-      blockos.logistics_controller.update(report.node, report, node.proxy())
+    local local_controller = services.get("logistics.controller")
+    if mode == "here" and local_controller then
+      local_controller.update(report.node, report, node.proxy())
     elseif mode == "remote" then
       local event, err = logistics_client.report_event(report)
       if event then
@@ -326,7 +329,6 @@ local function run(ctx)
     end
   )
   stop_hub()
-  blockos.logistics_node = nil
   if not ok then
     error(err, 0)
   end

@@ -110,7 +110,7 @@ end
 ------------------------------------------------------------------------------
 
 local function crafter_here()
-  local crafter = blockos and blockos.logistics_crafter
+  local crafter = import("services").get("logistics.crafter")
   if not crafter then
     return nil, "Run this on a logistics node with logistics-crafting installed."
   end
@@ -122,7 +122,7 @@ local function block_named(query)
   if tostring(query):match("^@[%w_%-]+:?%d*$") then
     return query
   end
-  local node = blockos.logistics_node
+  local node = import("services").get("logistics.node")
   local handles = {}
   for _, row in ipairs(node.list_storages()) do
     handles[#handles + 1] = row.handle

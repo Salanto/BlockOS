@@ -234,8 +234,9 @@ return function(t)
     _G.blockos = {
       ui = import("ui"),
       user = { name = "admin", source = "local", is_admin = true },
-      logistics_hub = { hub = hub, handlers = handlers, config = hub.config },
     }
+    import("services").provide("logistics.hub", { hub = hub, handlers = handlers,
+      config = hub.config })
     local input = {
       { "wait", 0.3 }, { "char", "2" }, { "wait", 0.3 },
       { "key", keys.down }, -- Iron Ingot (Gold Ingot sorts first)

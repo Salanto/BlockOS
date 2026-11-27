@@ -436,7 +436,7 @@ end
 
 -- On a node: which modem is the storage network (closed for rednet).
 local function set_node_side(side)
-  local node = blockos.logistics_node
+  local node = import("services").get("logistics.node")
   if not node then
     return fail("Run this on a logistics node (package logistics-node).")
   end
@@ -475,7 +475,7 @@ end
 -- Give the controller a new name (or none, with --clear). The service registers the
 -- new record when it restarts; the old record is removed here.
 local function rename(wanted)
-  local hub = blockos.logistics_hub
+  local hub = import("services").get("logistics.hub")
   if not (hub and blockos.services.state("logistics-controller") == "running") then
     fail("Run this on the logistics controller itself.")
     return
@@ -570,7 +570,7 @@ elseif command == "board" then
 elseif command == "node" and options.words[2] == "side" then
   set_node_side(options.words[3])
 elseif command == "node" and options.words[2] == "alone" then
-  local node = blockos.logistics_node
+  local node = import("services").get("logistics.node")
   if not (node and node.go_alone) then
     fail("Run this on a logistics node (package logistics-node).")
   elseif not (blockos.user and blockos.user.is_admin) then

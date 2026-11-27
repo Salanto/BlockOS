@@ -147,14 +147,14 @@ local function run(ctx)
     end)
   rpc.once(handlers.import_levels) -- the node hands its levels over only once
 
-  blockos.logistics_hub = {
+  ctx.provide("logistics.hub", {
     hub = hub,
     handlers = handlers,
     config = config,
     describe = hostname,
-  }
+  })
   -- A node on this same computer hands its reports over directly (no rednet).
-  blockos.logistics_controller = hub
+  ctx.provide("logistics.controller", hub)
 
   -- Be findable: by rednet name (works without a domain) and, in a domain, as the
   -- "logistics" (or "logistics-<name>") service record.
@@ -221,8 +221,6 @@ local function run(ctx)
     end
   )
   hub.stop()
-  blockos.logistics_hub = nil
-  blockos.logistics_controller = nil
   if not ok then
     error(err, 0)
   end

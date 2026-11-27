@@ -142,7 +142,7 @@ end
 -- @treturn[2] nil
 -- @treturn[2] string error message
 function logistics_client.connect(name, options)
-  local hub = blockos and blockos.logistics_hub
+  local hub = import("services").get("logistics.hub")
   if hub and (name == nil or name == hub.config.name) then
     return logistics_client.local_connection(hub.handlers, hub.describe)
   end

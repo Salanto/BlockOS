@@ -141,4 +141,18 @@ return function(t)
     local log_text = t.read(paths.log()) or ""
     t.ok(log_text:find("hello from a service", 1, true), "print was not logged")
   end)
+
+  t.it("services provide objects that are withdrawn when they stop", function()
+    local services = t.fresh_import()("services")
+    t.eq(services.get("thing"), nil)
+    local thing = { name = "thing" }
+    services.provide("thing", thing, "maker")
+    t.eq(services.get("thing"), thing)
+    local other = {}
+    services.withdraw("thing", other)
+    t.eq(services.get("thing"), thing, "only the one provided is withdrawn")
+    services.withdraw("thing", thing)
+    t.eq(services.get("thing"), nil)
+    t.eq(services.await("thing", 0.1), nil, "await gives up after its timeout")
+  end)
 end
