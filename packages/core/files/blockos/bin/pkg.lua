@@ -4,7 +4,8 @@
 --   pkg list [source]                   list packages available from a source
 --   pkg install <name...> [source] [--force]
 --   pkg remove <name...>
---   pkg update [source] [--check] [-y]  upgrade BlockOS and installed packages
+--   pkg update [source] [--check] [-y] [--force]
+--                                       upgrade BlockOS and installed packages
 --   pkg publish <file.pkg> [--server[=name]]   upload to a package server
 --
 -- Sources: a package server when one is found (the blockos.pkg.server setting,
@@ -23,7 +24,7 @@ local function print_usage()
   print("       pkg list [source]")
   print("       pkg install <name...> [source] [--force]")
   print("       pkg remove <name...>")
-  print("       pkg update [source] [--check] [-y]")
+  print("       pkg update [source] [--check] [-y] [--force]")
   print("       pkg publish <file.pkg> [--server[=name]]")
   print("Source: --server[=name] | --github | --tag <tag> | --disk")
   print("        (default: a package server if found, else GitHub)")
@@ -334,7 +335,7 @@ local function update(source, options)
     ui.print(packages, "error")
     return
   end
-  apply_and_reboot(packages, {})
+  apply_and_reboot(packages, { force = options.force })
 end
 
 local function publish(options)

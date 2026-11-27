@@ -24,6 +24,7 @@
 
 local config = import("config")
 local log = import("log")
+local notices = import("notices")
 
 local services = {}
 
@@ -34,6 +35,17 @@ local scheduler = nil
 local definitions = {}
 local status = {}
 local provided = {} -- [api name] = { service, api }
+
+-- A service that gave up is a problem of this computer: a notice on the welcome screen,
+-- and an alert once reported (see notices). It clears when the service runs again.
+local function notice_key(name)
+  return "service:" .. name
+end
+
+local function mark_broken(name, err)
+  local text = string.format("Service %s failed: %s", name, tostring(err or "?"))
+  notices.set(notice_key(name), text:sub(1, 100), "error")
+end
 
 --- Queued (with the api name) whenever something is provided.
 services.PROVIDED_EVENT = "blockos_service_provided"
@@ -187,6 +199,7 @@ function services.load(dir)
         else
           log.error("services", "invalid service %s: %s", file, tostring(err))
           status[name] = { state = "failed", crash_times = {}, last_error = tostring(err) }
+          mark_broken(name, err)
         end
       end
     end
@@ -259,6 +272,7 @@ local function on_service_exit(name, ok, err)
     service_status.last_error = tostring(err)
     if definition.restart == "never" then
       service_status.state = "crashed"
+      mark_broken(name, err)
       return
     end
   end
@@ -268,6 +282,7 @@ local function on_service_exit(name, ok, err)
     service_status.state = "failed"
     log.error("services", "%s stopped %d times in %ds; giving up",
       name, crash_count, CRASH_WINDOW_SECONDS)
+    mark_broken(name, service_status.last_error)
     return
   end
 
@@ -300,6 +315,7 @@ function services.start(name)
   end
 
   service_status.state = "running"
+  notices.clear(notice_key(name))
   local context = {
     name = name,
     log = log.logger(name),

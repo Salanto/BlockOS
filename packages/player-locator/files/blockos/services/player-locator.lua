@@ -14,7 +14,8 @@ local function wait_for_detector(ctx)
     return
   end
   ctx.log.warn("no Player Detector attached")
-  notices.set("player_locator", "The player locator needs a Player Detector next to it")
+  notices.set("player_locator", "The player locator needs a Player Detector next to it",
+    "warn")
   while not find_detector() do
     local timer = os.startTimer(RECHECK_SECONDS)
     repeat

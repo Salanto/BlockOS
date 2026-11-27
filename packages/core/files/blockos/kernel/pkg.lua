@@ -71,7 +71,9 @@ function pkg.check_depends(set)
     for dependency, range in pairs(manifest.depends or {}) do
       local found = set[dependency]
       if not found then
-        return nil, string.format("%s needs %s, which is not installed", name, dependency)
+        -- Both an install missing a dependency and a removal taking one away end here.
+        return nil, string.format("%s needs %s: remove %s too, or keep (install) %s",
+          name, dependency, name, dependency)
       end
       if not pkg.satisfies(found.version, range) then
         return nil, string.format("%s needs %s %s (have %s)",

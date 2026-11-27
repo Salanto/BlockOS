@@ -277,6 +277,8 @@ function logistics_hub.new(options)
     end
     entry.pending = kept
     hub.nodes[name] = entry
+    hub.note_crafting(entry)
+    hub.check_nodes() -- a node that was stale is back
     record_moves(name, report.moves)
     hub.levels_due = true
     hub.check_levels_if_due()

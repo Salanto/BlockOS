@@ -146,6 +146,8 @@ function repo.store(raw)
     depends = manifest.depends,
     optional = manifest.optional,
     exclusive = manifest.exclusive,
+    kind = manifest.kind,
+    description = manifest.description,
     size = #raw,
     sum = pkg.checksum(raw),
   }

@@ -125,6 +125,7 @@ local function run(ctx)
         return nil, "could not save the levels (is the disk full?)"
       end,
       hostname = hostname(),
+      raise_alert = import("alerts").raise,
       title = "Logistics " .. hostname(),
       log = log.warn,
     })
@@ -301,8 +302,11 @@ local function run(ctx)
     end
     local too_big = node.report_too_big()
     if too_big then
-      import("notices").set("logistics_report", string.format("This node reports %d KB of items"
-        .. " every round: split it into smaller nodes", math.floor(too_big / 1024)))
+      -- A problem (it goes out as an alert); its text stays the same while the size
+      -- changes, so it is not reported again every round.
+      local limit_kb = math.floor(logistics_node.REPORT_WARN_BYTES / 1024)
+      import("notices").set("logistics_report", "This node reports over " .. limit_kb
+        .. " KB of items every round: split it into smaller nodes", "warn")
     else
       import("notices").clear("logistics_report")
     end

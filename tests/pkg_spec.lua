@@ -208,6 +208,33 @@ return function(t)
     t.ok(pkg.apply({ other }, { force = true }), "--force allows it")
   end)
 
+  t.it("companions of an exclusive package, and what they need, may run next to it", function()
+    local import = t.fresh_import()
+    local pkg = import("pkg")
+    pkg.apply({ core_package(import, "0.1.0") })
+    local function optional_package(name, manifest)
+      manifest.optional = true
+      return make_package(import, name, "0.1.0",
+        { ["blockos/lib/" .. name .. ".lua"] = "return {}" }, manifest)
+    end
+    local controller = optional_package("controller", { exclusive = true, companions = { "mail" } })
+    local mail = optional_package("mail", { depends = { store = "*" } })
+    local store = optional_package("store", {})
+    t.ok(pkg.apply({ controller, mail, store }), "a companion and its dependency")
+    local ok, err = pkg.apply({ optional_package("other", {}) })
+    t.ok(not ok and err:find("must run alone"), tostring(err))
+  end)
+
+  t.it("a domain controller upgraded from 0.4 or older may keep domain", function()
+    local manifest = dofile(t.repo .. "/packages/domain-controller/package.lua")
+    local allowed = {}
+    for _, name in ipairs(manifest.companions or {}) do
+      allowed[name] = true
+    end
+    t.ok(allowed.domain, "0.4 and older installed it as a dependency")
+    t.ok(allowed["domain-tools"], "dsa, which 0.4 had in domain")
+  end)
+
   t.it("media-only files stay in the package but are not installed", function()
     local import = t.fresh_import()
     local pkg, paths = import("pkg"), import("paths")

@@ -269,8 +269,9 @@ function logistics_crafter.new(options)
     if index then
       table.remove(crafter.jobs, index)
     end
+    -- `at` (real ms) lets the controller tell a new failure from one it already raised.
     table.insert(crafter.history, 1, { item = job.item, count = job.count, made = job.made,
-      state = state, note = why })
+      state = state, note = why, at = os.epoch("utc") })
     while #crafter.history > logistics_crafter.HISTORY do
       table.remove(crafter.history)
     end

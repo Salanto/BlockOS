@@ -18,6 +18,7 @@ function dc_records.attach(handlers, internal)
   local require_computer = internal.require_computer
   local require_admin = internal.require_admin
   local change = internal.change
+  local hooks = internal.hooks or {}
 
   -- Host and service records -------------------------------------------------
 
@@ -36,6 +37,9 @@ function dc_records.attach(handlers, internal)
     end
     if needs_save and storage.has_room() then
       storage.save()
+    end
+    if hooks.on_report then
+      hooks.on_report(hostname, args)
     end
     return { hostname = hostname }
   end)

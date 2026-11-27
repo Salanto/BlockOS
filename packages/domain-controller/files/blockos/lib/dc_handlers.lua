@@ -49,6 +49,8 @@ local ARGS = {
     info = { type = "table", optional = true },
     kind = { type = "string", optional = true },
     version = { type = "string", optional = true },
+    -- notices.problems() of the computer; the controller raises them as alerts
+    problems = { type = "table", max = 16, optional = true },
   },
   hostname = { hostname = NAME },
   service_type = { type = NAME },
@@ -91,9 +93,13 @@ dc_handlers.DISK_FULL = "the domain controller's disk is full; changes are refus
 --   disk_status()   optional: { free, capacity } of the controller's disk
 --   save_sessions() optional: persist user sessions
 -- @tparam[opt] table clock { now = seconds function, today = day function }
+-- @tparam[opt] table hooks
+--   on_report(hostname, args)  a computer sent a status report (the controller's alert
+--                              broker raises its problems)
 -- @treturn table { [op] = function(request_ctx, args) }
-function dc_handlers.new(dir, storage, clock)
+function dc_handlers.new(dir, storage, clock, hooks)
   clock = clock or {}
+  hooks = hooks or {}
   local now = clock.now or function() return math.floor(os.epoch("utc") / 1000) end
   local today = clock.today or function() return os.day("utc") end
   local handlers = {}
@@ -162,7 +168,7 @@ function dc_handlers.new(dir, storage, clock)
     dir = dir, args = ARGS, now = now, today = today, with_args = with_args,
     computer_of = computer_of, require_computer = require_computer,
     require_user = require_user, require_admin = require_admin, change = change,
-    save_sessions = save_sessions, storage = storage,
+    save_sessions = save_sessions, storage = storage, hooks = hooks,
   }
   import("dc_sessions").attach(handlers, internal)
   import("dc_records").attach(handlers, internal)
