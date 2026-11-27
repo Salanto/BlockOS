@@ -17,6 +17,7 @@
 --   group_add                     domain-admins, or a module's admins creating
 --                                 <module>-... roles managed by themselves
 --   computer_config               a joined computer: what it should have installed and set
+--   profile_get, profile_set      the logged-in user's own roaming profile
 --   list_users, list_groups,      any logged-in domain user (read only)
 --   list_computers, list_services,
 --   list_computer_roles,
@@ -68,6 +69,10 @@ local ARGS = {
     settings = { type = "table", optional = true },
   },
   computer_assign = { hostname = NAME, roles = "table" },
+  profile_set = {
+    apps = { type = "table", optional = true },
+    settings = { type = "table", optional = true },
+  },
 }
 
 local dc_handlers = {}
@@ -446,6 +451,23 @@ function dc_handlers.new(dir, storage, clock)
     return manager_change(ctx, args.group, function()
       return dir:set_everyone(args.group, args.everyone)
     end)
+  end)
+
+  -- Roaming profiles: each user reads and changes only their own.
+  function handlers.profile_get(ctx)
+    local user, err = require_user(ctx)
+    if not user then
+      return nil, err
+    end
+    return dir:get_profile(user.name)
+  end
+
+  handlers.profile_set = with_args(ARGS.profile_set, function(ctx, args)
+    local user, err = require_user(ctx)
+    if not user then
+      return nil, err
+    end
+    return change(function() return dir:set_profile(user.name, args) end)
   end)
 
   -- Users may change their own password; admins may change anyone's.

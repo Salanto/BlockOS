@@ -375,4 +375,30 @@ return function(t)
     local after = domain.handlers.computer_config(domain.computer, {})
     t.eq(#after.packages, 0, "taken off the computer")
   end)
+
+  t.it("each user keeps a roaming profile of apps and settings", function()
+    local domain = new_domain()
+    domain.dir:add_user("bob", "pw")
+    local bob = as_user(domain, login(domain, "bob", "pw"))
+    local admin = as_user(domain, login(domain, "admin", "secret"))
+    local empty = domain.handlers.profile_get(bob, {})
+    t.eq(#empty.apps, 0)
+    t.ok(domain.handlers.profile_set(bob, { apps = { "logistics", "music" },
+      settings = { ["blockos.logistics.server"] = "kitchen" } }))
+    t.eq(domain.handlers.profile_get(bob, {}).apps[2], "music")
+    t.eq(#domain.handlers.profile_get(admin, {}).apps, 0, "every user has their own")
+    t.ok(domain.handlers.profile_set(bob, { apps = { "logistics" } }), "settings stay")
+    t.eq(domain.handlers.profile_get(bob, {}).settings["blockos.logistics.server"], "kitchen")
+    t.ok(not domain.handlers.profile_set(bob, { settings = { ["shell.x"] = true } }),
+      "only blockos.* settings")
+    t.ok(not domain.handlers.profile_set(bob, { apps = { "bad name!" } }))
+    local many = {}
+    for index = 1, domain.directory.MAX_PROFILE_APPS + 1 do
+      many[index] = "app" .. index
+    end
+    t.ok(not domain.handlers.profile_set(bob, { apps = many }), "at most a few apps")
+    t.ok(not domain.handlers.profile_get({ sender = 7 }, {}), "needs a login")
+    t.ok(domain.dir:remove_user("bob"))
+    t.eq(domain.dir.data.profiles.bob, nil, "removed with the user")
+  end)
 end

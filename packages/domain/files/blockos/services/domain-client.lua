@@ -1,5 +1,6 @@
 -- domain-client service: plugs the domain into the login screen and name
--- lookups, and reports this computer's status to the controller.
+-- lookups, brings a domain user's roaming profile into their session, and reports
+-- this computer's status to the controller.
 --
 -- The report is one direct message to the controller at boot, after a rename,
 -- and every few minutes; no broadcasts.
@@ -20,6 +21,14 @@ local function run(ctx)
     return
   end
   ctx.log.info("member of domain %s", domain.name())
+
+  -- Roaming profiles: a domain user's apps and roaming settings, on any computer.
+  import("session").set_login_hook("domain-profile", function(user)
+    if user.source ~= "domain" or not user.token then
+      return nil
+    end
+    return domain.profile_get(user.token)
+  end)
 
   local function report()
     local net = blockos.net

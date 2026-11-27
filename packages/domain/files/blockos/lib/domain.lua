@@ -118,6 +118,24 @@ function domain.computer_config()
   return call("computer_config")
 end
 
+--- A user's roaming profile (their own).
+-- @tparam[opt] string token Default: the logged-in user's.
+-- @treturn[1] table { apps = {...}, settings = { [key] = value } }
+-- @treturn[2] nil
+-- @treturn[2] string error message
+function domain.profile_get(token)
+  if token then
+    return call("profile_get", nil, { token = token })
+  end
+  return domain.call("profile_get")
+end
+
+--- Change the logged-in user's roaming profile.
+-- @tparam table changes { apps?, settings? }
+function domain.profile_set(changes)
+  return domain.call("profile_set", changes)
+end
+
 --- What modules need to know about a role: whether it exists and if it is open to
 -- everyone. Works with the computer's own token, so services can ask too.
 -- @tparam string name

@@ -38,6 +38,7 @@ logistics_client.SLOW_TIMEOUT = 15
 config.define("blockos.logistics.server", {
   description = "Which logistics controller this computer uses (its name); empty: the default.",
   type = "string",
+  roams = true, -- a domain user's profile may choose it (profile set ...)
 })
 config.define("blockos.logistics.board", {
   description = "Monitor or Create Display Link that shows the logistics board.",

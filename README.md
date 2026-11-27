@@ -78,6 +78,13 @@ it, `s` starts or stops a service, `l` reads its log, and `c` opens a **remote s
 screen on yours, your keys on it, like ssh. `rsh <computer>` does the same from any shell. Hold
 Ctrl+T to leave; F12 sends Ctrl+T to the remote computer.
 
+**Roaming profiles.** Your apps and some settings follow you to every joined computer.
+`profile app add logistics` opens logistics in its own tab whenever you log in on an advanced
+computer (basic ones list your apps on the welcome screen); `profile set
+blockos.logistics.server kitchen` makes every terminal you log into use that controller.
+`profile` shows yours, `profile keys` which settings can follow you. Profile settings apply
+only while you are logged in and never change the computer's own settings.
+
 ## A package server
 
 On a computer with disk drives (attach as many as you like with wired modems):
