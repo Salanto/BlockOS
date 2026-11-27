@@ -1,4 +1,4 @@
---- Storage sources for the StorageMonitor.
+--- Storage sources for logistics nodes.
 --
 -- Every file in <root>/lib/storage_sources/ is a source. Packages install into
 -- the shared /blockos/lib, so a package that adds a new kind of storage (for
@@ -9,9 +9,9 @@
 --   describe()            text for people
 --   detect()              -> list of handles (e.g. peripheral names)
 --   read(handle)          -> [item] = { count, label }
--- @module stock_sources
+-- @module logistics_sources
 
-local stock_sources = {}
+local logistics_sources = {}
 
 local SOURCE_DIR = "lib/storage_sources"
 
@@ -19,7 +19,7 @@ local SOURCE_DIR = "lib/storage_sources"
 -- @tparam[opt] string root System tree (default blockos.root).
 -- @tparam[opt] function loader Module loader (default import; tests pass their own).
 -- @treturn {table...}
-function stock_sources.load(root, loader)
+function logistics_sources.load(root, loader)
   loader = loader or import
   root = root or (blockos and blockos.root) or "/blockos"
   local dir = fs.combine(root, SOURCE_DIR)
@@ -55,7 +55,7 @@ end
 -- @treturn {table...} inventories: { handle, role, source, items?, fill? } per
 --   block found (items only for storage blocks; fill { used, size } when the
 --   source reports it, read here so screens never have to ask the blocks)
-function stock_sources.read_all(sources, role_of)
+function logistics_sources.read_all(sources, role_of)
   local totals = {}
   local blocks = 0
   local failures = {}
@@ -92,4 +92,4 @@ function stock_sources.read_all(sources, role_of)
   return totals, blocks, failures, inventories
 end
 
-return stock_sources
+return logistics_sources

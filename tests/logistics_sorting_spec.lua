@@ -89,17 +89,17 @@ return function(t)
     }
     local inventory = import("storage_sources/inventory")
     inventory.peripheral = fake_network(chests)
-    local stock = import("stock")
-    local config = stock.new_config({ "alice" })
-    stock.set_storage(config, "pickup", "input")
-    stock.set_storage(config, "out", "output")
-    stock.set_storage(config, "furnace", "ignore")
+    local logistics = import("logistics")
+    local config = logistics.normalise_node({})
+    logistics.set_storage(config, "pickup", "input")
+    logistics.set_storage(config, "out", "output")
+    logistics.set_storage(config, "furnace", "ignore")
     local function read()
-      return import("stock_sources").read_all({ inventory }, function(handle)
-        return stock.role_of(config, handle)
+      return import("logistics_sources").read_all({ inventory }, function(handle)
+        return logistics.role_of(config, handle)
       end)
     end
-    return chests, read, import("stock_logistics"), stock, config
+    return chests, read, import("logistics_sorting"), logistics, config
   end
 
   t.it("only storage is counted; ignored blocks are left alone", function()
@@ -112,9 +112,9 @@ return function(t)
   end)
 
   t.it("inputs are emptied into storage, next to the same item first", function()
-    local chests, read, logistics = setup()
+    local chests, read, sorting = setup()
     local _, _, _, inventories = read()
-    local moves, failures = logistics.sort_inputs(inventories)
+    local moves, failures = sorting.sort_inputs(inventories)
     t.ok(moves > 0)
     t.eq(#failures, 0)
     t.eq(next(chests.pickup.slots), nil, "the input chest is empty")
@@ -125,9 +125,9 @@ return function(t)
   end)
 
   t.it("requests deliver to the output chest, as far as it has room", function()
-    local chests, read, logistics = setup()
+    local chests, read, sorting = setup()
     local _, _, _, inventories = read()
-    local result = assert(logistics.request(inventories, "iron", 6))
+    local result = assert(sorting.request(inventories, "iron", 6))
     t.eq(result.moved, 6)
     t.eq(result.output, "out")
     t.eq(count_in(chests.out, "iron"), 6)
@@ -137,28 +137,28 @@ return function(t)
     chests.storage_a.slots[3] = { name = "dirt", count = 64 }
     chests.storage_a.slots[4] = { name = "dirt", count = 64 }
     _, _, _, inventories = read()
-    local partial = assert(logistics.request(inventories, "dirt", 192))
+    local partial = assert(sorting.request(inventories, "dirt", 192))
     t.eq(partial.moved, 64, "the 2-slot output had room for one more stack")
   end)
 
   t.it("a request without an output chest says how to set one up", function()
-    local _, read, logistics, stock, config = setup()
-    stock.set_storage(config, "out", "storage")
+    local _, read, sorting, logistics, config = setup()
+    logistics.set_storage(config, "out", "storage")
     local _, _, _, inventories = read()
-    local result, err = logistics.request(inventories, "iron", 1)
+    local result, err = sorting.request(inventories, "iron", 1)
     t.ok(not result)
     t.ok(err:find("output"), err)
   end)
 
   t.it("roles and labels are stored sparingly and validated", function()
-    local _, _, _, stock, config = setup()
-    t.ok(not stock.set_storage(config, "storage_a", "bin"), "unknown roles are refused")
-    t.ok(stock.set_storage(config, "storage_a", nil, "Ores"))
-    t.eq(stock.storage_name(config, "storage_a"), "Ores")
-    t.eq(stock.role_of(config, "storage_a"), "storage")
-    t.ok(stock.set_storage(config, "storage_a", nil, ""))
+    local _, _, _, logistics, config = setup()
+    t.ok(not logistics.set_storage(config, "storage_a", "bin"), "unknown roles are refused")
+    t.ok(logistics.set_storage(config, "storage_a", nil, "Ores"))
+    t.eq(logistics.storage_name(config, "storage_a"), "Ores")
+    t.eq(logistics.role_of(config, "storage_a"), "storage")
+    t.ok(logistics.set_storage(config, "storage_a", nil, ""))
     t.eq(config.storages.storage_a, nil, "nothing left to store")
-    t.eq(stock.role_of(config, "new_chest"), "storage", "new chests count as storage")
+    t.eq(logistics.role_of(config, "new_chest"), "storage", "new chests count as storage")
   end)
 
   t.it("containers default to storage, machines to ignore", function()
@@ -174,11 +174,11 @@ return function(t)
     t.eq(inventory.default_role("sophisticatedstorage:barrel_2"), "storage", "by name too")
     t.eq(inventory.default_role("create:item_vault_0"), "storage")
     t.eq(inventory.default_role("minecraft:furnace_0"), "ignore", "never sort into machines")
-    local stock = import("stock")
-    local config = stock.new_config({ "alice" })
-    t.eq(stock.role_of(config, "minecraft:furnace_0", "ignore"), "ignore")
-    stock.set_storage(config, "minecraft:furnace_0", "storage")
-    t.eq(stock.role_of(config, "minecraft:furnace_0", "ignore"), "storage", "a set role wins")
+    local logistics = import("logistics")
+    local config = logistics.normalise_node({})
+    t.eq(logistics.role_of(config, "minecraft:furnace_0", "ignore"), "ignore")
+    logistics.set_storage(config, "minecraft:furnace_0", "storage")
+    t.eq(logistics.role_of(config, "minecraft:furnace_0", "ignore"), "storage", "a set role wins")
   end)
 
   t.it("reads report how full each block is", function()
@@ -196,38 +196,34 @@ return function(t)
 
   t.it("a missing chest's entry can be forgotten", function()
     local import = t.fresh_import()
-    local stock = import("stock")
-    local monitor = {
-      config = stock.new_config({ "alice" }),
-      totals = {},
-      states = {},
-      alerts = {},
-      inventories = {},
+    local logistics = import("logistics")
+    local config = logistics.normalise_node({})
+    logistics.set_storage(config, "minecraft:chest_9", "input", "Old pickup")
+    local node = import("logistics_node").new({
+      config = config,
       save = function() return true end,
-    }
-    stock.set_storage(monitor.config, "minecraft:chest_9", "input", "Old pickup")
-    local handlers = import("stock_handlers").new(monitor)
-    local ctx = { local_admin = true }
-    t.ok(handlers.set_storage(ctx, { storage = "old pickup", forget = true }))
-    t.eq(monitor.config.storages["minecraft:chest_9"], nil)
+      sources = {},
+    })
+    t.ok(node.set_storage({ storage = "old pickup", forget = true }))
+    t.eq(config.storages["minecraft:chest_9"], nil)
   end)
 
   t.it("items and chests are found by id, label or part of it", function()
-    local _, _, _, stock, config = setup()
+    local _, _, _, logistics, config = setup()
     local totals = {
       ["minecraft:iron_ingot"] = { label = "Iron Ingot" },
       ["minecraft:iron_ore"] = { label = "Iron Ore" },
       ["mod:iron"] = { label = "Iron" },
     }
-    t.eq(stock.find_item(totals, "iron"), "mod:iron", "an exact label wins")
-    t.eq(stock.find_item(totals, "ingot"), "minecraft:iron_ingot")
-    local found, err = stock.find_item(totals, "iron o")
+    t.eq(logistics.find_item(totals, "iron"), "mod:iron", "an exact label wins")
+    t.eq(logistics.find_item(totals, "ingot"), "minecraft:iron_ingot")
+    local found, err = logistics.find_item(totals, "iron o")
     t.eq(found, "minecraft:iron_ore")
     t.eq(err, nil)
-    local none, ambiguous = stock.find_item(totals, "minecraft:iron")
+    local none, ambiguous = logistics.find_item(totals, "minecraft:iron")
     t.ok(not none)
     t.ok(ambiguous:find("ambiguous"), ambiguous)
-    stock.set_storage(config, "storage_b", nil, "Ores")
-    t.eq(stock.find_storage(config, { "storage_a", "storage_b" }, "ores"), "storage_b")
+    logistics.set_storage(config, "storage_b", nil, "Ores")
+    t.eq(logistics.find_storage(config, { "storage_a", "storage_b" }, "ores"), "storage_b")
   end)
 end

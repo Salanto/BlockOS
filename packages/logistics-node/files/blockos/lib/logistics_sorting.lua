@@ -1,17 +1,17 @@
 --- Item logistics: empty input chests into storage and deliver requests to
 -- output chests.
 --
--- Works on the inventory list from stock_sources.read_all. Items only move
+-- Works on the inventory list from logistics_sources.read_all. Items only move
 -- between blocks of the same source, using the source's optional `list` and
--- `push` (for chests: CC's pushItems, which needs both blocks on the stock
--- computer's wired network). Every peripheral call takes a game tick, so the
+-- `push` (for chests: CC's pushItems, which needs both blocks on the node's
+-- storage network). Every peripheral call takes a game tick, so the
 -- work per round is capped.
--- @module stock_logistics
+-- @module logistics_sorting
 
-local stock_logistics = {}
+local logistics_sorting = {}
 
 --- At most this many moves per sorting round (each takes about a tick).
-stock_logistics.MAX_MOVES = 32
+logistics_sorting.MAX_MOVES = 32
 
 local function can_move(source)
   return type(source.list) == "function" and type(source.push) == "function"
@@ -58,11 +58,11 @@ local function sort_slot(inventories, input, slot, stack, moves_left, on_move)
 end
 
 --- Empty every input block into storage (one capped round).
--- @tparam {table...} inventories From stock_sources.read_all.
+-- @tparam {table...} inventories From logistics_sources.read_all.
 -- @tparam[opt] function on_move function(from, to, item, count), per move made
 -- @treturn number Moves made.
 -- @treturn {table...} failures: { handle, error }, for the log
-function stock_logistics.sort_inputs(inventories, on_move)
+function logistics_sorting.sort_inputs(inventories, on_move)
   local moves = 0
   local failures = {}
   for _, input in ipairs(inventories) do
@@ -72,11 +72,11 @@ function stock_logistics.sort_inputs(inventories, on_move)
         failures[#failures + 1] = { handle = tostring(input.handle), error = tostring(slots) }
       else
         for slot, stack in pairs(slots) do
-          if moves >= stock_logistics.MAX_MOVES then
+          if moves >= logistics_sorting.MAX_MOVES then
             return moves, failures
           end
           local made, err = sort_slot(inventories, input, slot, stack,
-            stock_logistics.MAX_MOVES - moves, on_move)
+            logistics_sorting.MAX_MOVES - moves, on_move)
           moves = moves + made
           if err then
             failures[#failures + 1] = { handle = tostring(input.handle), error = err }
@@ -127,7 +127,7 @@ local function take_from(storage, output, item, wanted, on_move)
 end
 
 --- Deliver items from storage to an output block.
--- @tparam {table...} inventories From stock_sources.read_all.
+-- @tparam {table...} inventories From logistics_sources.read_all.
 -- @tparam string item Item id.
 -- @tparam number count How many.
 -- @tparam[opt] string output_handle Which output block; default the first one.
@@ -135,7 +135,7 @@ end
 -- @treturn[1] table { moved, output } (moved may be less than count)
 -- @treturn[2] nil
 -- @treturn[2] string error message
-function stock_logistics.request(inventories, item, count, output_handle, on_move)
+function logistics_sorting.request(inventories, item, count, output_handle, on_move)
   local output = find_output(inventories, output_handle)
   if not output then
     return nil, "no output chest: give one the 'output' role in the Storage tab"
@@ -156,4 +156,4 @@ function stock_logistics.request(inventories, item, count, output_handle, on_mov
   return { moved = moved, output = output.handle }
 end
 
-return stock_logistics
+return logistics_sorting

@@ -21,7 +21,7 @@ return function(t)
       monitor_0 = { types = { "monitor" }, methods = {} },
     })
     local sources = { inventory }
-    local totals, blocks = import("stock_sources").read_all(sources)
+    local totals, blocks = import("logistics_sources").read_all(sources)
     t.eq(blocks, 2, "only inventories are read")
     t.eq(totals["minecraft:cobblestone"].count, 80)
     t.eq(totals["minecraft:cobblestone"].label, "Cobblestone")
@@ -37,7 +37,7 @@ return function(t)
       broken = broken,
       chest = t.fake_chest({ [1] = { name = "x", count = 3, label = "X" } }),
     })
-    local totals, blocks, failures = import("stock_sources").read_all({ inventory })
+    local totals, blocks, failures = import("logistics_sources").read_all({ inventory })
     t.eq(blocks, 1)
     t.eq(totals.x.count, 3)
     t.eq(#failures, 1, "the broken chest is reported for the log")
@@ -54,13 +54,13 @@ return function(t)
       loaded[#loaded + 1] = name
       return { kind = name, read = function() return {} end, detect = function() return {} end }
     end
-    local sources = import("stock_sources").load(root, loader)
+    local sources = import("logistics_sources").load(root, loader)
     t.eq(#sources, 1)
     t.eq(loaded[1], "storage_sources/one")
   end)
 
   local function fake_alarm_env(import)
-    local alarms = import("stock_alarms")
+    local alarms = import("logistics_alarms")
     local relay_outputs, computer_outputs, sent, notes = {}, {}, {}, {}
     alarms.env = {
       peripheral = t.fake_peripherals({
@@ -126,21 +126,21 @@ return function(t)
     local import = t.fresh_import()
     local alarms, _, _, sent = fake_alarm_env(import)
     local states = { iron = { label = "Iron", count = 3, limit = 10, is_low = true } }
-    local alerts = alarms.send_alerts("stock-pc", states,
+    local alerts = alarms.send_alerts("hub-pc", states,
       { went_low = { "iron" }, recovered = {} }, { 12, 13 })
     t.eq(#alerts, 1)
     t.eq(#sent, 2)
-    t.eq(sent[1].protocol, "blockos.stock.alert")
+    t.eq(sent[1].protocol, "blockos.logistics.alert")
     t.ok(import("wire").parse(sent[1].message, "event", alarms.ALERT_SCHEMA))
-    alarms.send_alerts("stock-pc", states, { went_low = {}, recovered = {} }, { 12 })
+    alarms.send_alerts("hub-pc", states, { went_low = {}, recovered = {} }, { 12 })
     t.eq(#sent, 2, "no change, no alert")
     local went_low = { went_low = { "iron" }, recovered = {} }
-    alarms.send_alerts("stock-pc", states, went_low, alarms.EVERYONE)
+    alarms.send_alerts("hub-pc", states, went_low, alarms.EVERYONE)
     t.eq(sent[3].recipient, "everyone", "open access: one broadcast")
 
     local cleared = { label = "Gold", count = 2, limit = 10, is_low = false }
     local unwatched = { went_low = {}, recovered = { "gold" }, cleared = { gold = cleared } }
-    local final = alarms.send_alerts("stock-pc", {}, unwatched, { 12 })
+    local final = alarms.send_alerts("hub-pc", {}, unwatched, { 12 })
     t.eq(final[1].item, "gold")
     t.eq(final[1].is_low, false, "an unwatched item gets a final all-clear")
   end)
@@ -155,7 +155,7 @@ return function(t)
   }
 
   t.it("the board draws on small and large screens", function()
-    local board = t.fresh_import()("stock_board")
+    local board = t.fresh_import()("logistics_board")
     for _, size in ipairs({ { 18, 5 }, { 39, 13 }, { 60, 20 } }) do
       local screen = window.create(term.current(), 1, 1, size[1], size[2], false)
       local pages = board.render(screen, BOARD_DATA)
@@ -165,7 +165,7 @@ return function(t)
   end)
 
   t.it("the board pages through rows that do not fit", function()
-    local board = t.fresh_import()("stock_board")
+    local board = t.fresh_import()("logistics_board")
     local rows = {}
     for i = 1, 20 do
       rows[i] = { label = "Item " .. i, count = i, limit = 5, is_low = i < 5 }
@@ -175,7 +175,7 @@ return function(t)
   end)
 
   t.it("a Create Display Link gets plain text lines with LOW markers", function()
-    local board = t.fresh_import()("stock_board")
+    local board = t.fresh_import()("logistics_board")
     local written, updated = {}, false
     local link = {
       getSize = function() return 4, 24 end, -- rows, then columns
@@ -193,7 +193,7 @@ return function(t)
   end)
 
   t.it("a board that is turned off is blanked", function()
-    local board = t.fresh_import()("stock_board")
+    local board = t.fresh_import()("logistics_board")
     local calls = {}
     local link = {
       clear = function() calls[#calls + 1] = "clear" end,

@@ -30,6 +30,11 @@ config.define("blockos.net.hostname", {
   description = "Hostname on the BlockOS network (default: the label, or pc-<id>).",
   type = "string",
 })
+config.define("blockos.net.closed_sides", {
+  description = "Modem sides never opened for rednet (e.g. a storage network's modem).",
+  default = {},
+  type = "table",
+})
 config.define("blockos.net.announce_interval", {
   description = "Seconds between peer announcements.",
   default = 300,
@@ -301,6 +306,44 @@ function net.resolve(name)
     return nil
   end
   return rednet.lookup(net.HOST_PROTOCOL, short)
+end
+
+--- Is rednet kept off this modem? A logistics node's storage modem is: its cable
+-- holds chests and machines, and rednet there would mix with the main network.
+-- @tparam string side
+-- @treturn boolean
+function net.is_closed_side(side)
+  for _, closed in ipairs(config.get("blockos.net.closed_sides", {})) do
+    if closed == side then
+      return true
+    end
+  end
+  return false
+end
+
+--- Keep rednet off a modem from now on (also closes it now), or allow it again.
+-- Peripherals on a wired modem keep working without rednet.
+-- @tparam string side
+-- @tparam[opt] boolean is_open true to allow rednet there again
+function net.close_side(side, is_open)
+  local kept = {}
+  for _, closed in ipairs(config.get("blockos.net.closed_sides", {})) do
+    if closed ~= side then
+      kept[#kept + 1] = closed
+    end
+  end
+  if is_open then
+    config.set("blockos.net.closed_sides", kept)
+    if peripheral.hasType(side, "modem") then
+      rednet.open(side)
+    end
+    return
+  end
+  kept[#kept + 1] = side
+  config.set("blockos.net.closed_sides", kept)
+  if rednet.isOpen(side) then
+    rednet.close(side)
+  end
 end
 
 --- Forget all state (tests).

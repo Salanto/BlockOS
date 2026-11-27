@@ -16,10 +16,13 @@ local function any_modem_open()
   return false
 end
 
-local function open_all_modems()
+-- Every modem except closed ones (see net.close_side: a storage network's modem).
+local function open_all_modems(net)
   for _, side in ipairs(peripheral.getNames()) do
-    if is_modem(side) then
+    if is_modem(side) and not net.is_closed_side(side) then
       rednet.open(side)
+    elseif is_modem(side) and rednet.isOpen(side) then
+      rednet.close(side)
     end
   end
 end
@@ -99,7 +102,7 @@ local function run(ctx)
     end
   end
 
-  open_all_modems()
+  open_all_modems(net)
   net.set_current_hostname(net.default_hostname())
   update_online_state()
   if not net.is_online() then
@@ -116,7 +119,7 @@ local function run(ctx)
       net.prune()
       announce(false)
       announce_timer = os.startTimer(interval)
-    elseif event == "peripheral" and is_modem(a) then
+    elseif event == "peripheral" and is_modem(a) and not net.is_closed_side(a) then
       rednet.open(a)
       update_online_state()
     elseif event == "peripheral_detach" then

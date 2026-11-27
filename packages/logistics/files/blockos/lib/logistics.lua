@@ -1,47 +1,55 @@
---- Stock watching logic: watches, limits, alarms to raise and who may access.
+--- Logistics logic shared by the controller and the nodes: levels (watched items with
+-- limits and alarms), storage roles and labels, and finding items and chests by name.
 --
--- Pure functions over plain tables, so everything here is unit-tested without
--- any hardware. The storage-monitor service feeds it item counts.
+-- Pure functions over plain tables, so everything here is unit-tested without any
+-- hardware.
 --
--- Config (/etc/blockos/storage-monitor):
---   poll_seconds     how often storage is read
+-- Levels config (the controller's /etc/blockos/logistics-controller, or a lone node's
+-- /etc/blockos/logistics-levels):
 --   chime            play the alarm sound when an item goes low
---   sound            { kind = "note" | "sound" | "file", value, volume } (see stock_alarms)
+--   sound            { kind = "note" | "sound" | "file", value, volume } (see logistics_alarms)
 --   watches          [item] = { label, limit, refill_to?, outputs = { { target, side }... } }
 --                    (low below `limit`, recovered at `refill_to` or a small margin above)
 --   any_low_outputs  redstone outputs that are on while any item is low
---   access           { admins = {...}, viewers = {...}, computers = {...} }
---   name             optional: this stock computer's name ("kitchen")
+--   name             optional: the controller's name ("kitchen")
+--
+-- Node config (/etc/blockos/logistics-node):
+--   poll_seconds     how often storage is read
+--   storage_side     the modem of the storage network (closed for rednet)
 --   storages         [handle] = { role?, label? } per inventory (peripheral name);
 --                    no role means the block's default (containers: storage,
 --                    anything else: ignore)
--- @module stock
+--   controller       the controller's hostname once one was found (no lone mode after)
+-- @module logistics
 
-local stock = {}
+local logistics = {}
 
-stock.DEFAULT_POLL_SECONDS = 10
-stock.DEFAULT_SHARE = 0.5
-stock.RECOVERY_MARGIN = 0.05
-stock.SIDES = { "top", "bottom", "left", "right", "front", "back" }
-stock.DOMAIN_ADMINS = "domain-admins"
+logistics.DEFAULT_POLL_SECONDS = 10
+logistics.DEFAULT_SHARE = 0.5
+logistics.RECOVERY_MARGIN = 0.05
+logistics.SIDES = { "top", "bottom", "left", "right", "front", "back" }
 
---- In an access list: everyone (any user, any computer, even without a domain).
-stock.EVERYONE = "*"
+--- Directory roles (managed mode, see roles.lua): who may change settings, who may use
+-- logistics at all, and the per-node role prefix (items on a node whose role exists are
+-- only seen by its members).
+logistics.ADMINS = "logistics-admins"
+logistics.USERS = "logistics-users"
+logistics.NODE_ROLE_PREFIX = "logistics-node-"
 
 local VALID_SIDES = {}
-for _, side in ipairs(stock.SIDES) do
+for _, side in ipairs(logistics.SIDES) do
   VALID_SIDES[side] = true
 end
 
--- "stock-" .. name must still fit a 32-character service record type.
-stock.MAX_NAME_LENGTH = 26
+-- "logistics-" .. name must still fit a 32-character service record type.
+logistics.MAX_NAME_LENGTH = 22
 
---- Check a stock computer name ("kitchen").
+--- Check a controller name ("kitchen").
 -- @tparam string name
 -- @treturn[1] string The name in lower case.
 -- @treturn[2] nil
 -- @treturn[2] string error message
-function stock.check_name(name)
+function logistics.check_name(name)
   if type(name) ~= "string" or name == "" then
     return nil, "a name is required"
   end
@@ -49,8 +57,8 @@ function stock.check_name(name)
   if not clean:match("^[%w_%-]+$") then
     return nil, "names may only use letters, digits, - and _"
   end
-  if #clean > stock.MAX_NAME_LENGTH then
-    return nil, "names may be at most " .. stock.MAX_NAME_LENGTH .. " characters"
+  if #clean > logistics.MAX_NAME_LENGTH then
+    return nil, "names may be at most " .. logistics.MAX_NAME_LENGTH .. " characters"
   end
   return clean
 end
@@ -60,7 +68,7 @@ end
 -- followed by "ok again").
 -- @tparam {table...} alerts Oldest first, as the stock computer keeps them.
 -- @treturn {table...} Copies, newest first, each with `is_current`.
-function stock.alert_history(alerts)
+function logistics.alert_history(alerts)
   local history = {}
   local seen = {}
   for index = #alerts, 1, -1 do
@@ -77,34 +85,45 @@ function stock.alert_history(alerts)
   return history
 end
 
---- A fresh config.
--- @tparam {string...} admins Users or groups who may configure it.
--- @tparam[opt] string name
--- @treturn table
-function stock.new_config(admins, name)
-  -- Friends only: open by default. Everyone may look, every computer gets
-  -- alerts; only the admins (and domain admins) may change things.
-  local access = { admins = admins, viewers = { stock.EVERYONE }, computers = { stock.EVERYONE } }
-  return stock.normalise({ access = access, name = name })
-end
-
---- Fill in anything missing (also for configs saved by older versions).
+--- Fill in anything missing in a levels config.
 -- @tparam table config
 -- @treturn table The same table.
-function stock.normalise(config)
-  config.poll_seconds = config.poll_seconds or stock.DEFAULT_POLL_SECONDS
+function logistics.normalise(config)
   if config.chime == nil then
     config.chime = true
   end
   config.sound = config.sound or { kind = "note", value = "bell", volume = 3 }
   config.watches = config.watches or {}
   config.any_low_outputs = config.any_low_outputs or {}
-  config.access = config.access or {}
-  config.access.admins = config.access.admins or {}
-  config.access.viewers = config.access.viewers or {}
-  config.access.computers = config.access.computers or {}
+  return config
+end
+
+--- Fill in anything missing in a node config.
+-- @tparam table config
+-- @treturn table The same table.
+function logistics.normalise_node(config)
+  config.poll_seconds = config.poll_seconds or logistics.DEFAULT_POLL_SECONDS
   config.storages = config.storages or {}
   return config
+end
+
+--- Split an old storage-monitor config into a node config and a levels config.
+-- @tparam table old The saved /etc/blockos/storage-monitor table.
+-- @treturn table node config
+-- @treturn table levels config
+function logistics.split_old_config(old)
+  local node = logistics.normalise_node({
+    poll_seconds = old.poll_seconds,
+    storages = old.storages,
+  })
+  local levels = logistics.normalise({
+    chime = old.chime,
+    sound = old.sound,
+    watches = old.watches,
+    any_low_outputs = old.any_low_outputs,
+    name = old.name,
+  })
+  return node, levels
 end
 
 ------------------------------------------------------------------------------
@@ -116,18 +135,18 @@ end
 --   input     emptied into storage automatically
 --   output    requested items are delivered here
 --   ignore    not counted and never touched (furnaces, machines, trash)
-stock.ROLES = { "storage", "input", "output", "ignore" }
-stock.DEFAULT_ROLE = "storage"
-stock.MAX_LABEL_LENGTH = 32
+logistics.ROLES = { "storage", "input", "output", "ignore" }
+logistics.DEFAULT_ROLE = "storage"
+logistics.MAX_LABEL_LENGTH = 32
 
 local VALID_ROLES = {}
-for _, role in ipairs(stock.ROLES) do
+for _, role in ipairs(logistics.ROLES) do
   VALID_ROLES[role] = true
 end
 
 --- @tparam string role
 -- @treturn boolean
-function stock.is_role(role)
+function logistics.is_role(role)
   return VALID_ROLES[role] == true
 end
 
@@ -137,16 +156,16 @@ end
 -- @tparam[opt] string default The block's default role (see the source's
 --   default_role); "storage" when not given.
 -- @treturn string
-function stock.role_of(config, handle, default)
+function logistics.role_of(config, handle, default)
   local entry = config.storages[handle]
-  return entry and entry.role or default or stock.DEFAULT_ROLE
+  return entry and entry.role or default or logistics.DEFAULT_ROLE
 end
 
 --- The name to show for an inventory: its label, else its peripheral name.
 -- @tparam table config
 -- @tparam string handle
 -- @treturn string
-function stock.storage_name(config, handle)
+function logistics.storage_name(config, handle)
   local entry = config.storages[handle]
   return entry and entry.label or handle
 end
@@ -159,12 +178,12 @@ end
 -- @treturn[1] true
 -- @treturn[2] nil
 -- @treturn[2] string error message
-function stock.set_storage(config, handle, role, label)
-  if role ~= nil and not stock.is_role(role) then
-    return nil, "the role must be one of: " .. table.concat(stock.ROLES, ", ")
+function logistics.set_storage(config, handle, role, label)
+  if role ~= nil and not logistics.is_role(role) then
+    return nil, "the role must be one of: " .. table.concat(logistics.ROLES, ", ")
   end
-  if label ~= nil and #label > stock.MAX_LABEL_LENGTH then
-    return nil, "labels may be at most " .. stock.MAX_LABEL_LENGTH .. " characters"
+  if label ~= nil and #label > logistics.MAX_LABEL_LENGTH then
+    return nil, "labels may be at most " .. logistics.MAX_LABEL_LENGTH .. " characters"
   end
   local entry = config.storages[handle] or {}
   if role ~= nil then
@@ -215,7 +234,7 @@ end
 -- @treturn[1] string Item id.
 -- @treturn[2] nil
 -- @treturn[2] string error message
-function stock.find_item(totals, query)
+function logistics.find_item(totals, query)
   local candidates = {}
   for item, found in pairs(totals) do
     candidates[#candidates + 1] = { value = item, names = { item, found.label or item } }
@@ -231,12 +250,42 @@ end
 -- @treturn[1] string Handle.
 -- @treturn[2] nil
 -- @treturn[2] string error message
-function stock.find_storage(config, handles, query)
+function logistics.find_storage(config, handles, query)
   local candidates = {}
   for _, handle in ipairs(handles) do
     candidates[#candidates + 1] = {
       value = handle,
-      names = { handle, stock.storage_name(config, handle) },
+      names = { handle, logistics.storage_name(config, handle) },
+    }
+  end
+  return match_one(query, candidates)
+end
+
+--- Find a block among the rows of several nodes, by peripheral name, label or
+-- "node/name" (needed when two nodes have a chest of the same name).
+-- @tparam {table...} rows { node, handle, label }
+-- @tparam string query
+-- @treturn[1] table The row.
+-- @treturn[2] nil
+-- @treturn[2] string error message
+function logistics.find_block(rows, query)
+  -- The same peripheral name on two nodes is common (minecraft:chest_0): ask for
+  -- node/name instead of picking one.
+  local wanted, exact = query:lower(), {}
+  for _, row in ipairs(rows) do
+    if row.handle:lower() == wanted or tostring(row.label):lower() == wanted then
+      exact[#exact + 1] = row
+    end
+  end
+  if #exact > 1 then
+    return nil, query .. " is ambiguous: say which node, e.g. " .. exact[1].node .. "/"
+      .. exact[1].handle
+  end
+  local candidates = {}
+  for _, row in ipairs(rows) do
+    candidates[#candidates + 1] = {
+      value = row,
+      names = { row.handle, row.label or row.handle, row.node .. "/" .. row.handle },
     }
   end
   return match_one(query, candidates)
@@ -246,12 +295,12 @@ end
 -- @treturn[1] true
 -- @treturn[2] nil
 -- @treturn[2] string error message
-function stock.validate_output(output)
+function logistics.validate_output(output)
   if type(output) ~= "table" or type(output.target) ~= "string" or output.target == "" then
     return nil, "an output needs a target (computer or a relay)"
   end
   if not VALID_SIDES[output.side] then
-    return nil, "an output needs a side: " .. table.concat(stock.SIDES, ", ")
+    return nil, "an output needs a side: " .. table.concat(logistics.SIDES, ", ")
   end
   return true
 end
@@ -261,7 +310,7 @@ end
 -- @treturn[1] table The cleaned watch.
 -- @treturn[2] nil
 -- @treturn[2] string error message
-function stock.clean_watch(watch)
+function logistics.clean_watch(watch)
   local limit = tonumber(watch.limit)
   if not limit or limit < 1 then
     return nil, "the limit must be a number of at least 1"
@@ -273,7 +322,7 @@ function stock.clean_watch(watch)
   end
   local outputs = {}
   for _, output in ipairs(watch.outputs or {}) do
-    local ok, err = stock.validate_output(output)
+    local ok, err = logistics.validate_output(output)
     if not ok then
       return nil, err
     end
@@ -292,11 +341,11 @@ end
 -- the limit so lamps do not flicker when stock hovers around it.
 -- @tparam table watch { limit, refill_to? }
 -- @treturn number
-function stock.recovery_level(watch)
+function logistics.recovery_level(watch)
   if watch.refill_to then
     return watch.refill_to
   end
-  return watch.limit + math.max(1, math.ceil(watch.limit * stock.RECOVERY_MARGIN))
+  return watch.limit + math.max(1, math.ceil(watch.limit * logistics.RECOVERY_MARGIN))
 end
 
 --- Compare current counts with the watches.
@@ -307,7 +356,7 @@ end
 -- @treturn table changes: { went_low = {item...}, recovered = {item...},
 --   cleared = { [item] = state } } (cleared: items unwatched while low, also
 --   listed in recovered; they have no entry in states)
-function stock.evaluate(config, totals, previous)
+function logistics.evaluate(config, totals, previous)
   previous = previous or {}
   local states = {}
   local changes = { went_low = {}, recovered = {}, cleared = {} }
@@ -317,7 +366,7 @@ function stock.evaluate(config, totals, previous)
     local was_low = previous[item] ~= nil and previous[item].is_low
     local is_low
     if was_low then
-      is_low = count < stock.recovery_level(watch)
+      is_low = count < logistics.recovery_level(watch)
     else
       is_low = count < watch.limit
     end
@@ -359,9 +408,9 @@ end
 --- Which redstone outputs should be on. An output is on while any item mapped
 -- to it is low; the any-low outputs are on while any item at all is low.
 -- @tparam table config
--- @tparam table states From stock.evaluate.
+-- @tparam table states From logistics.evaluate.
 -- @treturn table [ "target|side" ] = { target, side, is_on }
-function stock.output_states(config, states)
+function logistics.output_states(config, states)
   local outputs = {}
   local function add(output, is_on)
     local key = output_key(output)
@@ -389,7 +438,7 @@ end
 -- @tparam {table...} reactions
 -- @tparam table item_low [item] = true while low
 -- @treturn table [ "target|side" ] = { target, side, is_on }
-function stock.reaction_outputs(reactions, item_low)
+function logistics.reaction_outputs(reactions, item_low)
   local outputs = {}
   for _, reaction in ipairs(reactions) do
     local key = output_key(reaction)
@@ -406,8 +455,8 @@ end
 -- @tparam table totals [item] = { count, label }
 -- @tparam[opt] number share e.g. 0.5 for half of the current count.
 -- @treturn number How many items were added.
-function stock.watch_from_contents(config, totals, share)
-  share = share or stock.DEFAULT_SHARE
+function logistics.watch_from_contents(config, totals, share)
+  share = share or logistics.DEFAULT_SHARE
   local added = 0
   for item, found in pairs(totals) do
     if not config.watches[item] and found.count > 0 then
@@ -422,68 +471,10 @@ function stock.watch_from_contents(config, totals, share)
   return added
 end
 
-------------------------------------------------------------------------------
--- Access
-------------------------------------------------------------------------------
-
-local function is_listed(list, user)
-  for _, entry in ipairs(list) do
-    if entry == stock.EVERYONE or entry == user.name then
-      return true
-    end
-    for _, group in ipairs(user.groups or {}) do
-      if entry == group then
-        return true
-      end
-    end
-  end
-  return false
-end
-
---- Is a list open to everyone ("*")?
--- @tparam {string...} list
--- @treturn boolean
-function stock.is_open(list)
-  for _, entry in ipairs(list) do
-    if entry == stock.EVERYONE then
-      return true
-    end
-  end
-  return false
-end
-
---- What a domain user may do here: "admin", "viewer" or nil.
--- Domain admins always count as admins.
--- @tparam table config
--- @tparam table user { name, groups }
--- @treturn string|nil
-function stock.access_level(config, user)
-  if is_listed({ stock.DOMAIN_ADMINS }, user) or is_listed(config.access.admins, user) then
-    return "admin"
-  end
-  if is_listed(config.access.viewers, user) then
-    return "viewer"
-  end
-  return nil
-end
-
---- May this domain computer pull data and receive alerts?
--- @tparam table config
--- @tparam string hostname
--- @treturn boolean
-function stock.is_computer_allowed(config, hostname)
-  for _, allowed in ipairs(config.access.computers) do
-    if allowed == stock.EVERYONE or allowed == hostname then
-      return true
-    end
-  end
-  return false
-end
-
 --- Rows for display, sorted: low items first, then by label.
--- @tparam table states From stock.evaluate.
+-- @tparam table states From logistics.evaluate.
 -- @treturn {table...} { item, label, count, limit, refill_to, is_low }
-function stock.sorted_rows(states)
+function logistics.sorted_rows(states)
   local rows = {}
   for item, state in pairs(states) do
     rows[#rows + 1] = {
@@ -504,4 +495,4 @@ function stock.sorted_rows(states)
   return rows
 end
 
-return stock
+return logistics

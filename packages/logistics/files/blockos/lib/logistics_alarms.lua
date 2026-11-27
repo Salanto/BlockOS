@@ -1,23 +1,23 @@
---- StorageMonitor alarms: redstone outputs, a speaker chime and network alerts.
+--- Logistics alarms: redstone outputs, a speaker chime and network alerts.
 --
 -- Redstone goes out of the computer's own sides or out of CC Redstone Relays
 -- anywhere on the wired network (plain on/off). A relay or computer side can
 -- feed lamps directly or a Create Redstone Link for wireless lamps.
--- @module stock_alarms
+-- @module logistics_alarms
 
-local stock = import("stock")
+local logistics = import("logistics")
 local wire = import("wire")
 
-local stock_alarms = {}
+local logistics_alarms = {}
 
-stock_alarms.ALERT_PROTOCOL = "blockos.stock.alert"
-stock_alarms.ALERT_TOPIC = "stock_alert"
-stock_alarms.COMPUTER = "computer"
-stock_alarms.RELAY_TYPE = "redstone_relay"
-stock_alarms.EVERYONE = "everyone"
+logistics_alarms.ALERT_PROTOCOL = "blockos.logistics.alert"
+logistics_alarms.ALERT_TOPIC = "level_alert"
+logistics_alarms.COMPUTER = "computer"
+logistics_alarms.RELAY_TYPE = "redstone_relay"
+logistics_alarms.EVERYONE = "everyone"
 
---- Payload of a stock alert event.
-stock_alarms.ALERT_SCHEMA = {
+--- Payload of a level alert event.
+logistics_alarms.ALERT_SCHEMA = {
   server = "string",
   item = "string",
   label = { type = "string", optional = true },
@@ -27,7 +27,7 @@ stock_alarms.ALERT_SCHEMA = {
 }
 
 --- Hardware and network access (tests replace these with stubs).
-stock_alarms.env = {
+logistics_alarms.env = {
   peripheral = peripheral,
   redstone = redstone,
   send = function(recipient, message, protocol) rednet.send(recipient, message, protocol) end,
@@ -36,22 +36,22 @@ stock_alarms.env = {
 
 --- Redstone targets that can be chosen: this computer and every relay.
 -- @treturn {table...} { target, sides }
-function stock_alarms.list_outputs()
-  local targets = { { target = stock_alarms.COMPUTER, sides = stock.SIDES } }
-  for _, name in ipairs(stock_alarms.env.peripheral.getNames()) do
-    if stock_alarms.env.peripheral.hasType(name, stock_alarms.RELAY_TYPE) then
-      targets[#targets + 1] = { target = name, sides = stock.SIDES }
+function logistics_alarms.list_outputs()
+  local targets = { { target = logistics_alarms.COMPUTER, sides = logistics.SIDES } }
+  for _, name in ipairs(logistics_alarms.env.peripheral.getNames()) do
+    if logistics_alarms.env.peripheral.hasType(name, logistics_alarms.RELAY_TYPE) then
+      targets[#targets + 1] = { target = name, sides = logistics.SIDES }
     end
   end
   return targets
 end
 
 local function set_output(target, side, is_on)
-  if target == stock_alarms.COMPUTER then
-    stock_alarms.env.redstone.setOutput(side, is_on)
+  if target == logistics_alarms.COMPUTER then
+    logistics_alarms.env.redstone.setOutput(side, is_on)
     return true
   end
-  local relay = stock_alarms.env.peripheral.wrap(target)
+  local relay = logistics_alarms.env.peripheral.wrap(target)
   if relay and relay.setOutput then
     relay.setOutput(side, is_on)
     return true
@@ -61,10 +61,10 @@ end
 
 --- Apply the wanted output states. Outputs that were on last time but are no
 -- longer configured are switched off.
--- @tparam table wanted From stock.output_states.
+-- @tparam table wanted From logistics.output_states.
 -- @tparam table applied The table returned by the previous call (or {}).
 -- @treturn table The outputs now applied (pass it in next time).
-function stock_alarms.apply_redstone(wanted, applied)
+function logistics_alarms.apply_redstone(wanted, applied)
   for key, output in pairs(applied) do
     if output.is_on and not wanted[key] then
       pcall(set_output, output.target, output.side, false)
@@ -79,9 +79,9 @@ function stock_alarms.apply_redstone(wanted, applied)
 end
 
 local function find_speaker()
-  for _, name in ipairs(stock_alarms.env.peripheral.getNames()) do
-    if stock_alarms.env.peripheral.hasType(name, "speaker") then
-      return stock_alarms.env.peripheral.wrap(name)
+  for _, name in ipairs(logistics_alarms.env.peripheral.getNames()) do
+    if logistics_alarms.env.peripheral.hasType(name, "speaker") then
+      return logistics_alarms.env.peripheral.wrap(name)
     end
   end
   return nil
@@ -119,7 +119,7 @@ local function play_file(speaker, path, volume)
 end
 
 --- The alarm sound used when nothing is configured: a short bell.
-stock_alarms.DEFAULT_SOUND = { kind = "note", value = "bell", volume = 3 }
+logistics_alarms.DEFAULT_SOUND = { kind = "note", value = "bell", volume = 3 }
 
 --- Check an alarm sound { kind = "note" | "sound" | "file", value, volume }.
 -- `note` is a note block instrument ("bell"), `sound` a Minecraft sound event
@@ -128,7 +128,7 @@ stock_alarms.DEFAULT_SOUND = { kind = "note", value = "bell", volume = 3 }
 -- @treturn[1] true
 -- @treturn[2] nil
 -- @treturn[2] string error message
-function stock_alarms.validate_sound(sound)
+function logistics_alarms.validate_sound(sound)
   if type(sound) ~= "table" or type(sound.value) ~= "string" or sound.value == "" then
     return nil, "a sound needs a kind and a value"
   end
@@ -143,8 +143,8 @@ end
 -- @treturn[1] true
 -- @treturn[2] nil
 -- @treturn[2] string why nothing played
-function stock_alarms.chime(sound)
-  sound = sound or stock_alarms.DEFAULT_SOUND
+function logistics_alarms.chime(sound)
+  sound = sound or logistics_alarms.DEFAULT_SOUND
   local speaker = find_speaker()
   if not speaker then
     return nil, "no speaker attached"
@@ -164,12 +164,12 @@ function stock_alarms.chime(sound)
 end
 
 --- Build the alert event for one changed item.
--- @tparam string server This stock computer's hostname.
+-- @tparam string server The hub's hostname (controller or lone node).
 -- @tparam string item
--- @tparam table state From stock.evaluate.
+-- @tparam table state From logistics.evaluate.
 -- @treturn table A wire event.
-function stock_alarms.alert(server, item, state)
-  return wire.event(stock_alarms.ALERT_TOPIC, {
+function logistics_alarms.alert(server, item, state)
+  return wire.event(logistics_alarms.ALERT_TOPIC, {
     server = server,
     item = item,
     label = state.label,
@@ -183,10 +183,10 @@ end
 -- Alerts only go out when an item goes low or recovers, so a broadcast is rare.
 -- @tparam string server
 -- @tparam table states
--- @tparam table changes From stock.evaluate.
--- @tparam {number...}|string recipients Computer IDs, or stock_alarms.EVERYONE.
+-- @tparam table changes From logistics.evaluate.
+-- @tparam {number...}|string recipients Computer IDs, or logistics_alarms.EVERYONE.
 -- @treturn {table...} The alert payloads sent (for the alert history).
-function stock_alarms.send_alerts(server, states, changes, recipients)
+function logistics_alarms.send_alerts(server, states, changes, recipients)
   local sent = {}
   local changed = {}
   for _, item in ipairs(changes.went_low) do
@@ -197,12 +197,12 @@ function stock_alarms.send_alerts(server, states, changes, recipients)
   end
   local cleared = changes.cleared or {}
   for _, item in ipairs(changed) do
-    local event = stock_alarms.alert(server, item, states[item] or cleared[item])
-    if recipients == stock_alarms.EVERYONE then
-      stock_alarms.env.broadcast(event, stock_alarms.ALERT_PROTOCOL)
+    local event = logistics_alarms.alert(server, item, states[item] or cleared[item])
+    if recipients == logistics_alarms.EVERYONE then
+      logistics_alarms.env.broadcast(event, logistics_alarms.ALERT_PROTOCOL)
     else
       for _, recipient in ipairs(recipients) do
-        stock_alarms.env.send(recipient, event, stock_alarms.ALERT_PROTOCOL)
+        logistics_alarms.env.send(recipient, event, logistics_alarms.ALERT_PROTOCOL)
       end
     end
     sent[#sent + 1] = event.data
@@ -210,4 +210,4 @@ function stock_alarms.send_alerts(server, states, changes, recipients)
   return sent
 end
 
-return stock_alarms
+return logistics_alarms

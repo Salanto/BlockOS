@@ -1,52 +1,53 @@
--- stock: watch stock and set up alarms.
+-- logistics: storage, requests, levels and alarms across the logistics nodes.
 --
---   stock                           full-screen tool (Overview, Catalog, Alarms,
---                                   Alerts, Access)
---   stock setup [--name <name>]     make this computer a stock computer
---   stock rename <name> | --clear   rename this stock computer (stock-<name>), or
---                                   go back to plain "stock"
---   stock status | alerts           print the current state
---   stock storage [list]            every inventory with its role and label
---   stock storage role <chest> storage|input|output|ignore
---   stock storage label <chest> <label...>   (nothing removes it)
---   stock request <item> [count] [output]    deliver items to an output chest
---   stock map                       the network map, with item moves animated
---   stock board <peripheral>|off    show a stock board on a monitor or Display Link
---   stock access add|remove admin|viewer|computer <name>
---   stock sound note|sound|file <value> [volume] | test
---                                   alarm sound: a note block instrument, a
---                                   Minecraft sound event, or a .dfpwm audio file
---   stock react add <item> <target> <side> | remove <item> | list
---                                   on THIS computer: a redstone output that stays
---                                   on while the item is low (e.g. run a farm until
---                                   it is refilled); target is "computer" or a relay
---   --server <name>                 talk to the stock computer registered as
---                                   "stock-<name>" instead of "stock"
+--   logistics                          full-screen tool (Overview, Catalog, Alarms,
+--                                      Alerts, Storage, Nodes)
+--   logistics status | alerts | nodes  print the current state
+--   logistics storage [list]           every chest with its node, role and label
+--   logistics storage role <chest> storage|input|output|ignore
+--   logistics storage label <chest> <label...>   (nothing removes it)
+--   logistics request <item> [count] [output]    deliver items to an output chest
+--   logistics map                      the network map, with item moves animated
+--   logistics board <peripheral>|off   show a levels board on a monitor or Display Link
+--   logistics sound note|sound|file <value> [volume] | test
+--                                      alarm sound: a note block instrument, a
+--                                      Minecraft sound event, or a .dfpwm audio file
+--   logistics react add <item> <target> <side> | remove <item> | list
+--                                      on THIS computer: a redstone output that stays
+--                                      on while the item is low (e.g. run a farm until
+--                                      it is refilled); target is "computer" or a relay
+--   logistics levels import <node>     move a node's lone-mode levels to the controller
+--   logistics node forget <node>       drop a node that was taken down for good
+--   logistics node private <node>      managed mode: only members of the role
+--                                      logistics-node-<node> see that node's items
+--   logistics node side <side>         on a node: which modem is the storage network
+--   logistics rename <name> | --clear  on the controller: register as logistics-<name>
+--   --server <name>                    use the controller "logistics-<name>"
 local args = { ... }
 local ui = blockos.ui
-local stock = import("stock")
-local stock_client = import("stock_client")
-local stock_tool = import("stock_tool")
+local logistics = import("logistics")
+local logistics_client = import("logistics_client")
+local logistics_tool = import("logistics_tool")
 
--- Shared with the full-screen tool (lib/stock_tool.lua).
-local ACCESS_LISTS = stock_tool.ACCESS_LISTS
-local DEFAULT_REQUEST = stock_tool.DEFAULT_REQUEST
-local describe_alert = stock_tool.describe_alert
-local alert_role = stock_tool.alert_role
-local load_alert_history = stock_tool.load_alert_history
-local describe_fill = stock_tool.describe_fill
-local describe_request = stock_tool.describe_request
+-- Shared with the full-screen tool (lib/logistics_tool.lua).
+local DEFAULT_REQUEST = logistics_tool.DEFAULT_REQUEST
+local describe_alert = logistics_tool.describe_alert
+local alert_role = logistics_tool.alert_role
+local load_alert_history = logistics_tool.load_alert_history
+local describe_fill = logistics_tool.describe_fill
+local describe_request = logistics_tool.describe_request
 
 local function print_usage()
-  print("Usage: stock [--server <name>]")
-  print("       stock setup [--name <name>] | rename <name> | rename --clear")
-  print("       stock status | alerts")
-  print("       stock storage [list] | role <chest> <role> | label <chest> <label>")
-  print("       stock request <item> [count] [output chest] | map")
-  print("       stock board <peripheral> | off")
-  print("       stock access add|remove admin|viewer|computer <name>")
-  print("       stock sound note|sound|file <value> [volume] | test")
-  print("       stock react add <item> <target> <side> | remove <item> | list")
+  print("Usage: logistics [--server <name>]")
+  print("       logistics status | alerts | nodes | map")
+  print("       logistics storage [list] | role <chest> <role> | label <chest> <label>")
+  print("       logistics request <item> [count] [output chest]")
+  print("       logistics board <peripheral> | off")
+  print("       logistics sound note|sound|file <value> [volume] | test")
+  print("       logistics react add <item> <target> <side> | remove <item> | list")
+  print("       logistics levels import <node>")
+  print("       logistics node forget|private <node> | side <side>")
+  print("       logistics rename <name> | rename --clear")
 end
 
 local function parse_args()
@@ -54,7 +55,7 @@ local function parse_args()
   local i = 1
   while i <= #args do
     local flag = args[i]
-    if flag == "--server" or flag == "--name" then
+    if flag == "--server" then
       options[flag:sub(3)] = args[i + 1]
       i = i + 1
     else
@@ -69,95 +70,18 @@ local function fail(message)
   ui.print(tostring(message), "error")
 end
 
--- The two usual reasons a stock computer sees no storage at all.
+-- The two usual reasons a node sees no storage at all.
 local function print_no_storage_hint()
   ui.print("No storage found. Right-click each wired modem so it turns red,", "warn")
   ui.print("and put it on the storage's interface block (multiblocks).", "warn")
 end
 
 local function connect(options)
-  local connection, err = stock_client.connect(options.server, { interactive = true })
+  local connection, err = logistics_client.connect(options.server, { interactive = true })
   if not connection then
     fail(err)
   end
   return connection
-end
-
-------------------------------------------------------------------------------
--- stock setup
-------------------------------------------------------------------------------
-
-local function ask_yes(question, default_yes)
-  write(question .. (default_yes and " [Y/n] " or " [y/N] "))
-  local answer = read():lower()
-  if answer == "" then
-    return default_yes
-  end
-  return answer == "y"
-end
-
-local function split_names(text)
-  local names = {}
-  for name in text:gmatch("[^,%s]+") do
-    names[#names + 1] = name
-  end
-  return names
-end
-
-local function setup(options)
-  local fsx = import("fsx")
-  local paths = import("paths")
-  local stock_sources = import("stock_sources")
-  local path = paths.top(stock_client.CONFIG_FILE)
-
-  if not (blockos.user and blockos.user.is_admin) then
-    fail("Only administrators can set up a stock computer.")
-    return
-  end
-  if fs.exists(path) then
-    ui.print("This computer is already a stock computer. Use 'stock' to change it.", "warn")
-    return
-  end
-
-  local name = nil
-  if options.name then
-    local err
-    name, err = stock.check_name(options.name)
-    if not name then
-      fail(err)
-      return
-    end
-  end
-
-  ui.title("Stock computer setup")
-  local default_admin = blockos.user.source == "domain" and blockos.user.name or "stock-admins"
-  local typed = ui.prompt("Administrators (users/groups): ", { default = default_admin })
-  local admins = split_names(typed)
-  local config = stock.new_config(admins, name)
-
-  local sources = stock_sources.load()
-  local totals, blocks = stock_sources.read_all(sources)
-  local item_count = 0
-  for _ in pairs(totals) do
-    item_count = item_count + 1
-  end
-  ui.field("Storage", blocks .. " blocks, " .. item_count .. " different items", nil, 9)
-  if blocks == 0 then
-    print_no_storage_hint()
-  end
-
-  if item_count > 0 and ask_yes("Watch all " .. item_count .. " items now in storage?", true) then
-    local typed_percent = ui.prompt("Limit as % of the current count: ", { default = "50" })
-    local percent = tonumber(typed_percent) or 50
-    local added = stock.watch_from_contents(config, totals, percent / 100)
-    ui.status("Watching " .. added .. " items.", "ok")
-  end
-
-  fsx.write_table(path, config)
-  blockos.services.start("storage-monitor")
-  ui.status("Stock computer ready. Run 'stock' to adjust limits and alarms.", "ok")
-  ui.print("Everyone can look at it and every computer gets its alerts.", "dim")
-  ui.print("To limit that, use the Access tab in 'stock'.", "dim")
 end
 
 ------------------------------------------------------------------------------
@@ -169,16 +93,32 @@ local function show_status(connection)
   if not data then
     return fail(err)
   end
-  ui.title((data.title or "Stock") .. " (" .. connection.describe .. ")")
+  ui.title((data.title or "Logistics") .. " (" .. connection.describe .. ")")
   ui.table({
     { title = "ITEM", key = "label" },
     { title = "COUNT", key = "count" },
     { title = "LIMIT", key = "limit" },
     { title = "STATE", key = function(row) return row.is_low and "LOW" or "ok" end },
   }, data.rows, function(row) return row.is_low and "error" or "text" end)
-  if data.sources == 0 then
+  if data.nodes == 0 then
+    ui.print("No node has reported yet: install logistics-node next to the chests.", "warn")
+  elseif data.sources == 0 then
     print_no_storage_hint()
   end
+end
+
+local function show_nodes(connection)
+  local rows, err = connection.call("nodes")
+  if not rows then
+    return fail(err)
+  end
+  ui.title("Nodes (" .. connection.describe .. ")")
+  ui.table({
+    { title = "NODE", key = "name" },
+    { title = "CHESTS", key = "blocks" },
+    { title = "ITEMS", key = "items" },
+    { title = "SEEN", key = function(row) return row.age .. "s ago" end },
+  }, rows, function(row) return row.is_stale and "warn" or "text" end)
 end
 
 local function show_alerts(connection)
@@ -186,7 +126,7 @@ local function show_alerts(connection)
   if not history then
     return fail(err)
   end
-  ui.title("Recent stock alerts (newest first)")
+  ui.title("Recent level alerts (newest first)")
   if #history == 0 then
     ui.print("  (none)", "faint")
   end
@@ -200,15 +140,15 @@ local function set_board(name)
     return fail("Only administrators can change the board.")
   end
   if name == "off" then
-    blockos.config.set("blockos.stock.board", nil)
-    ui.print("Stock board turned off.", "ok")
+    blockos.config.set("blockos.logistics.board", nil)
+    ui.print("Board turned off.", "ok")
     return
   end
   if not peripheral.isPresent(name) then
     return fail("No peripheral named " .. name)
   end
-  blockos.config.set("blockos.stock.board", name)
-  ui.print("Stock board shown on " .. name .. ".", "ok")
+  blockos.config.set("blockos.logistics.board", name)
+  ui.print("Board shown on " .. name .. ".", "ok")
 end
 
 local SOUND_KINDS = { note = true, sound = true, file = true }
@@ -232,7 +172,7 @@ local function set_sound(connection, kind, value, volume)
   ui.print("Alarm sound set to " .. kind .. " " .. value .. ".", "ok")
 end
 
--- Find an item by its label or ID among the stock computer's watches.
+-- Find an item by its label or ID among the watched items.
 local function find_item(connection, typed)
   local data, err = connection.call("status")
   if not data then
@@ -260,7 +200,7 @@ local function find_item(connection, typed)
 end
 
 local function show_reactions()
-  local reactions = blockos.config.get("blockos.stock.reactions", {})
+  local reactions = blockos.config.get("blockos.logistics.reactions", {})
   ui.title("Reactions on this computer")
   ui.table({
     { title = "ITEM", key = "item" },
@@ -268,7 +208,7 @@ local function show_reactions()
   }, reactions)
 end
 
--- stock react add <item> <target> <side> | remove <item> | list
+-- logistics react add <item> <target> <side> | remove <item> | list
 local function change_reactions(connection, action, typed, target, side)
   if action == "list" or action == nil then
     return show_reactions()
@@ -284,13 +224,13 @@ local function change_reactions(connection, action, typed, target, side)
     return fail(err)
   end
   local kept = {}
-  for _, reaction in ipairs(blockos.config.get("blockos.stock.reactions", {})) do
+  for _, reaction in ipairs(blockos.config.get("blockos.logistics.reactions", {})) do
     if reaction.item ~= row.item then
       kept[#kept + 1] = reaction
     end
   end
   if action == "add" then
-    local ok, output_error = stock.validate_output({ target = target, side = side })
+    local ok, output_error = logistics.validate_output({ target = target, side = side })
     if not ok then
       return fail(output_error)
     end
@@ -298,49 +238,9 @@ local function change_reactions(connection, action, typed, target, side)
   elseif action ~= "remove" then
     return print_usage()
   end
-  blockos.config.set("blockos.stock.reactions", kept)
+  blockos.config.set("blockos.logistics.reactions", kept)
   ui.print("Reactions updated.", "ok")
   show_reactions()
-end
-
-
--- Access lists are not updated when a domain user or group is deleted; point
--- out entries that no longer exist (computer lists hold hostnames: skipped).
-local function warn_unknown_names(list, kind)
-  if kind == "computer" then
-    return
-  end
-  local found, domain = pcall(import, "domain")
-  local unknown = found and domain.find_unknown(list, true)
-  if unknown and #unknown > 0 then
-    ui.print("Not in the domain (deleted?): " .. table.concat(unknown, ", "), "warn")
-  end
-end
-
-local function change_access(connection, action, kind, name)
-  local list_name = ACCESS_LISTS[kind]
-  if not list_name or not name or (action ~= "add" and action ~= "remove") then
-    return print_usage()
-  end
-  local access, err = connection.call("access")
-  if not access then
-    return fail(err)
-  end
-  local list = {}
-  for _, entry in ipairs(access[list_name]) do
-    if entry ~= name then
-      list[#list + 1] = entry
-    end
-  end
-  if action == "add" then
-    list[#list + 1] = name
-  end
-  local ok, set_error = connection.call("set_access", { [list_name] = list })
-  if not ok then
-    return fail(set_error)
-  end
-  ui.print((action == "add" and "Added " or "Removed ") .. name .. " (" .. kind .. ").", "ok")
-  warn_unknown_names(list, kind)
 end
 
 ------------------------------------------------------------------------------
@@ -358,6 +258,7 @@ local function show_storages(connection)
   end
   ui.title("Storage (" .. connection.describe .. ")")
   ui.table({
+    { title = "NODE", key = "node" },
     { title = "CHEST", key = "label" },
     { title = "ROLE", key = "role" },
     { title = "FILL", key = describe_storage_fill },
@@ -383,7 +284,7 @@ local function change_storage(connection, words)
   if not result then
     return fail(err)
   end
-  ui.print("Changed " .. result.storage .. ".", "ok")
+  ui.print("Changed " .. result.storage .. " on " .. tostring(result.node) .. ".", "ok")
 end
 
 local function request_items(connection, item, count_text, output)
@@ -399,7 +300,78 @@ local function request_items(connection, item, count_text, output)
 end
 
 ------------------------------------------------------------------------------
--- stock rename
+-- Levels and nodes
+------------------------------------------------------------------------------
+
+local function import_levels(connection, node)
+  if not node then
+    return print_usage()
+  end
+  local result, err = connection.call("import_levels", { node = node })
+  if not result then
+    return fail(err)
+  end
+  ui.print("Took over " .. result.added .. " levels from " .. node .. ".", "ok")
+  ui.print("Alarm outputs stay behind (they used the node's sides): set them again", "dim")
+  ui.print("in the Alarms tab.", "dim")
+end
+
+-- Managed mode: a role for one node, so it can be kept to some players.
+local function make_private(node)
+  local found, roles = pcall(import, "roles")
+  if not found or not import("domain").is_joined() then
+    return fail("Private nodes need a domain (everything is open without one).")
+  end
+  local role = logistics.NODE_ROLE_PREFIX .. node
+  local ok, err = roles.create(role, logistics.ADMINS, true)
+  if not ok then
+    return fail(err)
+  end
+  ui.print("Created " .. role .. " (still open to everyone).", "ok")
+  ui.print("To keep it to some players: 'domain group everyone " .. role .. " off',", "dim")
+  ui.print("then 'domain group addmember " .. role .. " <user>' (or in dsa).", "dim")
+end
+
+local function change_node(connection, action, value)
+  if action == "forget" and value then
+    local ok, err = connection.call("forget_node", { node = value })
+    if not ok then
+      return fail(err)
+    end
+    return ui.print("Forgot node " .. value .. ".", "ok")
+  elseif action == "private" and value then
+    return make_private(value)
+  end
+  print_usage()
+end
+
+-- On a node: which modem is the storage network (closed for rednet).
+local function set_node_side(side)
+  local node = blockos.logistics_node
+  if not node then
+    return fail("Run this on a logistics node (package logistics-node).")
+  end
+  if not (blockos.user and blockos.user.is_admin) then
+    return fail("Only administrators can change the storage modem.")
+  end
+  if not side or not peripheral.hasType(side, "modem") then
+    return fail("No modem on side " .. tostring(side) .. ".")
+  end
+  local net = import("net")
+  local old = node.config.storage_side
+  if old and old ~= side and not node.config.is_shared then
+    net.close_side(old, true)
+  end
+  node.config.storage_side = side
+  node.config.is_shared = nil
+  node.save()
+  net.close_side(side)
+  blockos.services.restart("logistics-node")
+  ui.print("The storage network is on " .. side .. " (closed for rednet).", "ok")
+end
+
+------------------------------------------------------------------------------
+-- logistics rename
 ------------------------------------------------------------------------------
 
 -- In a domain, refuse a name whose record already points at another computer.
@@ -411,36 +383,36 @@ local function check_name_is_free(domain, service_type)
   return true
 end
 
--- Give this stock computer a new name (or none, with --clear). The service
--- registers the new record when it restarts; the old record is removed here.
+-- Give the controller a new name (or none, with --clear). The service registers the
+-- new record when it restarts; the old record is removed here.
 local function rename(wanted)
-  local server = blockos.stock_server
-  if not server then
-    fail("Run this on the stock computer itself (see 'stock setup').")
+  local hub = blockos.logistics_hub
+  if not (hub and blockos.services.state("logistics-controller") == "running") then
+    fail("Run this on the logistics controller itself.")
     return
   end
   if not (blockos.user and blockos.user.is_admin) then
-    fail("Only administrators can rename a stock computer.")
+    fail("Only administrators can rename the controller.")
     return
   end
 
   local new_name = nil
   if wanted ~= "--clear" then
     local err
-    new_name, err = stock.check_name(wanted)
+    new_name, err = logistics.check_name(wanted)
     if not new_name then
       fail(err)
       return
     end
   end
-  local config = server.config
+  local config = hub.config
   if new_name == config.name then
     ui.print("The name is unchanged.", "warn")
     return
   end
 
-  local old_type = stock_client.service_type(config.name)
-  local new_type = stock_client.service_type(new_name)
+  local old_type = logistics_client.service_type(config.name)
+  local new_type = logistics_client.service_type(new_name)
   local found, domain = pcall(import, "domain")
   local is_joined = found and domain.is_joined()
   if is_joined then
@@ -452,7 +424,7 @@ local function rename(wanted)
   end
 
   config.name = new_name
-  local saved, save_error = server.monitor.save()
+  local saved, save_error = hub.hub.save()
   if not saved then
     fail(save_error)
     return
@@ -464,12 +436,12 @@ local function rename(wanted)
     end
   end
   -- Restarting re-registers under the new name (rednet.host and the domain record).
-  blockos.services.restart("storage-monitor")
+  blockos.services.restart("logistics-controller")
 
   ui.status("Now registered as " .. new_type .. ".", "ok")
   if new_name then
-    ui.print("Other computers: 'stock --server " .. new_name .. "',", "dim")
-    ui.print("or as default: 'set blockos.stock.server " .. new_name .. "'.", "dim")
+    ui.print("Other computers: 'logistics --server " .. new_name .. "',", "dim")
+    ui.print("or as default: 'set blockos.logistics.server " .. new_name .. "'.", "dim")
   else
     ui.print("Other computers find it without --server again.", "dim")
   end
@@ -480,20 +452,20 @@ end
 local REMOTE_COMMANDS = {
   status = true,
   alerts = true,
-  access = true,
+  nodes = true,
   sound = true,
   react = true,
   storage = true,
   request = true,
   map = true,
+  levels = true,
+  node = true,
 }
 
 local options = parse_args()
 local command = options.words[1]
 
-if command == "setup" then
-  setup(options)
-elseif command == "rename" then
+if command == "rename" then
   if options.words[2] then
     rename(options.words[2])
   else
@@ -505,6 +477,8 @@ elseif command == "board" then
   else
     print_usage()
   end
+elseif command == "node" and options.words[2] == "side" then
+  set_node_side(options.words[3])
 elseif command == nil or REMOTE_COMMANDS[command] then
   local connection = connect(options)
   if not connection then
@@ -514,12 +488,12 @@ elseif command == nil or REMOTE_COMMANDS[command] then
     show_status(connection)
   elseif command == "alerts" then
     show_alerts(connection)
-  elseif command == "access" then
-    change_access(connection, options.words[2], options.words[3], options.words[4])
+  elseif command == "nodes" then
+    show_nodes(connection)
   elseif command == "sound" then
     set_sound(connection, options.words[2], options.words[3], options.words[4])
   elseif command == "map" then
-    stock_tool.show_map(connection)
+    logistics_tool.show_map(connection)
   elseif command == "storage" then
     change_storage(connection, options.words)
   elseif command == "request" then
@@ -527,8 +501,14 @@ elseif command == nil or REMOTE_COMMANDS[command] then
   elseif command == "react" then
     change_reactions(connection, options.words[2], options.words[3], options.words[4],
       options.words[5])
+  elseif command == "levels" and options.words[2] == "import" then
+    import_levels(connection, options.words[3])
+  elseif command == "node" then
+    change_node(connection, options.words[2], options.words[3])
+  elseif command == nil then
+    logistics_tool.run(connection)
   else
-    stock_tool.run(connection)
+    print_usage()
   end
 else
   print_usage()

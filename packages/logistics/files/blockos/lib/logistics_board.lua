@@ -1,24 +1,24 @@
---- The stock board: watched items drawn on a CC monitor or a Create Display
+--- The levels board: watched items drawn on a CC monitor or a Create Display
 -- Board (through a Display Link).
 --
 -- Data shape (from the `status` operation or the local service):
 --   { title, updated, rows = { { label, count, limit, is_low }... } }
 -- Rows come sorted with low items first.
--- @module stock_board
+-- @module logistics_board
 
 local ui = import("ui")
 
-local stock_board = {}
+local logistics_board = {}
 
-stock_board.MONITOR_TYPE = "monitor"
+logistics_board.MONITOR_TYPE = "monitor"
 --- Peripheral type of Create's Display Link (Create 0.5.1, 1.20.1).
-stock_board.DISPLAY_LINK_TYPE = "Create_DisplayLink"
+logistics_board.DISPLAY_LINK_TYPE = "Create_DisplayLink"
 
 local BAR_WIDTH = 8
 
 --- Pick the largest text scale at which the board is still useful.
 -- @tparam table monitor A wrapped monitor.
-function stock_board.fit_scale(monitor)
+function logistics_board.fit_scale(monitor)
   for _, scale in ipairs({ 1, 0.5 }) do
     monitor.setTextScale(scale)
     local width = monitor.getSize()
@@ -38,7 +38,7 @@ end
 -- @tparam table data
 -- @tparam[opt=1] number page Which page of rows, when they do not all fit.
 -- @treturn number The number of pages.
-function stock_board.render(target, data, page)
+function logistics_board.render(target, data, page)
   page = page or 1
   local pages = 1
   ui.draw_on(target, function()
@@ -55,7 +55,7 @@ function stock_board.render(target, data, page)
       end
     end
     local summary = low > 0 and (low .. " low") or "all ok"
-    ui.header(1, data.title or "Stock", summary)
+    ui.header(1, data.title or "Logistics", summary)
 
     local show_bar = width >= 34
     local first = (page - 1) * rows_per_page + 1
@@ -86,10 +86,10 @@ end
 -- A Display Link reports its size as rows, then columns.
 -- @tparam table link A wrapped Display Link peripheral.
 -- @tparam table data
-function stock_board.render_display_link(link, data)
+function logistics_board.render_display_link(link, data)
   local rows, columns = link.getSize()
   link.clear()
-  local lines = { (data.title or "Stock") }
+  local lines = { (data.title or "Logistics") }
   for _, row in ipairs(data.rows) do
     local amount = row.count .. "/" .. row.limit .. (row.is_low and " LOW" or "")
     local label_width = math.max(1, columns - #amount - 1)
@@ -105,13 +105,13 @@ end
 --- Blank a monitor or Display Link that no longer shows the board.
 -- @tparam table peripheral_api The peripheral API (tests pass a stub).
 -- @tparam string name
-function stock_board.clear(peripheral_api, name)
+function logistics_board.clear(peripheral_api, name)
   local device = peripheral_api.wrap(name)
   if not device then
     return
   end
   device.clear()
-  if peripheral_api.hasType(name, stock_board.DISPLAY_LINK_TYPE) then
+  if peripheral_api.hasType(name, logistics_board.DISPLAY_LINK_TYPE) then
     device.update()
   end
 end
@@ -124,19 +124,19 @@ end
 -- @treturn[1] number Pages drawn.
 -- @treturn[2] nil
 -- @treturn[2] string error message
-function stock_board.show(peripheral_api, name, data, page)
+function logistics_board.show(peripheral_api, name, data, page)
   local device = peripheral_api.wrap(name)
   if not device then
     return nil, "no peripheral named " .. name
   end
-  if peripheral_api.hasType(name, stock_board.DISPLAY_LINK_TYPE) then
-    stock_board.render_display_link(device, data)
+  if peripheral_api.hasType(name, logistics_board.DISPLAY_LINK_TYPE) then
+    logistics_board.render_display_link(device, data)
     return 1
   end
-  if peripheral_api.hasType(name, stock_board.MONITOR_TYPE) then
-    return stock_board.render(device, data, page)
+  if peripheral_api.hasType(name, logistics_board.MONITOR_TYPE) then
+    return logistics_board.render(device, data, page)
   end
   return nil, name .. " is not a monitor or a Display Link"
 end
 
-return stock_board
+return logistics_board

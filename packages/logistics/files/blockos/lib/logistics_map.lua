@@ -1,19 +1,19 @@
---- The network map: the stock computer in the middle, input and output chests
+--- The network map of one node: the node in the middle, input and output chests
 -- on the left, storage on the right, and recent item moves animated along
--- the lines between them.
+-- the lines between them. Tab shows the next node.
 --
 -- CC cannot tell where blocks are or how cables run, so this is a logical
 -- map, not the real layout. Advanced devices get coloured boxes, fill bars
 -- and mouse clicks; basic devices get plain ASCII. Both work with the
 -- keyboard alone (arrows, Enter, q).
--- @module stock_map
+-- @module logistics_map
 
 local device = import("device")
 local ui = import("ui")
 
-local stock_map = {}
+local logistics_map = {}
 
-local HUB_TEXT = " STOCK "
+local HUB_TEXT = " NODE "
 local FILL_WIDTH = 6
 -- Seconds between animation frames, move polls and layout refreshes.
 local FRAME_SECONDS = 0.15
@@ -54,7 +54,7 @@ end
 -- @tparam number height Screen height.
 -- @treturn table { hub = { x, y, width }, nodes = {...}, by_handle = {...},
 --   hidden_left, hidden_right, ignored, left_bus, right_bus }
-function stock_map.layout(storages, width, height)
+function logistics_map.layout(storages, width, height)
   local top, bottom = 3, height - 2
   local hub_width = #HUB_TEXT
   local hub = {
@@ -147,11 +147,11 @@ local function path_to_hub(layout, node)
 end
 
 --- The cells an item travels from one inventory to another, through the hub.
--- @tparam table layout From stock_map.layout.
+-- @tparam table layout From logistics_map.layout.
 -- @tparam string from Handle.
 -- @tparam string to Handle.
 -- @treturn {table...}|nil { x, y } cells, or nil if either is not on screen
-function stock_map.path(layout, from, to)
+function logistics_map.path(layout, from, to)
   local source, target = layout.by_handle[from], layout.by_handle[to]
   if not (source and target) then
     return nil
@@ -246,8 +246,11 @@ local function draw(view)
   local is_colour = device.is_advanced()
   ui.clear()
   local user = blockos and blockos.user
-  ui.header(1, "Network " .. ui.GLYPHS.dot .. " " .. view.connection.describe,
-    user and user.name)
+  local title = "Network " .. ui.GLYPHS.dot .. " " .. tostring(view.node or "?")
+  if view.node_names and #view.node_names > 1 then
+    title = title .. " (" .. view.node_index .. "/" .. #view.node_names .. ")"
+  end
+  ui.header(1, title, user and user.name)
   draw_lines(layout)
   draw_hub(layout, is_colour)
   for index, node in ipairs(layout.nodes) do
@@ -274,16 +277,48 @@ local function draw(view)
     ui.line(height - 1, view.message, view.role or "dim")
   end
   local right = layout.ignored > 0 and (layout.ignored .. " ignored") or nil
-  ui.footer({ { "q", "Quit" }, { "Enter", "Chest" }, { "r", "Refresh" } }, right)
+  local hints = { { "q", "Quit" }, { "Enter", "Chest" }, { "r", "Refresh" } }
+  if view.node_names and #view.node_names > 1 then
+    hints[#hints + 1] = { "Tab", "Node" }
+  end
+  ui.footer(hints, right)
 end
 
 --- Draw one frame (exposed for tests).
 -- @tparam table view { connection, layout, selected, markers, message?, role? }
-stock_map.draw = draw
+logistics_map.draw = draw
 
 ------------------------------------------------------------------------------
 -- The interactive view
 ------------------------------------------------------------------------------
+
+--- The node names in a storages list, sorted, and the rows of one node.
+-- @tparam {table...} storages Rows with a `node` field.
+-- @tparam[opt] string node Which node (default: the first).
+-- @treturn {string...} node names
+-- @treturn string the node shown
+-- @treturn {table...} its rows
+function logistics_map.pick_node(storages, node)
+  local names, seen = {}, {}
+  for _, row in ipairs(storages) do
+    local name = row.node or "?"
+    if not seen[name] then
+      seen[name] = true
+      names[#names + 1] = name
+    end
+  end
+  table.sort(names)
+  if not seen[node] then
+    node = names[1]
+  end
+  local rows = {}
+  for _, row in ipairs(storages) do
+    if (row.node or "?") == node then
+      rows[#rows + 1] = row
+    end
+  end
+  return names, node, rows
+end
 
 local function load_layout(view)
   local storages, err = view.connection.call("storages")
@@ -291,9 +326,26 @@ local function load_layout(view)
     view.message, view.role = tostring(err), "error"
     return
   end
+  local rows
+  view.node_names, view.node, rows = logistics_map.pick_node(storages, view.node)
+  view.node_index = 1
+  for index, name in ipairs(view.node_names) do
+    if name == view.node then
+      view.node_index = index
+    end
+  end
   local width, height = ui.size()
-  view.layout = stock_map.layout(storages, width, height)
+  view.layout = logistics_map.layout(rows, width, height)
   view.selected = math.max(1, math.min(view.selected, #view.layout.nodes))
+end
+
+local function next_node(view)
+  local names = view.node_names or {}
+  if #names > 1 then
+    view.node = names[view.node_index % #names + 1]
+    view.selected, view.markers = 1, {}
+    load_layout(view)
+  end
 end
 
 local function poll_moves(view)
@@ -302,13 +354,14 @@ local function poll_moves(view)
     return
   end
   if result.log ~= view.log then
-    -- The stock computer restarted: its seqs began again. Start over quietly.
+    -- The hub restarted: its seqs began again. Start over quietly.
     view.log, view.seq = result.log, result.seq
     return
   end
   if view.seq then
     for _, move in ipairs(result.moves) do
-      local path = stock_map.path(view.layout, move.from, move.to)
+      local is_here = move.node == nil or move.node == view.node
+      local path = is_here and logistics_map.path(view.layout, move.from, move.to)
       if path and #view.markers < MAX_MARKERS then
         local char = tostring(move.label):sub(1, 1):upper()
         view.markers[#view.markers + 1] = { path = path, position = 1, char = char }
@@ -343,22 +396,24 @@ local function chest_menu(view, node)
   actions[#actions + 1] = "Cancel"
   local choice = actions[ui.menu({ title = node.label, items = actions })]
   local call, success
+  -- node/handle: two nodes may have a chest of the same name.
+  local ref = node.node and (node.node .. "/" .. node.handle) or node.handle
   if choice == "Set label" then
     local answers = ui.form("Label for " .. node.handle, { { label = "Label: " } })
     if not answers then
       return
     end
-    call, success = { storage = node.handle, label = answers[1] }, "Label set."
+    call, success = { storage = ref, label = answers[1] }, "Label set."
   elseif choice and choice:find("^Role: ") then
     local role = choice:sub(7)
-    call, success = { storage = node.handle, role = role }, node.label .. " is now " .. role .. "."
+    call, success = { storage = ref, role = role }, node.label .. " is now " .. role .. "."
   elseif choice == "Get items here" then
     local answers = ui.form("Get items into " .. node.label,
       { { label = "Item: " }, { label = "How many (64): " } })
     if answers then
       local count = tonumber(answers[2]) or 64
       local result, err = view.connection.call("request",
-        { item = answers[1], count = count, output = node.handle })
+        { item = answers[1], count = count, output = ref })
       if result then
         view.message = "Moved " .. result.moved .. " " .. tostring(result.label) .. "."
         view.role = result.moved < count and "warn" or "ok"
@@ -414,8 +469,8 @@ local function node_at(view, x, y)
 end
 
 --- Show the map until q is pressed.
--- @tparam table connection From stock_client.connect.
-function stock_map.run(connection)
+-- @tparam table connection From logistics_client.connect.
+function logistics_map.run(connection)
   local view = { connection = connection, selected = 1, markers = {}, seq = nil }
   load_layout(view)
   if not view.layout then
@@ -442,6 +497,8 @@ function stock_map.run(connection)
       break
     elseif event == "char" and a == "r" then
       load_layout(view)
+    elseif event == "key" and a == keys.tab then
+      next_node(view)
     elseif event == "key" and a == keys.enter then
       local node = view.layout.nodes[view.selected]
       if node then
@@ -466,4 +523,4 @@ function stock_map.run(connection)
   return true
 end
 
-return stock_map
+return logistics_map

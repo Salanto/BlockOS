@@ -1,39 +1,40 @@
---- The stock tool's full-screen interface (tabs: Overview, Catalog, Alarms,
--- Alerts, Access, Storage) and the formatting it shares with the `stock`
--- command. Kept apart from bin/stock.lua so the command stays argument
+--- The logistics tool's full-screen interface (tabs: Overview, Catalog, Alarms,
+-- Alerts, Storage, Nodes) and the formatting it shares with the `logistics`
+-- command. Kept apart from bin/logistics.lua so the command stays argument
 -- parsing and dispatch.
--- @module stock_tool
+-- @module logistics_tool
 
-local stock = import("stock")
+local logistics = import("logistics")
 local ui = import("ui")
 
-local stock_tool = {}
+local logistics_tool = {}
 
 local function fail(message)
   ui.print(tostring(message), "error")
 end
 
-stock_tool.NO_STORAGE_SHORT = "No storage found: right-click each wired modem"
+logistics_tool.NO_STORAGE_SHORT = "No storage found: right-click each wired modem"
 
-stock_tool.ACCESS_LISTS = { admin = "admins", viewer = "viewers", computer = "computers" }
+logistics_tool.DEFAULT_REQUEST = 64
 
-stock_tool.DEFAULT_REQUEST = 64
-
-function stock_tool.describe_fill(row)
+function logistics_tool.describe_fill(row)
   if not row.size then
     return "-"
   end
   return row.used .. "/" .. row.size .. " slots"
 end
 
-function stock_tool.describe_request(result, count)
+function logistics_tool.describe_request(result, count)
   local text = string.format("Moved %d of %d %s to %s.", result.moved, count,
     tostring(result.label), tostring(result.output))
+  if result.node then
+    text = text:sub(1, -2) .. " on " .. result.node .. "."
+  end
   return text, result.moved < count and "warn" or "ok"
 end
 
--- "12:04 LOW: Copper Ingot 0/1" (older stock computers send no time).
-function stock_tool.describe_alert(alert)
+-- "12:04 LOW: Copper Ingot 0/1".
+function logistics_tool.describe_alert(alert)
   local state = alert.is_low and "LOW" or "ok again"
   local time = alert.time and (alert.time .. " ") or ""
   return string.format("%s%s: %s %d/%d", time, state, alert.label or alert.item, alert.count,
@@ -41,42 +42,41 @@ function stock_tool.describe_alert(alert)
 end
 
 -- Only the newest alert of an item is in colour; older ones are history.
-function stock_tool.alert_role(alert)
+function logistics_tool.alert_role(alert)
   if not alert.is_current then
     return "faint"
   end
   return alert.is_low and "error" or "ok"
 end
 
-function stock_tool.load_alert_history(connection)
+function logistics_tool.load_alert_history(connection)
   local alerts, err = connection.call("alerts")
-  return alerts and stock.alert_history(alerts), err
+  return alerts and logistics.alert_history(alerts), err
 end
 
 -- Short local names inside the tool.
-local NO_STORAGE_SHORT = stock_tool.NO_STORAGE_SHORT
-local ACCESS_LISTS = stock_tool.ACCESS_LISTS
-local DEFAULT_REQUEST = stock_tool.DEFAULT_REQUEST
-local describe_alert = stock_tool.describe_alert
-local alert_role = stock_tool.alert_role
-local load_alert_history = stock_tool.load_alert_history
-local describe_fill = stock_tool.describe_fill
-local describe_request = stock_tool.describe_request
+local NO_STORAGE_SHORT = logistics_tool.NO_STORAGE_SHORT
+local DEFAULT_REQUEST = logistics_tool.DEFAULT_REQUEST
+local describe_alert = logistics_tool.describe_alert
+local alert_role = logistics_tool.alert_role
+local load_alert_history = logistics_tool.load_alert_history
+local describe_fill = logistics_tool.describe_fill
+local describe_request = logistics_tool.describe_request
 
 ------------------------------------------------------------------------------
 -- The tool
 ------------------------------------------------------------------------------
 
-function stock_tool.show_map(connection)
-  local ok, err = import("stock_map").run(connection)
+function logistics_tool.show_map(connection)
+  local ok, err = import("logistics_map").run(connection)
   if not ok then
     fail(err)
   end
 end
 
 --- Run the full-screen tool until q is pressed.
--- @tparam table connection From stock_client.connect.
-function stock_tool.run(connection)
+-- @tparam table connection From logistics_client.connect.
+function logistics_tool.run(connection)
   local state = { tab = 1, rows = {}, list = ui.new_list(), message = nil, role = "dim" }
 
   local function set_message(text, role)
@@ -94,7 +94,7 @@ function stock_tool.run(connection)
   end
 
   -- Keys that work without a selected row.
-  local ROWLESS_KEYS = { W = true, a = true, s = true, t = true, f = true, m = true }
+  local ROWLESS_KEYS = { W = true, s = true, t = true, f = true, m = true }
 
   local function choose_sound()
     local kinds = { "note", "sound", "file" }
@@ -232,8 +232,8 @@ function stock_tool.run(connection)
         end
         local target_menu = { title = "Redstone output for " .. row.label, items = names }
         local target = targets[ui.menu(target_menu)]
-        local side_menu = { title = "Side of " .. target.target, items = stock.SIDES }
-        local side = stock.SIDES[ui.menu(side_menu)]
+        local side_menu = { title = "Side of " .. target.target, items = logistics.SIDES }
+        local side = logistics.SIDES[ui.menu(side_menu)]
         local outputs = row.outputs or {}
         outputs[#outputs + 1] = { target = target.target, side = side }
         run("watch", { item = row.item, limit = row.limit, outputs = outputs }, "Output added.")
@@ -253,68 +253,24 @@ function stock_tool.run(connection)
     keys = {},
   }
 
-  tabs[5] = {
-    title = "Access",
-    load = function()
-      local access, err = connection.call("access")
-      if not access then
-        return nil, err
-      end
-      local rows = {}
-      for kind, list_name in pairs(ACCESS_LISTS) do
-        for _, name in ipairs(access[list_name]) do
-          rows[#rows + 1] = { kind = kind, name = name }
-        end
-      end
-      table.sort(rows, function(a, b) return a.kind .. a.name < b.kind .. b.name end)
-      return rows
-    end,
-    describe = function(row) return string.format("%-9s %s", row.kind, row.name) end,
-    hints = { { "a", "Add" }, { "d", "Remove" } },
-    keys = {
-      a = function()
-        local kinds = { "admin", "viewer", "computer" }
-        local kind = kinds[ui.menu({ title = "Add to the access list", items = kinds })]
-        local answers = ui.form("Add " .. kind, { { label = "Name: " } })
-        if answers then
-          local result = connection.call("access")
-          if result then
-            local list = result[ACCESS_LISTS[kind]]
-            list[#list + 1] = answers[1]
-            run("set_access", { [ACCESS_LISTS[kind]] = list }, answers[1] .. " added.")
-          end
-        end
-      end,
-      d = function(row)
-        if ui.confirm("Remove " .. row.name .. "?") then
-          local result = connection.call("access")
-          if result then
-            local list = {}
-            for _, name in ipairs(result[ACCESS_LISTS[row.kind]]) do
-              if name ~= row.name then
-                list[#list + 1] = name
-              end
-            end
-            run("set_access", { [ACCESS_LISTS[row.kind]] = list }, row.name .. " removed.")
-          end
-        end
-      end,
-    },
-  }
-
   -- Storage --------------------------------------------------------------
+
+  -- node/handle: two nodes may have a chest of the same name.
+  local function storage_ref(row)
+    return row.node and (row.node .. "/" .. row.handle) or row.handle
+  end
 
   local function set_role(row, role)
     if row then
       local message = row.label .. " is now " .. role .. "."
-      run("set_storage", { storage = row.handle, role = role }, message)
+      run("set_storage", { storage = storage_ref(row), role = role }, message)
     end
   end
 
   local function set_label(row)
     local answers = ui.form("Label for " .. row.handle, { { label = "Label: " } })
     if answers then
-      run("set_storage", { storage = row.handle, label = answers[1] }, "Label set.")
+      run("set_storage", { storage = storage_ref(row), label = answers[1] }, "Label set.")
     end
   end
 
@@ -353,24 +309,26 @@ function stock_tool.run(connection)
   -- A configured chest that is gone (e.g. its modem was re-placed).
   local function forget(row)
     if row and row.is_missing and ui.confirm("Forget " .. row.label .. "?") then
-      run("set_storage", { storage = row.handle, forget = true }, row.label .. " forgotten.")
+      run("set_storage", { storage = storage_ref(row), forget = true },
+        row.label .. " forgotten.")
     elseif row then
       set_message("Only missing chests can be forgotten.", "warn")
     end
   end
 
-  tabs[6] = {
+  tabs[5] = {
     title = "Storage",
     load = function() return connection.call("storages") end,
     describe = function(row)
       local fill = row.is_missing and "missing" or describe_fill(row)
-      return string.format("%-18s %-7s %s", row.label, row.role, fill)
+      return string.format("%-10s %-16s %-7s %s", ui.fit(row.node or "", 10),
+        ui.fit(row.label, 16), row.role, fill)
     end,
     role = function(row) return row.role == "ignore" and "faint" or nil end,
     hints = { { "m", "Map" }, { "f", "Find" }, { "l", "Label" }, { "s/i/o/x", "Role" },
       { "d", "Forget" } },
     keys = {
-      m = function() stock_tool.show_map(connection) end,
+      m = function() logistics_tool.show_map(connection) end,
       f = find_chest,
       l = set_label,
       s = function(row) set_role(row, "storage") end,
@@ -378,6 +336,25 @@ function stock_tool.run(connection)
       o = function(row) set_role(row, "output") end,
       x = function(row) set_role(row, "ignore") end,
       d = forget,
+    },
+  }
+
+  tabs[6] = {
+    title = "Nodes",
+    load = function() return connection.call("nodes") end,
+    describe = function(row)
+      local state = row.is_stale and "STALE" or "ok"
+      return string.format("%-14s %3d chests %5d items %5ss %s", ui.fit(row.name, 14),
+        row.blocks, row.items, tostring(row.age), state)
+    end,
+    role = function(row) return row.is_stale and "warn" or nil end,
+    hints = { { "d", "Forget" } },
+    keys = {
+      d = function(row)
+        if ui.confirm("Forget node " .. row.name .. "? (It comes back if it reports.)") then
+          run("forget_node", { node = row.name }, row.name .. " forgotten.")
+        end
+      end,
     },
   }
 
@@ -392,7 +369,7 @@ function stock_tool.run(connection)
   local function draw()
     local _, height = ui.size()
     ui.clear()
-    ui.header(1, "Stock " .. ui.GLYPHS.dot .. " " .. connection.describe,
+    ui.header(1, "Logistics " .. ui.GLYPHS.dot .. " " .. connection.describe,
       blockos.user and blockos.user.name)
     local titles = {}
     for index, tab in ipairs(tabs) do
@@ -457,4 +434,4 @@ function stock_tool.run(connection)
   ui.clear()
 end
 
-return stock_tool
+return logistics_tool
