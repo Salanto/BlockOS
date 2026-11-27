@@ -244,19 +244,33 @@ function t.fake_chest(slots)
 end
 
 --- Register a test.
+-- Real time in seconds (os.clock is CPU time, which misses waiting).
+local function now()
+  return os.epoch("utc") / 1000
+end
+
+-- Tests slower than this show their time, so slow runs can be traced.
+local SLOW_SECONDS = 1
+
+local function timing(started)
+  local seconds = now() - started
+  return seconds >= SLOW_SECONDS and string.format(" (%.1fs)", seconds) or ""
+end
+
 function t.it(name, fn)
   t.reset_sandbox()
   _G.blockos = nil
+  local started = now()
   local ok, err = pcall(fn)
   if ok then
     results.passed = results.passed + 1
-    report("  ok    " .. name)
+    report("  ok    " .. name .. timing(started))
   elseif type(err) == "table" and err.skip then
     results.skipped = results.skipped + 1
     report("  skip  " .. name .. " (" .. tostring(err.skip) .. ")")
   else
     results.failed = results.failed + 1
-    report("  FAIL  " .. name)
+    report("  FAIL  " .. name .. timing(started))
     report("        " .. tostring(err))
   end
   term.redirect(root_terminal)
@@ -279,6 +293,7 @@ local function run_specs()
   table.sort(spec_files)
 
   for _, file in ipairs(spec_files) do
+    local started = now()
     report(file)
     local spec, load_error = loadfile(fs.combine(spec_dir, file), nil, _ENV)
     if not spec then
@@ -291,6 +306,7 @@ local function run_specs()
         report("  FAIL  spec crashed: " .. tostring(err))
       end
     end
+    report("  -- " .. file .. timing(started))
   end
 end
 
