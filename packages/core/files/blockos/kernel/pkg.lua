@@ -602,6 +602,7 @@ local function plan_tree(new_packages, current, root, removed)
       exclusive = manifest.exclusive,
       roles = manifest.roles, -- directory roles for managed mode (see the domain's roles.lua)
       kind = manifest.kind,
+      companions = manifest.companions,
       files = files,
     }
     manifests[manifest.name] = manifest
@@ -631,6 +632,15 @@ local function check_exclusive(manifests)
   for name, manifest in pairs(manifests) do
     if manifest.exclusive then
       local allowed = dependency_closure(name, manifests)
+      -- Companions (manifest `companions`) may run next to it, with what they need.
+      for _, companion in ipairs(manifest.companions or {}) do
+        if manifests[companion] then
+          allowed[companion] = true
+          for needed in pairs(dependency_closure(companion, manifests)) do
+            allowed[needed] = true
+          end
+        end
+      end
       for other, other_manifest in pairs(manifests) do
         if other ~= name and other_manifest.optional and not allowed[other] then
           return nil, string.format(

@@ -11,6 +11,18 @@ local function fail(message)
   ui.print(tostring(message), "error")
 end
 
+local function print_usage()
+  print("Usage: domain user add|del|passwd|enable|disable <name> | user list")
+  print("       domain group add|del <name> | group list")
+  print("       domain group addmember|rmmember <group> <user>")
+  print("       domain group everyone <group> on|off | group manager <group> [group]")
+  print("       domain setup [package]   set a package up for the domain (roles)")
+  print("       domain computer list | computer remove <hostname>")
+  print("       domain computer roles | role <name> <package...> | role-del <name>")
+  print("       domain computer setting <role> <key> [value] | assign <host> [role...]")
+  print("       domain dns list | dns add <type> <host> [protocol] | dns del <type>")
+end
+
 local function call(op, call_args, success)
   local result, err = domain.call(op, call_args)
   if not result then

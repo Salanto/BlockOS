@@ -1,7 +1,8 @@
--- mail: messages between the players of a domain, kept by the domain controller and
--- read on any computer.
+-- mail: messages between the players of a domain, kept by the mail server and read
+-- on any computer.
 --
---   mail                         your messages, newest first (* = new)
+--   mail                         the mail app: folders, list and reading pane
+--   mail list                    your messages, newest first (* = new)
 --   mail read <n>                show message n (and mark it read)
 --   mail send <user|group> <text...>
 --                                a group sends to each of its members
@@ -10,10 +11,15 @@
 -- Joined computers send notices too (from their hostname).
 local args = { ... }
 local ui = blockos.ui
-local domain = import("domain")
+local mail_protocol = import("mail_protocol")
+
+-- Programs may ask for the password again when a login expired.
+local function call(op, call_args)
+  return mail_protocol.call(op, call_args, { relogin = true })
+end
 
 local function print_usage()
-  print("Usage: mail | mail read <n> | mail delete <n>")
+  print("Usage: mail | mail list | mail read <n> | mail delete <n>")
   print("       mail send <user|group> <text...>")
 end
 
@@ -67,7 +73,7 @@ local function read_message(messages, number)
     and (" to " .. message.to) or "") .. ", " .. age(message.time) .. " ago")
   print(message.text)
   if not message.is_read then
-    domain.call("mail_read", { id = message.id })
+    call("read", { id = message.id })
   end
 end
 
@@ -76,7 +82,7 @@ local function delete_message(messages, number)
   if not message then
     return fail(err)
   end
-  local ok, delete_error = domain.call("mail_delete", { id = message.id })
+  local ok, delete_error = call("delete", { id = message.id })
   if not ok then
     return fail(delete_error)
   end
@@ -87,7 +93,7 @@ local function send(to, text)
   if not to or text == "" then
     return print_usage()
   end
-  local result, err = domain.call("mail_send", { to = to, text = text })
+  local result, err = call("send", { to = to, text = text })
   if not result then
     return fail(err)
   end
@@ -95,18 +101,21 @@ local function send(to, text)
 end
 
 if not (blockos.user and blockos.user.source == "domain") then
-  return fail("Log in with a domain account: mail is kept by the domain.")
+  return fail("Log in with a domain account: mail uses the domain's logins.")
 end
 
 local command = args[1]
-if command == "send" then
+if command == nil then
+  -- The mail app (folders, list, reading pane).
+  return import("mail_app").run(call, blockos.user.name)
+elseif command == "send" then
   return send(args[2], table.concat(args, " ", 3))
 end
-local messages, err = domain.call("mail_list")
+local messages, err = call("list")
 if not messages then
   return fail(err)
 end
-if command == nil then
+if command == "list" then
   list(messages)
 elseif command == "read" then
   read_message(messages, args[2])
@@ -115,10 +124,8 @@ elseif command == "delete" then
 else
   print_usage()
 end
-if blockos.notices and command ~= nil then
-  local unread = 0
-  for _, message in ipairs(domain.call("mail_list") or {}) do
-    unread = unread + (message.is_read and 0 or 1)
-  end
+if blockos.notices then
+  local result = call("unread")
+  local unread = result and result.unread or 0
   blockos.notices.mail = unread > 0 and (unread .. " new message(s): type 'mail'") or nil
 end

@@ -7,115 +7,12 @@
 -- removed or the computer leaves the domain.
 -- @module domain
 
-local config = import("config")
 local fsx = import("fsx")
 local paths = import("paths")
 local rpc = import("rpc")
-local wire = import("wire")
 
 local domain = {}
 
---- New mail, announced by the controller to each computer the recipient is logged
--- in at (protocol MAIL_PROTOCOL, wire event MAIL_TOPIC with MAIL_SCHEMA). The
--- receiving computer queues the local event MAIL_EVENT (from, unread) for scripts.
-domain.MAIL_PROTOCOL = "blockos.mail"
-domain.MAIL_TOPIC = "new_mail"
-domain.MAIL_EVENT = "blockos_mail"
-domain.MAIL_SCHEMA = {
-  to = { type = "string", max = 32 },
-  from = { type = "string", max = 32 },
-  unread = { type = "number", min = 0 },
-}
-
---- Build a new-mail event, checked against MAIL_SCHEMA before it goes out.
--- @tparam table data { to, from, unread }
--- @treturn[1] table A wire event.
--- @treturn[2] nil
--- @treturn[2] string error message
-function domain.mail_event(data)
-  local ok, err = wire.validate(data, domain.MAIL_SCHEMA)
-  if not ok then
-    return nil, err
-  end
-  return wire.event(domain.MAIL_TOPIC, data)
-end
-
-config.define("blockos.mail.sound", {
-  description = "Sound for new mail: note:<instrument>, sound:<event>, file:<.dfpwm> or off.",
-  default = "note:chime",
-  type = "string",
-  roams = true, -- your own sound, on every computer you log into
-})
-
---- The new-mail sound from its setting text ("note:chime", "file:/mail.dfpwm", "off").
--- @tparam string text
--- @treturn table|nil a sound for the core sound module, nil for off
-function domain.mail_sound(text)
-  local kind, value = tostring(text):match("^(%a+):(.+)$")
-  if kind == "note" or kind == "sound" or kind == "file" then
-    return { kind = kind, value = value, volume = 1 }
-  end
-  return nil
-end
-
-domain.PROTOCOL = "blockos.domain"
-domain.ADMINS = "domain-admins"
-
-local function membership_path()
-  return paths.top("etc/blockos/domain")
-end
-
---- @treturn table|nil { name, controller_id, computer_token } when joined.
-function domain.membership()
-  return fsx.read_table(membership_path())
-end
-
---- @treturn boolean
-function domain.is_joined()
-  return domain.membership() ~= nil
-end
-
---- @treturn string|nil The domain name.
-function domain.name()
-  local membership = domain.membership()
-  return membership and membership.name
-end
-
-local function save_membership(membership)
-  fsx.write_table(membership_path(), membership)
-end
-
-rpc.set_computer_token_provider(function()
-  local membership = domain.membership()
-  return membership and membership.computer_token
-end)
-
--- When a program finds the login expired (e.g. after 24 hours), ask for the
--- password once instead of failing.
-rpc.set_relogin_handler(function()
-  local user = blockos and blockos.user
-  if not (user and user.source == "domain") then
-    return nil
-  end
-  local ui = blockos.ui
-  ui.print("Your login has expired.", "warn")
-  local ok, password = pcall(ui.prompt, "Password for " .. user.name .. ": ", { mask = "*" })
-  if not ok then
-    return nil
-  end
-  local session = domain.login(user.name, password)
-  if not session then
-    ui.print("Login incorrect.", "error")
-    return nil
-  end
-  user.token = session.token
-  user.groups = session.groups
-  user.is_admin = domain.is_admin(user)
-  return session.token
-end)
-
--- Call the controller. If it stops answering (for example it was moved and now
--- has another computer ID), look it up again by domain name once.
 --- Logging in waits at most this long for the controller (2 tries of half each),
 -- and skips looking for a moved controller: a player should not stare at the login
 -- screen when the controller is down (local accounts still work).
@@ -175,11 +72,21 @@ end
 -- @treturn[2] string error message
 function domain.profile_get(token)
   if token then
-    -- At login: quick (see QUICK_SECONDS); the answer also carries unread mail.
+    -- At login: quick (see QUICK_SECONDS).
     return call("profile_get", nil, { token = token, timeout = domain.QUICK_SECONDS / 2,
       retries = 1, is_quick = true })
   end
   return domain.call("profile_get")
+end
+
+--- Who a message to a user or group reaches, and where each is logged in (for a mail
+-- server; this computer's token).
+-- @tparam string to
+-- @treturn[1] {table...} { name, computers = { id... } }
+-- @treturn[2] nil
+-- @treturn[2] string error message
+function domain.route(to)
+  return call("route", { to = to })
 end
 
 --- Change the logged-in user's roaming profile.

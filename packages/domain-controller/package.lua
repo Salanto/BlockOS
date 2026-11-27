@@ -8,4 +8,6 @@ return {
   optional = true,
   -- Every login and name lookup goes through the controller, so it runs alone.
   exclusive = true,
+  -- ...except for packages that belong next to it (and what they need).
+  companions = { "mail-server" },
 }

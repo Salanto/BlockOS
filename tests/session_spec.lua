@@ -207,14 +207,16 @@ return function(t)
 
   t.it("the mail sound comes from a setting and plays on a speaker", function()
     local import = t.fresh_import()
-    local domain = import("domain")
-    t.eq(domain.mail_sound("note:chime").kind, "note")
-    t.eq(domain.mail_sound("file:/sounds/mail.dfpwm").value, "/sounds/mail.dfpwm")
-    t.eq(domain.mail_sound("sound:minecraft:entity.villager.yes").value,
+    local mail_client = import("mail_client")
+    local mail_protocol = import("mail_protocol")
+    t.eq(mail_client.sound("note:chime").kind, "note")
+    t.eq(mail_client.sound("file:/sounds/mail.dfpwm").value, "/sounds/mail.dfpwm")
+    t.eq(mail_client.sound("sound:minecraft:entity.villager.yes").value,
       "minecraft:entity.villager.yes")
-    t.eq(domain.mail_sound("off"), nil)
-    t.ok(domain.mail_event({ to = "bob", from = "alice", unread = 1 }))
-    t.ok(not domain.mail_event({ to = "bob" }), "checked against the schema before sending")
+    t.eq(mail_client.sound("off"), nil)
+    t.ok(mail_protocol.new_mail_event({ to = "bob", from = "alice", unread = 1 }))
+    t.ok(not mail_protocol.new_mail_event({ to = "bob" }),
+      "checked against the schema before sending")
     local sound = import("sound")
     local notes = {}
     sound.env.peripheral = t.fake_peripherals({
@@ -222,7 +224,7 @@ return function(t)
         playNote = function(_, _, pitch) notes[#notes + 1] = pitch end,
       } },
     })
-    t.ok(sound.play(domain.mail_sound("note:chime"), { 18, 14 }))
+    t.ok(sound.play(mail_client.sound("note:chime"), { 18, 14 }))
     t.eq(table.concat(notes, ","), "18,14", "ding dong")
     sound.env.peripheral = t.fake_peripherals({})
     t.ok(not sound.play({ kind = "note", value = "bell" }), "no speaker, no sound")

@@ -50,8 +50,20 @@ function session.profile_for(user)
     names[#names + 1] = name
   end
   table.sort(names)
-  for _, name in ipairs(names) do
-    local ok, result = pcall(login_hooks[name], user)
+  -- Hooks run side by side: each may ask a server (quickly), and login waits for the
+  -- slowest, not for all of them added up.
+  local results = {}
+  local runners = {}
+  for index, name in ipairs(names) do
+    runners[index] = function()
+      results[index] = table.pack(pcall(login_hooks[name], user))
+    end
+  end
+  if #runners > 0 then
+    parallel.waitForAll(table.unpack(runners))
+  end
+  for index in ipairs(names) do
+    local ok, result = results[index][1], results[index][2]
     if not ok then
       log.warn("session", "login hook failed: %s", tostring(result))
     elseif type(result) == "table" then
