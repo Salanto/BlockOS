@@ -55,8 +55,7 @@ term.redirect(root_terminal)
 
 local function progress(line)
   local handle = fs.open(PROGRESS_FILE, "a")
-  handle.write(line .. "
-")
+  handle.write(line .. "\n")
   handle.close()
 end
 
