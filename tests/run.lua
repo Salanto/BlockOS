@@ -13,6 +13,8 @@ local repo_dir = args[2] or "/repo"
 
 local SANDBOX = "/sandbox"
 local REPORT_FILE = "/test-report.txt"
+-- Written line by line, so a run that hangs still shows where (tools/craftos-run.sh).
+local PROGRESS_FILE = "/test-progress.txt"
 
 -- Every package's kernel/ and lib/ directory, like /blockos/kernel and /blockos/lib
 -- on an installed computer.
@@ -51,9 +53,17 @@ if expected_type == "basic" then
 end
 term.redirect(root_terminal)
 
+local function progress(line)
+  local handle = fs.open(PROGRESS_FILE, "a")
+  handle.write(line .. "
+")
+  handle.close()
+end
+
 local function report(line)
   print(line)
   results.lines[#results.lines + 1] = line
+  progress(line)
 end
 
 ------------------------------------------------------------------------------
@@ -261,6 +271,7 @@ function t.it(name, fn)
   t.reset_sandbox()
   _G.blockos = nil
   local started = now()
+  progress("  ...   " .. name)
   local ok, err = pcall(fn)
   if ok then
     results.passed = results.passed + 1
