@@ -38,7 +38,6 @@ Either way, the first boot asks you to create an administrator account.
 | `pkg update` | Upgrade BlockOS and installed packages (`--check`, `-y`; `update` is a short alias) |
 | `useradd`, `userdel`, `passwd` | Manage local accounts |
 | `logout` | Log out (closes all tabs) |
-| `msg <host> <text>` / `msg * <text>` / `msg` | Chat with other computers; `msg` shows your messages |
 | `blockos autologin <user>` | Log a local user in at boot (farms, displays, turtles) |
 | `blockos motd <text>` | A message of the day on the login screen |
 
@@ -46,7 +45,28 @@ Either way, the first boot asks you to create an administrator account.
 
 The base install only contains what a device needs to join the network. Extra software comes
 as optional packages, installed from a release (`pkg install <name>`) or from an add-on disk
-(`pkg install <name> --disk`).
+(`pkg install <name> --disk`). Packages are split by what a computer needs, so every computer
+installs only its part (`pkg list` shows the kind):
+
+| Kind | What it holds | Examples |
+|---|---|---|
+| protocol | how computers talk to a service, and its client library | `logistics-protocol`, `mail-protocol` |
+| library | code several applications share | `logistics-hub` |
+| application | what runs on a computer (services) | `logistics-node`, `mail-server`, `turtle-remote` |
+| tools | commands and screens people use | `logistics-tools`, `domain-tools`, `mail-tools` |
+| bundle | nothing but other packages | `logistics` (tools and boards for a player's computer) |
+
+Protocol and library packages come along by themselves as dependencies. A storage node needs
+`logistics-node` and nothing to type into; a player's computer gets `logistics`.
+
+| Family | On the computer that serves it | On players' computers |
+|---|---|---|
+| Domain | `domain-controller` (alone, with `mail-server` allowed next to it) | `domain` (every joined computer), `domain-tools` for admins (`dsa`, `rsh`, `profile`) |
+| Logistics | `logistics-node` (next to chests), `logistics-controller`, `logistics-crafter` | `logistics` (or `logistics-tools` / `logistics-display` alone) |
+| Mail | `mail-server` (needs disk drives) | `mail-client` (notices, sound), `mail-tools` (the mail app) |
+| Messages | | `msg` (receives), `msg-tools` (the msg command) |
+| Turtles | `turtle-remote` on the turtle | `turtle-tools` (the remote command) |
+| Packages | `pkg-server`, `pkg-server-tools` | |
 
 ## A domain (one login for all computers)
 
@@ -56,7 +76,8 @@ as optional packages, installed from a release (`pkg install <name>`) or from an
    with any domain account when asked.
 3. Log in with domain accounts from then on. Local accounts still work as `.\name`, for example
    when the controller is down.
-4. Manage users, groups, computers and service records with `dsa` (full screen) or `domain`.
+4. Manage users, groups, computers and service records with `dsa` (full screen) or the admin
+   commands of `domain`: install `domain-tools` on the computers you manage from.
 
 **Managed mode.** Every package works on its own and open. In a domain, packages that have roles
 (for example turtle-remote's `turtle-drivers`) stay open until a domain admin runs
@@ -85,10 +106,13 @@ blockos.logistics.server kitchen` makes every terminal you log into use that con
 `profile` shows yours, `profile keys` which settings can follow you. Profile settings apply
 only while you are logged in and never change the computer's own settings.
 
-**Mail.** `mail send bob the iron farm is jammed` leaves Bob a message; he sees "1 new message"
-when he logs in anywhere (or within a few minutes if he is logged in). `mail send miners ...`
-reaches every member of a group. `mail` lists yours, `mail read 1` shows one, `mail delete 1`
-removes it. The controller keeps the newest 20 per player.
+**Mail.** Install `mail-server` on a computer with disk drives (the domain controller's computer
+is fine, it is allowed next to it). Mailboxes live on the floppies, never on the computer, and
+move to the next disk when one is full. Players install `mail-tools` and `mail-client`. `mail`
+opens the mail app: folders (Inbox, Sent) on the left, the messages at the top, the selected one
+below (on pocket computers one screen after the other); `n` writes, `r` answers, `d` deletes.
+`mail send bob the iron farm is jammed` still works from scripts, and `mail send miners ...`
+reaches every member of a group. The server keeps the newest 20 messages per folder.
 
 New mail arrives at once on the computer you are logged into, with a sound from an attached
 speaker: a "ding dong" by default. Pick your own with `profile set blockos.mail.sound
@@ -98,8 +122,9 @@ react too: the `blockos_mail` event carries the sender and how many messages are
 
 ## A package server
 
-On a computer with disk drives (attach as many as you like with wired modems):
-`pkg install pkg-server`, then `pkgserver import --latest`. It registers itself in the domain,
+`pkg install pkg-server pkg-server-tools`, then `pkgserver import --latest`. Packages are kept
+on the computer itself until it is full, then on the floppies of attached disk drives (add as
+many as you like with wired modems). It registers itself in the domain,
 so other computers install and update from it right away: `pkg` uses a package server when it
 finds one (setting, domain record or the network) and GitHub otherwise (`--github` forces it).
 `pkgserver allow <name> <group>` limits a package to a group.
@@ -107,7 +132,7 @@ finds one (setting, domain record or the network) and GitHub otherwise (`--githu
 ## Logistics
 
 Know what you have and where, get items delivered, and know when you are running out, with
-lamps, a sound and a board. Three packages:
+lamps, a sound and a board. The packages:
 
 - **logistics-node**, on the computer next to a group of chests (attach as many as you like
   with wired modems; Create Item Vaults work too). It counts them, sorts input chests into
@@ -116,7 +141,9 @@ lamps, a sound and a board. Three packages:
   network); its other modem talks to the controller.
 - **logistics-controller**, on a computer of its own: merges every node into one catalog,
   routes requests to the node that can deliver, and runs the levels (limits and alarms).
-- **logistics** (installed with either): the `logistics` command for every computer.
+- **logistics-crafter**, on a node next to its machines: crafts by following recipes.
+- **logistics** for players' computers: a bundle of `logistics-tools` (the `logistics`
+  command) and `logistics-display` (boards, lamps, sound, notices). Either works alone.
 
 **Start small:** a single node works alone. Run `logistics` on it and everything works there
 (catalog, requests, levels, map). When you add a controller later, the node finds it and
@@ -193,7 +220,7 @@ local result, err = logistics_api.request("minecraft:coal", 16, { here = true })
 -- result.pos is where the depot is, result.moved how many are waiting there
 ```
 
-**Crafting.** `pkg install logistics-crafting` on a node next to its machines (a Create mixer's
+**Crafting.** `pkg install logistics-crafter` on a node next to its machines (a Create mixer's
 basin, a press's depot, a deployer's chest...), and give those blocks the **machine** role.
 Then teach a recipe by doing it once: `logistics craft teach create:brass_ingot`, put the
 ingredients into the machines yourself, and press Enter once the result is there. The node
@@ -234,7 +261,7 @@ node's items.
 
 **Coming from storage-monitor:** `pkg install logistics-node` on the old stock computer
 replaces it. On its first start it takes over the chest roles and labels and keeps the old
-limits and alarms running in lone mode. On other computers, `pkg install logistics` (and
+limits and alarms running on the node itself. On other computers, `pkg install logistics` (and
 `pkg remove storage-monitor`); settings like `blockos.stock.board` move to
 `blockos.logistics.*` by themselves.
 
@@ -243,6 +270,23 @@ limits and alarms running in lone mode. On other computers, `pkg install logisti
 `pkg install music`, then `music <song.dfpwm> [volume]` plays a song on every attached speaker
 (a link to a `.dfpwm` file works too). `+`/`-` change the volume, `q` stops. Convert songs to
 DFPWM with an online converter (e.g. music.madefor.cc) before copying them over.
+
+## Upgrading from 0.4
+
+0.5 splits packages by what a computer needs (see Optional packages). `pkg update` updates
+everything you have and brings new dependencies along, but the parts that became optional
+packages of their own are only installed when you ask for them:
+
+- Computers you manage the domain from: `pkg install domain-tools` (`dsa`, `rsh`, `profile`,
+  `domain setup`).
+- Mail now has its own server: `pkg install mail-server` on a computer with disk drives (the
+  domain controller's computer is fine). Players: `pkg install mail-client mail-tools`. Old
+  mailboxes on the controller are not carried over.
+- Instant messages: `pkg install msg` to receive them, `msg-tools` for the `msg` command.
+- Turtle drivers: `turtle-tools` replaces `turtle-driver`; `logistics-crafter` replaces
+  `logistics-crafting` (both by themselves on update).
+
+A computer role in `dsa` that lists the new packages installs them everywhere at once.
 
 ## Recovery
 
