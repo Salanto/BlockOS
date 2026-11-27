@@ -14,7 +14,7 @@ local rpc = import("rpc")
 local domain = {}
 
 domain.PROTOCOL = "blockos.domain"
-domain.ADMINS = "domain-admins"
+domain.ADMINS = rpc.DOMAIN_ADMINS
 
 local function membership_path()
   return paths.top("etc/blockos/domain")
@@ -236,7 +236,15 @@ end
 -- @tparam string token
 -- @treturn table|nil { name, groups }
 function domain.validate(token)
-  return call("validate", { token = token })
+  -- Asked on every request: give up quickly when the controller is gone, and say so
+  -- (roles then fall back to what they knew, see roles.allows).
+  local result, err = call("validate", { token = token }, {
+    timeout = domain.QUICK_SECONDS / 2, retries = 1, is_quick = true,
+  })
+  if not result and tostring(err):find("no answer") then
+    return nil, rpc.UNREACHABLE
+  end
+  return result, err
 end
 
 --- Which domain computer does a computer token belong to?

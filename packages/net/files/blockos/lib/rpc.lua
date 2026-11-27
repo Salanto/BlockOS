@@ -25,6 +25,10 @@ rpc.DEFAULT_TIMEOUT = 3
 rpc.DEFAULT_RETRIES = 1
 rpc.LOGIN_REQUIRED = "login required"
 rpc.PERMISSION_DENIED = "permission denied"
+--- The validator could not ask the domain controller (it is down or unloaded).
+rpc.UNREACHABLE = "the domain controller is unreachable"
+--- The group whose members administer every joined computer (declared once here).
+rpc.DOMAIN_ADMINS = "domain-admins"
 
 local MAX_WORKERS = 16
 -- How long a server remembers a request it ran (for repeats), and how many.
@@ -392,10 +396,15 @@ function rpc.require_user(request_ctx, groups)
   -- (no caching beyond the request: logouts and group changes still apply at once).
   local user = request_ctx.checked_user
   if user == nil then
-    user = user_validator(request_ctx.token) or false
+    local checked, check_error = user_validator(request_ctx.token)
+    user = checked or false
     request_ctx.checked_user = user
+    request_ctx.check_error = check_error
   end
   if not user then
+    if request_ctx.check_error == rpc.UNREACHABLE then
+      return nil, rpc.UNREACHABLE
+    end
     return nil, rpc.LOGIN_REQUIRED
   end
   if not groups or #groups == 0 then
@@ -420,6 +429,28 @@ end
 -- @treturn[1] table { hostname }
 -- @treturn[2] nil
 -- @treturn[2] string error message
+--- A joined computer when this computer is in a domain; anyone without one
+-- (standalone is open). The local admin always passes.
+-- @tparam table request_ctx
+-- @tparam[opt] function is_joined function() -> boolean (default: ask the domain)
+-- @treturn[1] true
+-- @treturn[2] nil
+-- @treturn[2] string error message
+function rpc.require_computer_if_joined(request_ctx, is_joined)
+  is_joined = is_joined or function()
+    local found, domain = pcall(import, "domain")
+    return found and domain.is_joined()
+  end
+  if request_ctx.local_admin or not is_joined() then
+    return true
+  end
+  local computer, err = rpc.require_computer(request_ctx)
+  if not computer then
+    return nil, err
+  end
+  return true
+end
+
 function rpc.require_computer(request_ctx)
   if type(request_ctx.computer_token) ~= "string" then
     return nil, "the calling computer is not in a domain"

@@ -9,7 +9,7 @@ local rpc = import("rpc")
 local manage = {}
 
 manage.PROTOCOL = "blockos.manage"
-manage.ADMINS = "domain-admins"
+manage.ADMINS = rpc.DOMAIN_ADMINS
 --- Local events: check roles and updates now (computer-config listens), and reboot
 -- once the answer has left (the manage service listens).
 manage.UPDATE_NOW_EVENT = import("computer_config").UPDATE_NOW_EVENT

@@ -92,14 +92,11 @@ function logistics_handlers.new(hub)
   end
 
   local function require_admin(ctx)
-    local ok, err = allows(ctx, logistics.ADMINS)
-    if ok then
+    local roles = roles_module()
+    if not roles then
       return true
     end
-    if ctx.token and rpc.require_user(ctx, { "domain-admins" }) then
-      return true
-    end
-    return nil, err
+    return roles.require(ctx, logistics.ADMINS, { admins = true })
   end
 
   -- Which nodes this caller may see: all, unless a node's own role exists and the
@@ -124,7 +121,7 @@ function logistics_handlers.new(hub)
       local role = logistics.NODE_ROLE_PREFIX .. node
       local info = roles.info(role)
       return info == nil or info.everyone == true or in_group(role)
-        or in_group("domain-admins")
+        or in_group(rpc.DOMAIN_ADMINS)
     end
   end
 
@@ -356,12 +353,9 @@ function logistics_handlers.new(hub)
 
   -- From a node's crafter: a joined computer in a domain, anyone without one.
   handlers.supply = with_args(ARGS.supply, function(ctx, args)
-    local found, domain = pcall(import, "domain")
-    if found and domain.is_joined() and not ctx.local_admin then
-      local computer, err = rpc.require_computer(ctx)
-      if not computer then
-        return nil, err
-      end
+    local ok, err = rpc.require_computer_if_joined(ctx)
+    if not ok then
+      return nil, err
     end
     -- Private nodes (their role exists) never give to another node's crafting: one
     -- player's recipe must not empty another's storage.

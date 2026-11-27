@@ -27,7 +27,7 @@ Directory.__index = Directory
 
 local directory = {}
 
-directory.ADMINS = "domain-admins"
+directory.ADMINS = import("rpc").DOMAIN_ADMINS
 directory.USERS = "domain-users"
 directory.BUILTIN_GROUPS = { directory.ADMINS, directory.USERS }
 

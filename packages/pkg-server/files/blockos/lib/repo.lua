@@ -19,7 +19,7 @@ local rpc = import("rpc")
 local repo = {}
 
 local REPO_DIR = "blockos-repo"
-local ADMINS = "domain-admins"
+local ADMINS = rpc.DOMAIN_ADMINS
 
 local root_override = nil
 

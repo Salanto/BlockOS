@@ -578,15 +578,8 @@ function logistics_node.new(options)
   --- Handlers for the controller (protocol "blockos.logistics.node").
   -- @tparam[opt] function is_joined function() -> boolean (default: ask the domain)
   function node.handlers(is_joined)
-    is_joined = is_joined or function()
-      local found, domain = pcall(import, "domain")
-      return found and domain.is_joined()
-    end
     local function allowed(ctx)
-      if ctx.local_admin or not is_joined() then
-        return true
-      end
-      return rpc.require_computer(ctx)
+      return rpc.require_computer_if_joined(ctx, is_joined)
     end
     local function guarded(fn)
       return function(ctx, args)

@@ -84,6 +84,11 @@ function roles.info(name)
     return hit.info, hit.err
   end
   local info, err = roles.env.group_get(name)
+  if not info and err ~= roles.NOT_SET_UP and hit then
+    -- The controller did not answer: keep using what we knew (degraded mode).
+    hit.time = now
+    return hit.info, hit.err
+  end
   cache[name] = { info = info, err = err, time = now }
   return info, err
 end
@@ -124,10 +129,15 @@ function roles.allows(ctx, role)
   end
   if ctx.token then
     local user, user_err = roles.env.require_user(ctx, { role })
-    if not user then
-      return nil, user_err
+    if user then
+      return true
     end
-    return true
+    -- The controller is down: a role open to everyone stays open (degraded mode);
+    -- restricted ones stay closed until it is back.
+    if user_err == rpc.UNREACHABLE and info and info.everyone then
+      return true
+    end
+    return nil, user_err
   end
   -- No user (e.g. a turtle's service): allowed where the role includes everyone.
   if info and info.everyone then
@@ -138,6 +148,25 @@ end
 
 --- Packages that declare roles but are not set up for the domain yet.
 -- @treturn {string...}
+--- Allowed by a role, or (with admins = true) as a domain admin.
+-- @tparam table ctx Request context.
+-- @tparam string role
+-- @tparam[opt] table options { admins = true }
+-- @treturn[1] true
+-- @treturn[2] nil
+-- @treturn[2] string error message
+function roles.require(ctx, role, options)
+  local ok, err = roles.allows(ctx, role)
+  if ok then
+    return true
+  end
+  if options and options.admins and ctx.token
+    and roles.env.require_user(ctx, { rpc.DOMAIN_ADMINS }) then
+    return true
+  end
+  return nil, err
+end
+
 function roles.pending()
   local list = {}
   if not roles.env.is_joined() then
