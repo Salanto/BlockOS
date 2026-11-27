@@ -17,7 +17,10 @@ local MAX_ALERTS = 20
 local REFRESH_SECONDS = 10
 -- The wall's animation frames and how often it asks for new moves.
 local FRAME_SECONDS = 0.3
-local MOVES_SECONDS = 1
+-- How often an idle wall is drawn again (nothing in flight).
+local IDLE_FRAME_SECONDS = 1
+-- How often the wall renews its subscription to pushed moves (the hub keeps it longer).
+local SUBSCRIBE_SECONDS = 20
 -- Refreshes without an answer before a hub counts as gone (~30s).
 local MAX_MISSES = 3
 
@@ -217,19 +220,20 @@ local function run(ctx)
     page = (pages and page < pages) and (page + 1) or 1
   end
 
-  -- New moves for the wall's animation (the first call only learns where the log is).
-  local function poll_wall_moves()
-    if not (wall and wall.connection) then
-      return
+  -- New moves for the wall's animation arrive pushed by the hub (logistics_client
+  -- MOVES_*); the wall renews its subscription now and then.
+  local function subscribe_wall_moves()
+    if wall and wall.connection then
+      wall.connection.call("subscribe_moves")
     end
-    local result = wall.connection.call("moves", { since = wall.seq })
-    if not result then
-      return
+  end
+
+  local function on_moves(message)
+    local client = import("logistics_client")
+    local event = import("wire").parse(message, "event", client.MOVES_SCHEMA)
+    if wall and event and event.topic == client.MOVES_TOPIC then
+      wall.live.add_moves(event.data.moves)
     end
-    if result.log == wall.log and wall.seq then
-      wall.live.add_moves(result.moves)
-    end
-    wall.log, wall.seq = result.log, result.seq
   end
 
   -- A board turned off or moved would otherwise keep its last picture forever.
@@ -297,13 +301,16 @@ local function run(ctx)
     end
   end
 
+  local moves_protocol = import("logistics_client").MOVES_PROTOCOL
   local timer = os.startTimer(1)
   local frame_timer = os.startTimer(FRAME_SECONDS)
-  local next_moves = 0
+  local next_subscribe = 0
   while true do
     local event, a, b, c = import("events").pull()
     if event == "rednet_message" and c == logistics_alarms.ALERT_PROTOCOL then
       on_alert_message(a, b)
+    elseif event == "rednet_message" and c == moves_protocol then
+      on_moves(b)
     elseif event == "timer" and a == timer then
       check_local_alerts()
       refresh()
@@ -312,14 +319,14 @@ local function run(ctx)
     elseif event == "timer" and a == frame_timer then
       -- Frames only while a wall is shown; otherwise check back now and then.
       if wall then
-        if os.clock() >= next_moves then
-          poll_wall_moves()
-          next_moves = os.clock() + MOVES_SECONDS
+        if os.clock() >= next_subscribe then
+          subscribe_wall_moves()
+          next_subscribe = os.clock() + SUBSCRIBE_SECONDS
         end
         if wall.live.frame() then
           frame_timer = os.startTimer(FRAME_SECONDS)
         else
-          frame_timer = os.startTimer(MOVES_SECONDS)
+          frame_timer = os.startTimer(IDLE_FRAME_SECONDS)
         end
       else
         frame_timer = os.startTimer(REFRESH_SECONDS)

@@ -375,6 +375,11 @@ function logistics_handlers.new(hub)
     return hub.depots(near, visible)
   end))
 
+  --- Have new moves pushed to the caller for a while (wall boards).
+  handlers.subscribe_moves = user_op(function(ctx, _, visible)
+    return hub.subscribe_moves(ctx.sender, visible)
+  end)
+
   handlers.find_start = user_op(function(_, _, visible)
     return hub.find_start(visible)
   end)

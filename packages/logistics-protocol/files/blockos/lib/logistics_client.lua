@@ -145,6 +145,14 @@ function logistics_client.node_proxy(call)
   return proxy
 end
 
+--- New moves, pushed by the hub to computers that subscribed (protocol
+-- MOVES_PROTOCOL, event MOVES_TOPIC { moves }), so wall boards need not ask every second.
+-- A subscription (op subscribe_moves) lasts MOVES_LEASE seconds and is renewed.
+logistics_client.MOVES_PROTOCOL = "blockos.logistics.moves"
+logistics_client.MOVES_TOPIC = "moves"
+logistics_client.MOVES_SCHEMA = { moves = "table" }
+logistics_client.MOVES_LEASE = 60
+
 --- Operations that move items or wait for every node: a long timeout (a crossing
 -- between nodes is a chain of calls). Retrying is safe: rpc runs a request once.
 logistics_client.SLOW_OPS = { request = true, find_start = true, find_finish = true, craft = true }

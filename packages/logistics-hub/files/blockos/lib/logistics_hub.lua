@@ -68,6 +68,8 @@ end
 --   hostname  name used in alerts
 --   title     optional, e.g. "Logistics kitchen"
 --   log       optional function(format, ...) for warnings (default: env.log)
+--   send      optional function(id, message, protocol): pushes new moves to subscribers
+--             (default: rednet, or a local event for this computer)
 --   transfer  optional function(from_entry, to_entry, item, count, output_handle)
 --             -> { moved, output } | nil, err: carries items between nodes (the
 --             controller's ports); without it items only move within one node
@@ -91,6 +93,7 @@ function logistics_hub.new(options)
     move_log = os.epoch("utc"),
     applied_outputs = {},
     craft_asked = {}, -- [item] = clock of the last craft asked for a low item
+    subscribers = {}, -- [computer id] = { until_clock, visible? }: pushed new moves
   }
 
   function hub.save()
@@ -162,7 +165,46 @@ function logistics_hub.new(options)
     return totals
   end
 
+  -- Push new moves to the computers that subscribed (each sees only nodes it may).
+  local function push_moves(moves)
+    local now = logistics_hub.env.clock()
+    local client = import("logistics_client")
+    local send = options.send or function(id, message, protocol)
+      if id == os.getComputerID() then
+        os.queueEvent("rednet_message", id, message, protocol)
+      else
+        rednet.send(id, message, protocol)
+      end
+    end
+    for id, subscriber in pairs(hub.subscribers) do
+      if subscriber.until_clock < now then
+        hub.subscribers[id] = nil
+      else
+        local visible = {}
+        for _, move in ipairs(moves) do
+          if not subscriber.visible or subscriber.visible(move.node) then
+            visible[#visible + 1] = move
+          end
+        end
+        if #visible > 0 then
+          send(id, import("wire").event(client.MOVES_TOPIC, { moves = visible }),
+            client.MOVES_PROTOCOL)
+        end
+      end
+    end
+  end
+
+  --- Push new moves to a computer for the next lease (wall boards).
+  -- @tparam number id
+  -- @tparam[opt] function visible Which nodes it may see.
+  function hub.subscribe_moves(id, visible)
+    local lease = import("logistics_client").MOVES_LEASE
+    hub.subscribers[id] = { until_clock = logistics_hub.env.clock() + lease, visible = visible }
+    return { lease = lease }
+  end
+
   local function record_moves(name, moves)
+    local new = {}
     local totals = hub.nodes[name].report.totals or {}
     for _, move in ipairs(moves or {}) do
       hub.move_seq = hub.move_seq + 1
@@ -176,9 +218,13 @@ function logistics_hub.new(options)
         label = found and found.label or move.item,
         count = move.count,
       }
+      new[#new + 1] = hub.moves[#hub.moves]
       if #hub.moves > logistics_hub.MAX_MOVES then
         table.remove(hub.moves, 1)
       end
+    end
+    if #new > 0 then
+      push_moves(new)
     end
   end
 
@@ -194,6 +240,7 @@ function logistics_hub.new(options)
       label = found and found.label or item,
       count = count,
     }
+    push_moves({ hub.moves[#hub.moves] })
     if #hub.moves > logistics_hub.MAX_MOVES then
       table.remove(hub.moves, 1)
     end

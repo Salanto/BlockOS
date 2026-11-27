@@ -302,4 +302,28 @@ return function(t)
     t.eq(hub.nodes.cellar, nil)
     t.eq(hub.totals().iron.nodes.basement, 5, "counted once, under the new name")
   end)
+
+  t.it("new moves are pushed to subscribed boards, each seeing only its nodes", function()
+    local import = t.fresh_import()
+    import("logistics_alarms").env.broadcast = function() end
+    local sent = {}
+    local hub = import("logistics_hub").new({
+      config = {},
+      save = function() return true end,
+      send = function(id, message, protocol)
+        sent[#sent + 1] = { id = id, message = message, protocol = protocol }
+      end,
+    })
+    hub.subscribe_moves(21)
+    hub.subscribe_moves(22, function(node) return node ~= "vault" end)
+    hub.update("vault", { totals = {}, blocks = {},
+      moves = { { from = "a", to = "b", item = "gold", count = 1 } } }, {})
+    t.eq(#sent, 1, "only the board that may see the vault")
+    t.eq(sent[1].id, 21)
+    t.eq(sent[1].protocol, "blockos.logistics.moves")
+    t.eq(sent[1].message.data.moves[1].item, "gold")
+    hub.update("main", { totals = {}, blocks = {},
+      moves = { { from = "a", to = "b", item = "iron", count = 2 } } }, {})
+    t.eq(#sent, 3, "both boards see main")
+  end)
 end
