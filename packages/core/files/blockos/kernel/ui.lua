@@ -628,7 +628,8 @@ end
 -- @tparam {string...} lines
 -- @tparam number top First row.
 -- @tparam number bottom Last row.
-function ui.draw_list(list, lines, top, bottom)
+-- @tparam[opt] table roles [index] = theme role per line (e.g. "error" for a low item)
+function ui.draw_list(list, lines, top, bottom, roles)
   local width = ui.size()
   local rows = bottom - top + 1
   list.selected = math.max(1, math.min(list.selected, #lines))
@@ -647,7 +648,7 @@ function ui.draw_list(list, lines, top, bottom)
       ui.fill(1, y, width, 1, "selected")
       ui.text_at(1, y, ui.GLYPHS.pointer .. " " .. line, "selected_text", "selected")
     elseif line then
-      ui.text_at(3, y, line)
+      ui.text_at(3, y, line, roles and roles[index])
     end
   end
   if #lines == 0 then

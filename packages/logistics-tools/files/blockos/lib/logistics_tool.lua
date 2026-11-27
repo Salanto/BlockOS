@@ -77,10 +77,12 @@ end
 --- Run the full-screen tool until q is pressed.
 -- @tparam table connection From logistics_client.connect.
 function logistics_tool.run(connection)
-  local state = { tab = 1, rows = {}, list = ui.new_list(), message = nil, role = "dim" }
+  local app = nil -- the running tab app (tab_app), for status messages
 
   local function set_message(text, role)
-    state.message, state.role = text, role or "dim"
+    if app then
+      app.set_message(text, role)
+    end
   end
 
   local function run(op, call_args, success)
@@ -92,9 +94,6 @@ function logistics_tool.run(connection)
     end
     return result
   end
-
-  -- Keys that work without a selected row.
-  local ROWLESS_KEYS = { W = true, s = true, t = true, f = true, m = true }
 
   local function choose_sound()
     local kinds = { "note", "sound", "file" }
@@ -165,6 +164,7 @@ function logistics_tool.run(connection)
 
   tabs[2] = {
     title = "Catalog",
+    rowless = { W = true },
     load = function() return connection.call("catalog") end,
     describe = function(row)
       return string.format("%-20s %7d %s", row.label, row.count, row.is_watched and "watched" or "")
@@ -208,6 +208,7 @@ function logistics_tool.run(connection)
 
   tabs[3] = {
     title = "Alarms",
+    rowless = { s = true, t = true },
     load = function() return load_watches() end,
     describe = function(row)
       local outputs = {}
@@ -347,6 +348,7 @@ function logistics_tool.run(connection)
 
   tabs[5] = {
     title = "Storage",
+    rowless = { f = true, m = true },
     load = function() return connection.call("storages") end,
     describe = function(row)
       local fill = row.is_missing and "missing" or describe_fill(row)
@@ -444,80 +446,12 @@ function logistics_tool.run(connection)
     },
   }
 
-  local function refresh()
-    local rows, err = tabs[state.tab].load()
-    state.rows = rows or {}
-    if not rows then
-      set_message(err, "error")
-    end
-  end
-
-  local function draw()
-    local _, height = ui.size()
-    ui.clear()
-    ui.header(1, "Logistics " .. ui.GLYPHS.dot .. " " .. connection.describe,
-      blockos.user and blockos.user.name)
-    local titles = {}
-    for index, tab in ipairs(tabs) do
-      titles[index] = tab.title
-    end
-    ui.tabs(2, titles, state.tab)
-    local lines = {}
-    for index, row in ipairs(state.rows) do
-      lines[index] = tabs[state.tab].describe(row)
-    end
-    ui.draw_list(state.list, lines, 3, height - 2)
-    if state.message then
-      ui.line(height - 1, state.message, state.role)
-    end
-    local hints = { { "q", "Quit" } }
-    for _, hint in ipairs(tabs[state.tab].hints) do
-      hints[#hints + 1] = hint
-    end
-    hints[#hints + 1] = { "r", "Refresh" }
-    ui.footer(hints)
-  end
-
-  local function switch_tab(index)
-    if tabs[index] then
-      state.tab = index
-      state.list = ui.new_list()
-      set_message(nil)
-      refresh()
-    end
-  end
-
-  refresh()
-  while true do
-    draw()
-    local event, value = import("events").pull()
-    if event == "char" then
-      local number = tonumber(value)
-      if number then
-        switch_tab(number)
-      elseif value == "q" then
-        break
-      elseif value == "r" then
-        set_message(nil)
-        refresh()
-      else
-        local action = tabs[state.tab].keys[value]
-        local row = state.rows[state.list.selected]
-        if action and (row or ROWLESS_KEYS[value]) then
-          action(row)
-          refresh()
-        end
-      end
-    elseif event == "key" then
-      local _, height = ui.size()
-      if value == keys.tab then
-        switch_tab(state.tab % #tabs + 1)
-      else
-        ui.list_key(state.list, value, #state.rows, height - 4)
-      end
-    end
-  end
-  ui.clear()
+  import("tab_app").run({
+    title = "Logistics " .. ui.GLYPHS.dot .. " " .. connection.describe,
+    right = function() return blockos.user and blockos.user.name end,
+    tabs = tabs,
+    on_start = function(running) app = running end,
+  })
 end
 
 return logistics_tool

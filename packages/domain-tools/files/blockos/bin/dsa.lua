@@ -66,69 +66,15 @@ local tabs = {
   },
 }
 
-local state = {
-  tab = 1,
-  rows = {},
-  list = ui.new_list(),
-  message = nil,
-  message_role = "dim",
-}
+local app = nil -- the running tab app (tab_app), for status messages
 
 local function set_message(text, role)
-  state.message = text
-  state.message_role = role or "dim"
+  if app then
+    app.set_message(text, role)
+  end
 end
 
-local function refresh()
-  local rows, err = domain.call(tabs[state.tab].load)
-  if not rows then
-    state.rows = {}
-    set_message(err, "error")
-    return
-  end
-  state.rows = rows
-end
-
-local function list_rows()
-  local _, height = ui.size()
-  return 3, height - 2
-end
-
-local function draw()
-  local _, height = ui.size()
-  ui.clear()
-  ui.header(1, "Directory " .. ui.GLYPHS.dot .. " " .. tostring(domain.name()),
-    blockos.user and blockos.user.name)
-  local titles = {}
-  for index, tab in ipairs(tabs) do
-    titles[index] = tab.title
-  end
-  ui.tabs(2, titles, state.tab)
-
-  local lines = {}
-  for index, row in ipairs(state.rows) do
-    lines[index] = tabs[state.tab].describe(row)
-  end
-  local top, bottom = list_rows()
-  ui.draw_list(state.list, lines, top, bottom)
-
-  if state.message then
-    ui.line(height - 1, state.message, state.message_role)
-  end
-  -- Quit first: hints that do not fit on a small screen are dropped from the end.
-  local hints = { { "q", "Quit" } }
-  for _, hint in ipairs(tabs[state.tab].hints) do
-    hints[#hints + 1] = hint
-  end
-  hints[#hints + 1] = { "r", "Refresh" }
-  ui.footer(hints)
-end
-
-local function selected()
-  return state.rows[state.list.selected]
-end
-
--- Run a controller operation and report the outcome.
+-- Run a controller operation and report the outcome (the list reloads afterwards).
 local function run(op, args, success)
   local result, err = domain.call(op, args)
   if result then
@@ -136,7 +82,6 @@ local function run(op, args, success)
   else
     set_message(err, "error")
   end
-  refresh()
 end
 
 local actions = {}
@@ -334,7 +279,6 @@ actions[3] = {
   c = function(host)
     if host then
       shell.run("rsh", host.hostname)
-      refresh()
     end
   end,
   i = function(host)
@@ -464,66 +408,20 @@ actions[5] = {
   end,
 }
 
-local function switch_tab(index)
-  if tabs[index] and index ~= state.tab then
-    state.tab = index
-    state.list = ui.new_list()
-    set_message(nil)
-    refresh()
-  end
+for index, tab in ipairs(tabs) do
+  local op = tab.load
+  tab.load = function() return domain.call(op) end
+  tab.keys = actions[index]
+  tab.rowless = { a = true } -- "add" works on an empty list
 end
 
-local function on_char(char)
-  local number = tonumber(char)
-  if number then
-    switch_tab(number)
-    return true
-  end
-  if char == "q" then
-    return false
-  end
-  if char == "r" then
-    set_message(nil)
-    refresh()
-    return true
-  end
-  local action = actions[state.tab][char]
-  if action then
-    action(selected())
-  end
-  return true
-end
-
-local function on_click(y)
-  local top, bottom = list_rows()
-  if y >= top and y <= bottom then
-    state.list.selected = state.list.scroll + (y - top) + 1
-  end
-end
-
-refresh()
 local health = domain.call("dc_status")
-if type(health) == "table" and not health.has_room then
-  set_message("The controller's disk is full: changes are refused.", "error")
-end
-while true do
-  draw()
-  local event, a, _, c = import("events").pull()
-  if event == "char" then
-    if not on_char(a) then
-      break
-    end
-  elseif event == "key" then
-    if a == keys.tab then
-      switch_tab(state.tab % #tabs + 1)
-    elseif a == keys.delete and actions[state.tab].d then
-      actions[state.tab].d(selected())
-    else
-      local top, bottom = list_rows()
-      ui.list_key(state.list, a, #state.rows, bottom - top + 1)
-    end
-  elseif event == "mouse_click" then
-    on_click(c)
-  end
-end
-ui.clear()
+local disk_full = type(health) == "table" and not health.has_room
+import("tab_app").run({
+  title = function() return "Directory " .. ui.GLYPHS.dot .. " " .. tostring(domain.name()) end,
+  right = function() return blockos.user and blockos.user.name end,
+  tabs = tabs,
+  message = disk_full and "The controller's disk is full: changes are refused." or nil,
+  message_role = "error",
+  on_start = function(running) app = running end,
+})
