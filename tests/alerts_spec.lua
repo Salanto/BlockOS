@@ -287,7 +287,7 @@ return function(t)
 
     local sent, broadcasts = {}, {}
     env.send = function(id, message, protocol) sent[#sent + 1] = { id, message, protocol } end
-    env.broadcast = function(message, protocol) broadcasts[#broadcasts + 1] = protocol end
+    env.broadcast = function(_, protocol) broadcasts[#broadcasts + 1] = protocol end
     env.resolve = function(name) return name == "wall" and 12 or nil end
     local computer = kinds.computer
     t.ok(computer.deliver("#7", sample, env))
@@ -339,10 +339,10 @@ return function(t)
 
   -- Runs fn with a fresh `blockos` table (notices keep their state there).
   local function with_blockos(fn)
-    local saved = blockos
-    blockos = {}
+    local saved = _G.blockos
+    _G.blockos = {}
     local ok, err = pcall(fn)
-    blockos = saved
+    _G.blockos = saved
     if not ok then
       error(err, 0)
     end
