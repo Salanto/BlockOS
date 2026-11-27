@@ -19,11 +19,7 @@ local logistics_api = {}
 
 --- Where this computer is (GPS); tests replace it.
 logistics_api.locate = function()
-  local x, y, z = gps.locate(2)
-  if not x then
-    return nil
-  end
-  return { x = x, y = y, z = z }
+  return import("net").position()
 end
 
 local function connect(options)

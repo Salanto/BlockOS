@@ -14,7 +14,7 @@ local function run(ctx)
   -- Findable as the domain's "pkg" record, and by rednet name without a domain
   -- (several package servers may run: each hosts its own hostname).
   local pkg_remote = import("pkg_remote")
-  local hostname = blockos.net and blockos.net.hostname() or ("#" .. os.getComputerID())
+  local hostname = import("net").self_name()
   local ok, err = import("discovery").advertise(pkg_remote.SERVICE_TYPE, pkg_remote.PROTOCOL,
     hostname)
   if not ok then

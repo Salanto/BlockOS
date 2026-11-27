@@ -321,11 +321,10 @@ function logistics_tool.run(connection)
     if text == "-" then
       change.clear_pos = true
     elseif text == "" then
-      local x, y, z = gps.locate(2)
-      if not x then
+      change.pos = import("net").position()
+      if not change.pos then
         return set_message("No GPS fix here; type the position instead.", "warn")
       end
-      change.pos = { x = x, y = y, z = z }
     else
       local x, y, z = text:match("^%s*(%-?%d+)[%s,]+(%-?%d+)[%s,]+(%-?%d+)%s*$")
       if not x then

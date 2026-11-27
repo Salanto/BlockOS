@@ -65,7 +65,7 @@ local function run(ctx)
     save()
   end
 
-  local hostname = blockos.net and blockos.net.hostname() or ("#" .. os.getComputerID())
+  local hostname = import("net").self_name()
   -- Slow work (pairing a port, asking a node to craft) runs in its own loop, not in
   -- the one receiving reports: waiting for an rpc answer there swallows other nodes'
   -- reports.

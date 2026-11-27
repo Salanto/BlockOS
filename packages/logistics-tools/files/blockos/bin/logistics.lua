@@ -291,11 +291,7 @@ end
 
 -- This computer's position by GPS (pocket computers and turtles next to a chest).
 local function here()
-  local x, y, z = gps.locate(2)
-  if not x then
-    return nil, "No GPS fix: are GPS hosts in range of a wireless modem?"
-  end
-  return { x = x, y = y, z = z }
+  return import("net").position()
 end
 
 -- pos <chest> x y z | here | clear

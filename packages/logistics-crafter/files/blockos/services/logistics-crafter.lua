@@ -35,7 +35,7 @@ local function run(ctx)
     if not node.controller_id then
       return nil, "no controller to bring it from another node"
     end
-    local hostname = blockos.net and blockos.net.hostname() or ("#" .. os.getComputerID())
+    local hostname = import("net").self_name()
     return rpc.call(node.controller_id, logistics_client.PROTOCOL, "supply",
       { node = hostname, item = item, count = count, target = machine },
       { retries = 1, timeout = 30 })

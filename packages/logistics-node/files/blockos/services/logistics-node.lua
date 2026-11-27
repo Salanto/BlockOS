@@ -103,7 +103,7 @@ local function run(ctx)
   local services = import("services")
 
   local function hostname()
-    return blockos.net and blockos.net.hostname() or ("#" .. os.getComputerID())
+    return import("net").self_name()
   end
 
   -- Lone mode -------------------------------------------------------------
@@ -279,10 +279,7 @@ local function run(ctx)
       return
     end
     rounds_since_gps = 0
-    local ok, x, y, z = pcall(gps.locate, 2)
-    if ok and x then
-      position = { x = math.floor(x), y = math.floor(y), z = math.floor(z) }
-    end
+    position = import("net").position() or position
   end
 
   local function send_report()
