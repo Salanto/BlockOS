@@ -106,7 +106,7 @@ local function find_output(inventories, handle)
 end
 
 -- Take up to `wanted` of an item out of one storage block into the output.
-local function take_from(storage, output, item, wanted, on_move)
+local function take_from(storage, output, item, wanted, on_move, to_slot)
   local ok, slots = pcall(storage.source.list, storage.handle)
   if not ok then
     return 0
@@ -118,7 +118,7 @@ local function take_from(storage, output, item, wanted, on_move)
     end
     if stack.name == item then
       local pushed, moved = pcall(storage.source.push, storage.handle, output.handle, slot,
-        wanted - moved_total)
+        wanted - moved_total, to_slot)
       if not pushed or (moved or 0) == 0 then
         -- The output is full (or gone): no point in trying more slots.
         return moved_total, true
@@ -156,7 +156,8 @@ end
 -- @tparam table target An entry of `inventories`.
 -- @tparam[opt] function on_move
 -- @treturn table { moved, output }
-function logistics_sorting.deliver(inventories, item, count, target, on_move)
+-- @tparam[opt] number to_slot A slot of the target (a furnace's input or fuel slot).
+function logistics_sorting.deliver(inventories, item, count, target, on_move, to_slot)
   local output = target
   local moved = 0
   for _, storage in ipairs(storage_targets(inventories, output.source, item)) do
@@ -164,7 +165,8 @@ function logistics_sorting.deliver(inventories, item, count, target, on_move)
       break
     end
     if storage.items and storage.items[item] then
-      local taken, is_output_full = take_from(storage, output, item, count - moved, on_move)
+      local taken, is_output_full = take_from(storage, output, item, count - moved, on_move,
+        to_slot)
       moved = moved + taken
       if is_output_full then
         break
@@ -190,12 +192,12 @@ end
 -- @treturn[1] table { moved, output }
 -- @treturn[2] nil
 -- @treturn[2] string error message
-function logistics_sorting.supply(inventories, item, count, machine_handle, on_move)
+function logistics_sorting.supply(inventories, item, count, machine_handle, on_move, to_slot)
   local machine = find_block(inventories, "machine", machine_handle)
   if not machine then
     return nil, "no machine called " .. tostring(machine_handle)
   end
-  return logistics_sorting.deliver(inventories, item, count, machine, on_move)
+  return logistics_sorting.deliver(inventories, item, count, machine, on_move, to_slot)
 end
 
 --- Move everything out of one block into storage (crafting results, or what is left

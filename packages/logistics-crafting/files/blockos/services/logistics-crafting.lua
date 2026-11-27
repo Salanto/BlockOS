@@ -6,6 +6,7 @@
 -- asked from the controller once per step and arrive through the ports.
 
 local RECIPES_FILE = "etc/blockos/logistics-recipes"
+local GROUPS_FILE = "etc/blockos/logistics-machine-groups"
 
 local function run(ctx)
   local fsx = import("fsx")
@@ -13,6 +14,7 @@ local function run(ctx)
   local logistics_client = import("logistics_client")
   local logistics_crafter = import("logistics_crafter")
   local path = import("paths").top(RECIPES_FILE)
+  local groups_path = import("paths").top(GROUPS_FILE)
 
   -- The node service starts first; wait until its node exists.
   while not blockos.logistics_node do
@@ -21,8 +23,9 @@ local function run(ctx)
   local node = blockos.logistics_node
 
   local recipes = fs.exists(path) and fsx.read_table(path) or {}
+  local groups = fs.exists(groups_path) and fsx.read_table(groups_path) or {}
   local function save()
-    if pcall(fsx.write_table, path, recipes) then
+    if pcall(fsx.write_table, path, recipes) and pcall(fsx.write_table, groups_path, groups) then
       return true
     end
     return nil, "could not save the recipes (is the disk full?)"
@@ -43,6 +46,7 @@ local function run(ctx)
   local crafter = logistics_crafter.new({
     node = node,
     recipes = recipes,
+    groups = groups,
     save = save,
     fetch = fetch,
     log = ctx.log,

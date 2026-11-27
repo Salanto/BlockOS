@@ -121,9 +121,10 @@ end
 -- @tparam string to Peripheral name.
 -- @tparam number slot Slot in `from`.
 -- @tparam[opt] number limit At most this many items.
+-- @tparam[opt] number to_slot Slot in `to` (default: wherever it fits).
 -- @treturn number How many items moved.
-function inventory.push(from, to, slot, limit)
-  return inventory.peripheral.wrap(from).pushItems(to, slot, limit)
+function inventory.push(from, to, slot, limit, to_slot)
+  return inventory.peripheral.wrap(from).pushItems(to, slot, limit, to_slot)
 end
 
 return inventory

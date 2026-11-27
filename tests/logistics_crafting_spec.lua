@@ -3,6 +3,17 @@
 return function(t)
   local COPPER, ZINC, BRASS = "minecraft:copper_ingot", "create:zinc_ingot", "create:brass_ingot"
   local SCRAP = "create:scrap"
+  local ANDESITE, NUGGET = "minecraft:andesite", "minecraft:iron_nugget"
+  local ALLOY = "create:andesite_alloy"
+  local ALLOY_RECIPE = {
+    item = ALLOY,
+    steps = {
+      { kind = "supply", item = ANDESITE, count = 1, to = "depot" },
+      { kind = "supply", item = NUGGET, count = 1, to = "depot" },
+      { kind = "wait", item = ALLOY, count = 1, at = "depot", timeout = 10 },
+      { kind = "retrieve", from = "depot" },
+    },
+  }
 
   local BRASS_RECIPE = {
     item = BRASS,
@@ -52,7 +63,7 @@ return function(t)
 
   -- A node with a basin that mixes copper and zinc into brass (or scrap) when ticked.
   local function new_world(store)
-    local machines = { basin = {}, depot = {} }
+    local machines = { basin = {}, basin2 = {}, depot = {} }
     local node = {}
     function node.stored(item)
       return store[item] or 0
@@ -80,26 +91,35 @@ return function(t)
       return 0
     end
     function node.machines()
-      return { "basin", "depot" }
+      return { "basin", "basin2", "depot" }
     end
     local world = { node = node, machines = machines, store = store, now = 0, result = BRASS }
+    -- Both basins mix copper and zinc; the depot presses andesite and a nugget.
     function world.mix()
-      local basin = machines.basin
-      if (basin[COPPER] or 0) >= 1 and (basin[ZINC] or 0) >= 1 then
-        basin[COPPER], basin[ZINC] = basin[COPPER] - 1, basin[ZINC] - 1
-        basin[world.result] = (basin[world.result] or 0) + 1
+      for _, name in ipairs({ "basin", "basin2" }) do
+        local basin = machines[name]
+        if (basin[COPPER] or 0) >= 1 and (basin[ZINC] or 0) >= 1 then
+          basin[COPPER], basin[ZINC] = basin[COPPER] - 1, basin[ZINC] - 1
+          basin[world.result] = (basin[world.result] or 0) + 1
+        end
+      end
+      local depot = machines.depot
+      if (depot[ANDESITE] or 0) >= 1 and (depot[NUGGET] or 0) >= 1 then
+        depot[ANDESITE], depot[NUGGET] = depot[ANDESITE] - 1, depot[NUGGET] - 1
+        depot[ALLOY] = (depot[ALLOY] or 0) + 1
       end
     end
     return world
   end
 
-  local function new_crafter(world, fetch)
+  local function new_crafter(world, fetch, groups)
     local import = t.fresh_import()
     local crafter_module = import("logistics_crafter")
     local recipes = {}
     local crafter = crafter_module.new({
       node = world.node,
       recipes = recipes,
+      groups = groups,
       save = function() return true end,
       fetch = fetch,
       clock = function() return world.now end,
@@ -148,7 +168,7 @@ return function(t)
     local crafter = new_crafter(world)
     crafter.start(BRASS, 1)
     run(world, crafter, 13) -- two supplies, then 10 s without brass
-    t.eq(crafter.jobs[1].attempt, 1)
+    t.eq(crafter.jobs[1].runs[1].attempt, 1)
     t.ok(crafter.jobs[1].note:find("timed out"))
     t.eq(world.store[COPPER], 9, "the ingredients came back from the basin")
   end)
@@ -228,6 +248,7 @@ return function(t)
         [ZINC] = { count = 99, label = "Zinc" },
       },
       blocks = {},
+      poll_seconds = 1000, -- never stale while the test clock moves on
       crafting = { recipes = { BRASS }, jobs = jobs or {},
         needs = { [BRASS] = { [COPPER] = 1, [ZINC] = 1 } } },
     }, proxy)
@@ -295,7 +316,7 @@ return function(t)
     local hub = import("logistics_hub").new({
       config = {},
       save = function() return true end,
-      transfer = function(from, _, item, count)
+      transfer = function(from, _, _, count)
         carried[#carried + 1] = from.name
         return { moved = count }
       end,
@@ -311,5 +332,85 @@ return function(t)
     t.ok(handlers.supply({ sender = 4, local_admin = true },
       { node = "smeltery", item = ZINC, count = 1, target = "basin" }))
     t.eq(carried[1], "shared", "the vault has more, but it is private")
+  end)
+
+  t.it("jobs on different machines run side by side", function()
+    local world = new_world({ [COPPER] = 5, [ZINC] = 5, [ANDESITE] = 5, [NUGGET] = 5 })
+    local crafter = new_crafter(world)
+    assert(crafter.set_recipe(ALLOY_RECIPE))
+    crafter.start(BRASS, 1)
+    crafter.start(ALLOY, 1)
+    run(world, crafter, 5)
+    t.eq(world.store[BRASS], 1)
+    t.eq(world.store[ALLOY], 1, "the depot did not wait for the basin")
+  end)
+
+  t.it("two recipes for the same machine take turns", function()
+    local world = new_world({ [COPPER] = 5, [ZINC] = 5 })
+    local crafter = new_crafter(world)
+    local other = {}
+    for key, value in pairs(BRASS_RECIPE) do
+      other[key] = value
+    end
+    other.item = "create:other_ingot"
+    assert(crafter.set_recipe(other))
+    crafter.start(BRASS, 1)
+    crafter.start("create:other_ingot", 1)
+    crafter.tick()
+    t.eq(crafter.jobs[2].state, "queued", "the basin is busy")
+    t.eq(#crafter.jobs[2].runs, 0)
+  end)
+
+  t.it("a machine group runs several batches at once", function()
+    local world = new_world({ [COPPER] = 5, [ZINC] = 5 })
+    local crafter = new_crafter(world, nil, { mixers = { { "basin" }, { "basin2" } } })
+    local grouped = { item = BRASS, retries = 2, steps = {
+      { kind = "supply", item = COPPER, count = 1, to = "@mixers" },
+      { kind = "supply", item = ZINC, count = 1, to = "@mixers" },
+      { kind = "wait", item = BRASS, count = 1, at = "@mixers", timeout = 10 },
+      { kind = "retrieve", from = "@mixers" },
+    } }
+    assert(crafter.set_recipe(grouped))
+    crafter.start(BRASS, 2)
+    crafter.tick()
+    t.eq(#crafter.jobs[1].runs, 2, "one run per free station")
+    run(world, crafter, 5)
+    t.eq(world.store[BRASS], 2, "both batches done in the time of one")
+  end)
+
+  t.it("leftovers are cleared before a run, and a run counts what came out", function()
+    local world = new_world({ [COPPER] = 5, [ZINC] = 5 })
+    world.machines.basin[BRASS] = 7 -- left behind by a restart
+    local crafter = new_crafter(world)
+    crafter.start(BRASS, 1)
+    run(world, crafter, 6)
+    t.eq(world.store[BRASS], 8, "the leftovers went to storage first")
+    t.eq(crafter.summary().jobs[1].made, 1, "only the new ingot counts")
+  end)
+
+  t.it("forgotten teaching ends by itself, so jobs go on", function()
+    local world = new_world({ [COPPER] = 5, [ZINC] = 5 })
+    local crafter, crafter_module = new_crafter(world)
+    crafter.teach_start(BRASS)
+    crafter.start(BRASS, 1)
+    world.now = crafter_module.TEACH_SECONDS + 1
+    crafter.tick()
+    t.eq(crafter.teaching, nil)
+    run(world, crafter, 6)
+    t.eq(world.store[BRASS], 1)
+  end)
+
+  t.it("taught recipes keep the order the player supplied things in", function()
+    local recipes = t.fresh_import()("logistics_recipes")
+    local draft = assert(recipes.draft("minecraft:iron_ingot", {
+      supplies = { furnace = { ["minecraft:raw_iron"] = 1, ["minecraft:coal"] = 1 } },
+      order = { { block = "furnace", item = "minecraft:raw_iron" },
+        { block = "furnace", item = "minecraft:coal" } },
+      result = { block = "furnace", count = 1, seconds = 10 },
+    }))
+    t.eq(draft.steps[1].item, "minecraft:raw_iron", "input before fuel")
+    local step = recipes.clean_step({ kind = "supply", item = "minecraft:coal", count = 1,
+      to = "furnace", slot = 2 })
+    t.eq(step.slot, 2, "a step can name the slot")
   end)
 end

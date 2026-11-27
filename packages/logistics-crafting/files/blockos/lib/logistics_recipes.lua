@@ -4,7 +4,8 @@
 --
 -- A recipe (kept in /etc/blockos/logistics-recipes, by result item):
 --   { item, makes = 1, retries = 3, scrap = { item... }, steps = {
---       { kind = "supply", item, count, to },              -- storage -> machine block
+--       { kind = "supply", item, count, to, slot? },       -- storage -> machine block
+--                                                          -- (slot: e.g. a furnace's fuel)
 --       { kind = "wait", item, count, at, timeout },       -- until it shows up there
 --       { kind = "retrieve", from },                       -- that block -> storage
 --   } }
@@ -12,6 +13,9 @@
 -- where the result is awaited (Create's sequenced assembly can fail into scrap; its
 -- in-between items are fine). The machine blocks are then emptied into storage and the steps
 -- start again, up to `retries` times.
+--
+-- A block may be a machine group instead ("@mixers", "@presses:2"): each run takes a
+-- free station of it (see logistics_crafter).
 --
 -- Pure functions over plain tables (tested without hardware).
 -- @module logistics_recipes
@@ -51,7 +55,8 @@ function logistics_recipes.clean_step(step)
     if not (is_item(step.item) and positive(step.count) and is_block(step.to)) then
       return nil, "supply needs an item id, a count and a machine"
     end
-    return { kind = "supply", item = step.item, count = positive(step.count), to = step.to }
+    return { kind = "supply", item = step.item, count = positive(step.count), to = step.to,
+      slot = positive(step.slot) }
   elseif step.kind == "wait" then
     if not (is_item(step.item) and positive(step.count) and is_block(step.at)) then
       return nil, "wait needs an item id, a count and the block it appears in"
@@ -164,6 +169,7 @@ end
 -- @tparam string item The result.
 -- @tparam table seen
 --   supplies  [block] = { [item] = most seen added at once }
+--   order     optional { { block, item }... } in the order the player supplied them
 --   result    { block, count, seconds } where the result first appeared, or nil
 -- @treturn[1] table recipe (cleaned)
 -- @treturn[2] nil
@@ -173,22 +179,30 @@ function logistics_recipes.draft(item, seen)
     return nil, "the result never showed up in a machine; nothing to learn"
   end
   local steps = {}
-  local blocks = {}
-  for block in pairs(seen.supplies or {}) do
-    blocks[#blocks + 1] = block
-  end
-  table.sort(blocks)
-  for _, block in ipairs(blocks) do
-    local items = {}
-    for ingredient in pairs(seen.supplies[block]) do
-      if ingredient ~= item then
+  local order = seen.order
+  if not order then
+    -- No order known: by block, then item id.
+    order = {}
+    local blocks = {}
+    for block in pairs(seen.supplies or {}) do
+      blocks[#blocks + 1] = block
+    end
+    table.sort(blocks)
+    for _, block in ipairs(blocks) do
+      local items = {}
+      for ingredient in pairs(seen.supplies[block]) do
         items[#items + 1] = ingredient
       end
+      table.sort(items)
+      for _, ingredient in ipairs(items) do
+        order[#order + 1] = { block = block, item = ingredient }
+      end
     end
-    table.sort(items)
-    for _, ingredient in ipairs(items) do
-      steps[#steps + 1] = { kind = "supply", item = ingredient,
-        count = seen.supplies[block][ingredient], to = block }
+  end
+  for _, entry in ipairs(order) do
+    local count = (seen.supplies[entry.block] or {})[entry.item]
+    if entry.item ~= item and count then
+      steps[#steps + 1] = { kind = "supply", item = entry.item, count = count, to = entry.block }
     end
   end
   if #steps == 0 then
@@ -206,7 +220,8 @@ end
 --- One line per step, for people.
 function logistics_recipes.describe_step(step)
   if step.kind == "supply" then
-    return string.format("supply %d %s -> %s", step.count, step.item, step.to)
+    local slot = step.slot and (" slot " .. step.slot) or ""
+    return string.format("supply %d %s -> %s%s", step.count, step.item, step.to, slot)
   elseif step.kind == "wait" then
     return string.format("wait for %d %s in %s (%ds)", step.count, step.item, step.at,
       step.timeout)

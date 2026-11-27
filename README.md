@@ -194,6 +194,13 @@ write a recipe by hand with `logistics craft new`). For Create's sequenced assem
 scrap item (`logistics craft set <item> scrap create:...`): a run that ends in scrap empties
 the machines back into storage and starts over, up to the recipe's retries.
 
+Jobs run side by side as long as they use different machines; two recipes for the same
+basin take turns. Built three mixers? Make them a group, `logistics craft group mixers basin_1
+basin_2 basin_3`, and point the recipe at it (`logistics craft set create:brass_ingot machine
+basin_1 @mixers`): every run takes a free mixer, so three batches go at once. A station of
+several blocks (a depot and its output chest) is written `depot_1,out_1`, and the recipe uses
+`@presses:1` and `@presses:2`. A supply step can name a slot, e.g. a furnace's fuel slot.
+
 Watched items keep themselves stocked: when one drops below its limit and a node has a recipe,
 that node crafts it up to the refill target. Ingredients come from the node's own storage
 first; missing ones are brought from other nodes through the ports, straight into the machine.

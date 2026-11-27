@@ -7,12 +7,17 @@
 --   logistics craft teach <item id>         do the craft once; the node learns it
 --   logistics craft recipes | show <item>   the recipes, or one recipe's steps
 --   logistics craft new <item id>           an empty recipe to add steps to
---   logistics craft step <item> add supply <ingredient> <count> <machine>
+--   logistics craft step <item> add supply <ingredient> <count> <machine> [slot]
 --   logistics craft step <item> add wait <result> <count> <block> [timeout]
 --   logistics craft step <item> add retrieve <block>
 --   logistics craft step <item> del <n>
 --   logistics craft set <item> retries <n> | makes <n> | scrap <item...>
+--   logistics craft set <item> machine <block> <@group[:n]>   use a group instead
+--   logistics craft group <name> <block[,block...]>...       stations of a group
+--   logistics craft group <name> | groups | group-del <name>
 --   logistics craft forget <item> | cancel <item>
+-- A machine group lists interchangeable stations (one block each, or several in the
+-- same order, e.g. a depot and its output chest); each run takes a free station.
 -- @module logistics_craft_cli
 
 local logistics = import("logistics")
@@ -22,7 +27,7 @@ local logistics_craft_cli = {}
 
 local LOCAL_COMMANDS = {
   teach = true, recipes = true, show = true, new = true, step = true, set = true,
-  forget = true, cancel = true,
+  forget = true, cancel = true, group = true, groups = true, ["group-del"] = true,
 }
 
 local function fail(message)
@@ -33,10 +38,13 @@ local function usage()
   print("Usage: logistics craft [<item> [count]]")
   print("       logistics craft teach <item id> | recipes | show <item>")
   print("       logistics craft new <item id> | forget <item> | cancel <item>")
-  print("       logistics craft step <item> add supply <ingredient> <count> <machine>")
+  print("       logistics craft step <item> add supply <ingredient> <count> <machine> [slot]")
   print("       logistics craft step <item> add wait <result> <count> <block> [timeout]")
   print("       logistics craft step <item> add retrieve <block> | del <n>")
   print("       logistics craft set <item> retries <n> | makes <n> | scrap <item...>")
+  print("       logistics craft set <item> machine <block> <@group[:n]>")
+  print("       logistics craft group <name> <block[,block...]>... | groups")
+  print("       logistics craft group-del <name>")
 end
 
 ------------------------------------------------------------------------------
@@ -109,8 +117,11 @@ local function crafter_here()
   return crafter
 end
 
--- A machine or block by name or label, on this node.
+-- A machine or block by name or label, on this node; "@group" and "@group:n" pass.
 local function block_named(query)
+  if tostring(query):match("^@[%w_%-]+:?%d*$") then
+    return query
+  end
   local node = blockos.logistics_node
   local handles = {}
   for _, row in ipairs(node.list_storages()) do
@@ -168,19 +179,29 @@ local function teach(crafter, item)
         seen.result.block, math.floor(seen.result.seconds)), "ok")
     end
   end
-  local timer = os.startTimer(0.5)
-  draw(crafter.teach_poll())
-  while true do
-    local event, value = os.pullEvent()
-    if event == "timer" and value == timer then
-      draw(crafter.teach_poll())
-      timer = os.startTimer(0.5)
-    elseif event == "key" and value == keys.enter then
-      break
-    elseif event == "char" and value == "q" then
-      crafter.teach_cancel()
-      return ui.print("Cancelled.", "dim")
+  -- Whatever ends this loop (Ctrl+T, a logout, an error), teaching must stop too, or
+  -- the node's jobs stay paused.
+  local finished, wants_save = pcall(function()
+    local timer = os.startTimer(0.5)
+    draw(crafter.teach_poll())
+    while true do
+      local event, value = os.pullEvent()
+      if event == "timer" and value == timer then
+        draw(crafter.teach_poll())
+        timer = os.startTimer(0.5)
+      elseif event == "key" and value == keys.enter then
+        return true
+      elseif event == "char" and value == "q" then
+        return false
+      end
     end
+  end)
+  if not finished or not wants_save then
+    crafter.teach_cancel()
+    if not finished then
+      error(wants_save, 0)
+    end
+    return ui.print("Cancelled.", "dim")
   end
   local recipe, finish_error = crafter.teach_finish()
   if not recipe then
@@ -197,7 +218,8 @@ local function parse_step(words)
     if not machine then
       return nil, err
     end
-    return { kind = "supply", item = words[6], count = tonumber(words[7]), to = machine }
+    return { kind = "supply", item = words[6], count = tonumber(words[7]), to = machine,
+      slot = tonumber(words[9]) }
   elseif kind == "wait" then
     local block, err = block_named(words[8] or "")
     if not block then
@@ -266,10 +288,72 @@ local function change_setting(crafter, words)
     recipe[what] = tonumber(words[5])
   elseif what == "scrap" then
     recipe.scrap = { table.unpack(words, 5) }
+  elseif what == "machine" and words[5] and words[6] then
+    -- Swap one block for a group reference in every step (after teaching).
+    for index, step in ipairs(recipe.steps) do
+      local changed = {}
+      for key, value in pairs(step) do
+        changed[key] = value
+      end
+      for _, field in ipairs({ "to", "at", "from" }) do
+        if changed[field] == words[5] then
+          changed[field] = words[6]
+        end
+      end
+      recipe.steps[index] = changed
+    end
   else
     return usage()
   end
   save_and_show(crafter, recipe)
+end
+
+local function show_groups(crafter)
+  ui.title("Machine groups on this node")
+  local names = {}
+  for name in pairs(crafter.groups) do
+    names[#names + 1] = name
+  end
+  table.sort(names)
+  if #names == 0 then
+    ui.print("  (none)", "faint")
+  end
+  for _, name in ipairs(names) do
+    local stations = {}
+    for index, station in ipairs(crafter.groups[name]) do
+      stations[index] = table.concat(station, "+")
+    end
+    ui.print("  @" .. name .. ": " .. table.concat(stations, ", "))
+  end
+end
+
+-- group <name> <block[,block...]>...: each word is a station.
+local function set_group(crafter, words)
+  local name = words[3]
+  if not name then
+    return usage()
+  end
+  if not words[4] then
+    return show_groups(crafter)
+  end
+  local stations = {}
+  for index = 4, #words do
+    local station = {}
+    for query in words[index]:gmatch("[^,]+") do
+      local block, err = block_named(query)
+      if not block then
+        return fail(err)
+      end
+      station[#station + 1] = block
+    end
+    stations[#stations + 1] = station
+  end
+  local ok, err = crafter.set_group(name, stations)
+  if not ok then
+    return fail(err)
+  end
+  ui.print("Group @" .. name .. " has " .. #stations .. " station(s).", "ok")
+  ui.print("Use it in a recipe: logistics craft set <item> machine <block> @" .. name, "dim")
 end
 
 local function run_local(words)
@@ -278,7 +362,17 @@ local function run_local(words)
     return fail(err)
   end
   local action, item = words[2], words[3]
-  if action == "teach" then
+  if action == "groups" then
+    show_groups(crafter)
+  elseif action == "group" then
+    set_group(crafter, words)
+  elseif action == "group-del" then
+    local ok, del_error = crafter.set_group(item or "", nil)
+    if not ok then
+      return fail(del_error)
+    end
+    ui.print("Group removed.", "ok")
+  elseif action == "teach" then
     teach(crafter, item)
   elseif action == "recipes" then
     list_recipes(crafter)

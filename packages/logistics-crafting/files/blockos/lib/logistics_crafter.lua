@@ -1,5 +1,5 @@
---- The crafter of a logistics node: runs crafting jobs step by step against the
--- node's machines, and learns recipes from a player doing a craft once.
+--- The crafter of a logistics node: runs crafting jobs against the node's machines,
+-- several at once, and learns recipes from a player doing a craft once.
 --
 -- It sits on the node's own computer and calls the node directly (supply, contents,
 -- retrieve): checking machines every second costs no network traffic. Only two
@@ -7,27 +7,49 @@
 -- and a "supply" request to the controller when an ingredient is not on this node
 -- (it arrives through the ports straight into the machine).
 --
--- One job runs at a time (machines are shared); others wait in line. A job repeats
--- the recipe until it made enough. A failed attempt (timeout or scrap) empties the
--- recipe's blocks into storage and starts the run again, up to the recipe's retries.
+-- Jobs and runs: a job wants N items; it does runs of the recipe until it has them.
+-- Each run claims the blocks it uses for as long as it runs, so jobs on different
+-- machines run side by side and two recipes for the same basin take turns. A recipe
+-- may name a machine group ("@mixers", or "@presses:2" for the second block of a
+-- station) instead of one block: each run then takes a free station of the group, so
+-- three mixers make three batches at once. Before a run its blocks are emptied into
+-- storage (leftovers would fake a result); a run counts what really came out.
+--
+-- A failed attempt (timeout, listed scrap, nothing came out) empties the run's blocks
+-- into storage and starts that run again, up to the recipe's retries; then the job
+-- fails.
 -- @module logistics_crafter
 
 local logistics_recipes = import("logistics_recipes")
 
 local logistics_crafter = {}
 
---- How long a job waits for a missing ingredient before giving up.
+--- How long a run waits for a missing ingredient before the job gives up.
 logistics_crafter.INGREDIENT_WAIT = 120
 --- Most runs one job does (a refill of thousands is split over several jobs).
 logistics_crafter.MAX_RUNS = 64
 logistics_crafter.MAX_JOBS = 8
 logistics_crafter.HISTORY = 5
+--- Teaching ends by itself after this long (a forgotten teach would stop all jobs).
+logistics_crafter.TEACH_SECONDS = 600
+
+--- Split a block reference: "@group:2" -> "group", 2; "@group" -> "group", 1.
+-- @treturn string|nil group name (nil for a plain block)
+-- @treturn number position in the station
+function logistics_crafter.group_ref(ref)
+  local group, position = tostring(ref):match("^@([%w_%-]+):?(%d*)$")
+  if not group then
+    return nil
+  end
+  return group, tonumber(position) or 1
+end
 
 --- Create a crafter.
 -- @tparam table options
 --   node     the logistics node (supply, contents, retrieve, stored, machines)
 --   recipes  [item] = recipe, changed in place
---   save     function() -> true | nil, err (the recipes)
+--   groups   optional [name] = { station = { block... }... }, changed in place
+--   save     function() -> true | nil, err (recipes and groups)
 --   fetch    optional function(item, count, machine) -> { moved } | nil, err: bring an
 --            ingredient from other nodes (through the controller)
 --   clock    optional function() -> seconds
@@ -36,9 +58,10 @@ logistics_crafter.HISTORY = 5
 function logistics_crafter.new(options)
   local node = options.node
   local recipes = options.recipes
+  local groups = options.groups or {}
   local clock = options.clock or function() return os.clock() end
   local log = options.log
-  local crafter = { jobs = {}, history = {}, teaching = nil }
+  local crafter = { jobs = {}, history = {}, teaching = nil, claims = {}, groups = groups }
 
   local function note(level, format, ...)
     if log and log[level] then
@@ -47,7 +70,7 @@ function logistics_crafter.new(options)
   end
 
   ---------------------------------------------------------------------------
-  -- Recipes
+  -- Recipes and groups
   ---------------------------------------------------------------------------
 
   function crafter.recipe(item)
@@ -76,6 +99,30 @@ function logistics_crafter.new(options)
     return options.save()
   end
 
+  --- Define a machine group: interchangeable stations, each a list of blocks in the
+  -- same order (e.g. { { "depot_1", "out_1" }, { "depot_2", "out_2" } }).
+  -- @tparam string name
+  -- @tparam[opt] {table...} stations nil removes the group
+  function crafter.set_group(name, stations)
+    if not tostring(name):match("^[%w_%-]+$") then
+      return nil, "group names use letters, digits, - and _"
+    end
+    if stations then
+      local size = nil
+      for _, station in ipairs(stations) do
+        size = size or #station
+        if #station == 0 or #station ~= size then
+          return nil, "every station of a group needs the same number of blocks"
+        end
+      end
+      if not size then
+        return nil, "a group needs at least one station"
+      end
+    end
+    groups[name] = stations
+    return options.save()
+  end
+
   --- What the controller learns from each report.
   function crafter.summary()
     local list, needs = {}, {}
@@ -89,7 +136,7 @@ function logistics_crafter.new(options)
     local jobs = {}
     for _, job in ipairs(crafter.jobs) do
       jobs[#jobs + 1] = { item = job.item, count = job.count, made = job.made,
-        state = job.state, attempt = job.attempt, note = job.note }
+        state = job.state, running = #job.runs, note = job.note }
     end
     for _, job in ipairs(crafter.history) do
       jobs[#jobs + 1] = job
@@ -99,7 +146,77 @@ function logistics_crafter.new(options)
   end
 
   ---------------------------------------------------------------------------
-  -- Jobs
+  -- Claims: which blocks a run holds
+  ---------------------------------------------------------------------------
+
+  local function release(run)
+    for _, block in ipairs(run.blocks) do
+      if crafter.claims[block] == run then
+        crafter.claims[block] = nil
+      end
+    end
+  end
+
+  -- Pick blocks for a new run of a recipe: plain blocks must be free; each group
+  -- reference gets a free station. Returns the binding and the block list, or nil.
+  local function bind(recipe)
+    local binding, blocks, taken = {}, {}, {}
+    local function take(block)
+      if crafter.claims[block] or taken[block] then
+        return false
+      end
+      taken[block] = true
+      blocks[#blocks + 1] = block
+      return true
+    end
+    for _, ref in ipairs(logistics_recipes.blocks(recipe)) do
+      local group = logistics_crafter.group_ref(ref)
+      if not group and not take(ref) then
+        return nil
+      elseif group and not binding[group] then
+        local chosen = nil
+        for _, station in ipairs(groups[group] or {}) do
+          local is_free = true
+          for _, block in ipairs(station) do
+            if crafter.claims[block] or taken[block] then
+              is_free = false
+            end
+          end
+          if is_free then
+            chosen = station
+            break
+          end
+        end
+        if not chosen then
+          return nil
+        end
+        binding[group] = chosen
+        for _, block in ipairs(chosen) do
+          take(block)
+        end
+      end
+    end
+    return binding, blocks
+  end
+
+  -- The block a step's reference means in this run.
+  local function resolve(run, ref)
+    local group, position = logistics_crafter.group_ref(ref)
+    if not group then
+      return ref
+    end
+    local station = run.binding[group]
+    return station and station[position]
+  end
+
+  local function empty_run(run)
+    for _, block in ipairs(run.blocks) do
+      node.retrieve(block)
+    end
+  end
+
+  ---------------------------------------------------------------------------
+  -- Jobs and runs
   ---------------------------------------------------------------------------
 
   local function find_job(item)
@@ -132,13 +249,17 @@ function logistics_crafter.new(options)
     if #crafter.jobs >= logistics_crafter.MAX_JOBS then
       return nil, "too many crafting jobs waiting"
     end
-    job = { item = item, count = count, made = 0, attempt = 0, step = 1, supplied = 0,
-      state = "queued", step_started = clock() }
+    job = { item = item, count = count, made = 0, state = "queued", runs = {} }
     crafter.jobs[#crafter.jobs + 1] = job
     return { item = item, count = count, state = job.state }
   end
 
   local function finish(job, state, why)
+    for _, run in ipairs(job.runs) do
+      empty_run(run)
+      release(run)
+    end
+    job.runs = {}
     local _, index = find_job(job.item)
     if index then
       table.remove(crafter.jobs, index)
@@ -158,106 +279,187 @@ function logistics_crafter.new(options)
     if not job then
       return nil, "no job for " .. tostring(item)
     end
-    for _, block in ipairs(logistics_recipes.blocks(recipes[item] or { steps = {} })) do
-      node.retrieve(block)
-    end
     finish(job, "cancelled")
     return true
   end
 
-  local function next_step(job, recipe)
-    job.step = job.step + 1
-    job.supplied, job.fetched = 0, nil
-    job.step_started = clock()
-    job.state, job.note = "running", nil
-    if job.step > #recipe.steps then
-      job.made = job.made + recipe.makes
-      job.attempt, job.step = 0, 1
-      if job.made >= job.count then
-        finish(job, "done")
+  local function new_run(job, recipe)
+    local binding, blocks = bind(recipe)
+    if not binding then
+      return nil
+    end
+    local run = { binding = binding, blocks = blocks, step = 1, supplied = 0, attempt = 0,
+      produced = 0, step_started = clock() }
+    for _, block in ipairs(blocks) do
+      crafter.claims[block] = run
+    end
+    -- Leftovers from before (a restart, a player) would fake a result.
+    empty_run(run)
+    job.runs[#job.runs + 1] = run
+    return run
+  end
+
+  local function end_run(job, run)
+    release(run)
+    for index, other in ipairs(job.runs) do
+      if other == run then
+        table.remove(job.runs, index)
+        break
       end
     end
   end
 
-  -- A failed attempt: everything in the recipe's blocks goes back to storage (scrap
-  -- included), then the run starts again or the job gives up.
-  local function attempt_failed(job, recipe, why)
-    for _, block in ipairs(logistics_recipes.blocks(recipe)) do
-      node.retrieve(block)
+  local function restart_step(run)
+    run.step, run.supplied, run.fetched, run.produced = 1, 0, nil, 0
+    run.step_started = clock()
+  end
+
+  local function next_step(job, recipe, run)
+    run.step = run.step + 1
+    run.supplied, run.fetched = 0, nil
+    run.step_started = clock()
+    job.note = nil
+    if run.step <= #recipe.steps then
+      return
     end
-    job.attempt = job.attempt + 1
-    if job.attempt > recipe.retries then
+    -- The run is over: count what really came out.
+    job.made = job.made + run.produced
+    end_run(job, run)
+  end
+
+  -- A failed attempt: everything in the run's blocks goes back to storage (scrap
+  -- included), then the run starts again or the job gives up.
+  local function attempt_failed(job, recipe, run, why)
+    empty_run(run)
+    run.attempt = run.attempt + 1
+    if run.attempt > recipe.retries then
       finish(job, "failed", why)
       return
     end
-    note("warn", "crafting %s: %s; trying again (%d of %d)", job.item, why, job.attempt,
+    note("warn", "crafting %s: %s; trying again (%d of %d)", job.item, why, run.attempt,
       recipe.retries)
-    job.step, job.supplied, job.fetched = 1, 0, nil
-    job.step_started = clock()
+    restart_step(run)
     job.note = why
   end
 
-  local function run_supply(job, recipe, step)
-    local missing = step.count - job.supplied
+  local function run_supply(job, recipe, run, step)
+    local machine = resolve(run, step.to)
+    local missing = step.count - run.supplied
     if missing > 0 and node.stored(step.item) > 0 then
-      local result = node.supply(step.item, missing, step.to)
-      job.supplied = job.supplied + (result and result.moved or 0)
-      missing = step.count - job.supplied
+      local result = node.supply(step.item, missing, machine, step.slot)
+      run.supplied = run.supplied + (result and result.moved or 0)
+      missing = step.count - run.supplied
     end
-    if missing > 0 and not job.fetched and options.fetch then
+    if missing > 0 and not run.fetched and options.fetch then
       -- Once per step: the controller brings it from other nodes into the machine.
-      job.fetched = true
-      local result = options.fetch(step.item, missing, step.to)
-      job.supplied = job.supplied + (result and result.moved or 0)
-      missing = step.count - job.supplied
+      run.fetched = true
+      local result = options.fetch(step.item, missing, machine)
+      run.supplied = run.supplied + (result and result.moved or 0)
+      missing = step.count - run.supplied
     end
     if missing <= 0 then
-      next_step(job, recipe)
+      next_step(job, recipe, run)
       return
     end
     job.state, job.note = "waiting", "needs " .. missing .. " " .. step.item
-    if clock() - job.step_started > logistics_crafter.INGREDIENT_WAIT then
-      for _, block in ipairs(logistics_recipes.blocks(recipe)) do
-        node.retrieve(block)
-      end
+    if clock() - run.step_started > logistics_crafter.INGREDIENT_WAIT then
       finish(job, "failed", "missing " .. step.item)
     end
   end
 
-  local function run_wait(job, recipe, step)
-    local contents = node.contents(step.at) or {}
+  local function run_wait(job, recipe, run, step)
+    local contents = node.contents(resolve(run, step.at)) or {}
     local scrap = logistics_recipes.failed_item(recipe, contents)
     if scrap then
-      attempt_failed(job, recipe, "made " .. scrap)
+      attempt_failed(job, recipe, run, "made " .. scrap)
     elseif (contents[step.item] or 0) >= step.count then
-      next_step(job, recipe)
-    elseif clock() - job.step_started > step.timeout then
-      attempt_failed(job, recipe, "timed out waiting for " .. step.item)
+      next_step(job, recipe, run)
+    elseif clock() - run.step_started > step.timeout then
+      attempt_failed(job, recipe, run, "timed out waiting for " .. step.item)
     end
   end
 
-  --- Advance the current job by at most one step (called every second).
-  function crafter.tick()
-    local job = crafter.jobs[1]
-    if not job or crafter.teaching then
+  local function run_retrieve(job, recipe, run, step)
+    local block = resolve(run, step.from)
+    local before = (node.contents(block) or {})[recipe.item] or 0
+    node.retrieve(block)
+    run.produced = run.produced + before
+    local is_last = run.step == #recipe.steps
+    if is_last and run.produced == 0 then
+      attempt_failed(job, recipe, run, "nothing came out")
       return
     end
+    next_step(job, recipe, run)
+  end
+
+  local function advance(job, recipe, run)
+    local step = recipe.steps[run.step]
+    if step.kind == "supply" then
+      run_supply(job, recipe, run, step)
+    elseif step.kind == "wait" then
+      run_wait(job, recipe, run, step)
+    else
+      run_retrieve(job, recipe, run, step)
+    end
+  end
+
+  -- Start as many runs as the job still needs and free machines allow.
+  local function start_runs(job, recipe)
+    while job.made + #job.runs * recipe.makes < job.count do
+      if not new_run(job, recipe) then
+        break
+      end
+    end
+  end
+
+  local function tick_job(job)
     local recipe = recipes[job.item]
     if not (recipe and recipe.is_ready) then
       finish(job, "failed", "the recipe is gone")
       return
     end
-    if job.state == "queued" then
-      job.state, job.step_started = "running", clock()
+    start_runs(job, recipe)
+    if #job.runs == 0 then
+      if job.made >= job.count then
+        finish(job, "done")
+      else
+        job.state = "queued" -- its machines are busy with other jobs
+      end
+      return
     end
-    local step = recipe.steps[job.step]
-    if step.kind == "supply" then
-      run_supply(job, recipe, step)
-    elseif step.kind == "wait" then
-      run_wait(job, recipe, step)
-    else
-      node.retrieve(step.from)
-      next_step(job, recipe)
+    job.state = "running"
+    local runs = {}
+    for index, run in ipairs(job.runs) do
+      runs[index] = run
+    end
+    for _, run in ipairs(runs) do
+      if find_job(job.item) ~= job then
+        return -- the job finished (failed) meanwhile
+      end
+      advance(job, recipe, run)
+    end
+    if find_job(job.item) == job and #job.runs == 0 and job.made >= job.count then
+      finish(job, "done")
+    end
+  end
+
+  --- Advance every job by at most one step per run (called every second).
+  function crafter.tick()
+    if crafter.teaching then
+      if clock() - crafter.teaching.started > logistics_crafter.TEACH_SECONDS then
+        note("warn", "teaching %s ran out of time", crafter.teaching.item)
+        crafter.teaching = nil
+      end
+      return
+    end
+    local jobs = {}
+    for index, job in ipairs(crafter.jobs) do
+      jobs[index] = job
+    end
+    for _, job in ipairs(jobs) do
+      if find_job(job.item) == job then
+        tick_job(job)
+      end
     end
   end
 
@@ -265,7 +467,7 @@ function logistics_crafter.new(options)
   -- Teaching: watch a player craft once
   ---------------------------------------------------------------------------
 
-  --- Start watching the machines. Jobs pause meanwhile.
+  --- Start watching the machines. Jobs pause meanwhile (at most TEACH_SECONDS).
   function crafter.teach_start(item)
     local machines = node.machines()
     if #machines == 0 then
@@ -275,12 +477,13 @@ function logistics_crafter.new(options)
     for _, block in ipairs(machines) do
       before[block] = node.contents(block) or {}
     end
-    crafter.teaching = { item = item, before = before, supplies = {}, started = clock() }
+    crafter.teaching = { item = item, before = before, supplies = {}, order = {},
+      started = clock() }
     return machines
   end
 
   --- Look at the machines once; returns what was seen so far.
-  -- @treturn table { supplies = { [block] = { [item] = count } }, result? }
+  -- @treturn table { supplies = { [block] = { [item] = count } }, order, result? }
   function crafter.teach_poll()
     local teaching = crafter.teaching
     if not teaching then
@@ -296,6 +499,10 @@ function logistics_crafter.new(options)
           end
         elseif added > 0 then
           local seen = teaching.supplies[block] or {}
+          if not seen[item] then
+            -- The order the player put things in (a furnace wants its input first).
+            teaching.order[#teaching.order + 1] = { block = block, item = item }
+          end
           seen[item] = math.max(seen[item] or 0, added)
           teaching.supplies[block] = seen
         end

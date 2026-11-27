@@ -250,10 +250,10 @@ function logistics_node.new(options)
 
   -- Crafting (used on this computer by logistics-crafting; no network) ------
 
-  --- Move items from storage into a machine block.
-  function node.supply(item, count, machine)
+  --- Move items from storage into a machine block (optionally into one slot).
+  function node.supply(item, count, machine, slot)
     local result, err = logistics_sorting.supply(node.inventories, item, count, machine,
-      record_move)
+      record_move, slot)
     if result then
       local found = node.totals[item]
       if found then
