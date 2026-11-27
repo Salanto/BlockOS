@@ -43,6 +43,11 @@ config.define("blockos.logistics.board", {
   description = "Monitor or Create Display Link that shows the logistics board.",
   type = "string",
 })
+config.define("blockos.logistics.board_style", {
+  description = "Board on a monitor: auto (the wall when it fits, else the list), wall or list.",
+  default = "auto",
+  type = "string",
+})
 config.define("blockos.logistics.reactions", {
   description = "Redstone outputs that are on while an item is low: { { item, target, side } }.",
   default = {},

@@ -3,8 +3,9 @@
 -- * Receives level alerts from the hub (controller or lone node) and keeps the last
 --   few in memory.
 -- * Puts a notice on the welcome screen while items are low.
--- * Draws a levels board on a monitor or Create Display Link when the
---   `blockos.logistics.board` setting names one (`logistics board <name>`).
+-- * Draws a board on a monitor or Create Display Link when the
+--   `blockos.logistics.board` setting names one (`logistics board <name>`): the wall
+--   (the whole network, animated) on a big monitor, else the list of levels.
 -- * Reactions: redstone outputs that stay on while an item is low, e.g. to run
 --   a farm until it is refilled (`logistics react ...`).
 --
@@ -14,6 +15,9 @@
 
 local MAX_ALERTS = 20
 local REFRESH_SECONDS = 10
+-- The wall's animation frames and how often it asks for new moves.
+local FRAME_SECONDS = 0.3
+local MOVES_SECONDS = 1
 -- Refreshes without an answer before a hub counts as gone (~30s).
 local MAX_MISSES = 3
 
@@ -42,6 +46,7 @@ local function run(ctx)
   local logistics_alarms = import("logistics_alarms")
   local logistics_board = import("logistics_board")
   local logistics_client = import("logistics_client")
+  local logistics_wall = import("logistics_wall")
   local wire = import("wire")
   migrate_settings()
 
@@ -167,14 +172,65 @@ local function run(ctx)
 
   local page = 1
   local shown_board = nil -- the peripheral the board was last drawn on
-  local function draw_board(data)
+  local wall = nil -- { name, live, seq, log } while a wall is shown
+
+  -- The wall on a big monitor (unless the list was asked for), else nil.
+  local function wall_for(board)
+    local style = config.get("blockos.logistics.board_style", "auto")
+    if style == "list" or not peripheral.hasType(board, logistics_board.MONITOR_TYPE) then
+      return nil
+    end
+    if wall and wall.name == board then
+      return wall
+    end
+    local monitor = peripheral.wrap(board)
+    if not logistics_wall.fit_scale(monitor) then
+      return nil
+    end
+    wall = { name = board, live = logistics_wall.live(monitor) }
+    return wall
+  end
+
+  -- What the wall needs besides the status: nodes, chests, item counts, alerts.
+  local function load_wall(connection, data)
+    local nodes = connection.call("nodes") or {}
+    logistics_wall.add_totals(nodes, connection.call("catalog"))
+    data.nodes = nodes
+    data.storages = connection.call("storages") or {}
+    data.alerts = connection.call("alerts") or {}
+    wall.live.set_data(data)
+    wall.connection = connection
+  end
+
+  local function draw_board(connection, data)
     local board = config.get("blockos.logistics.board")
     if not board or board == "" then
       return
     end
+    shown_board = board
+    if wall_for(board) then
+      load_wall(connection, data)
+      wall.live.frame()
+      return
+    end
+    wall = nil
     local pages = logistics_board.show(peripheral, board, data, page)
     page = (pages and page < pages) and (page + 1) or 1
-    shown_board = board
+  end
+
+  -- New moves for the wall's animation (the first call only learns where the log is).
+  local function poll_wall_moves()
+    if not (wall and wall.connection) then
+      return
+    end
+    local result = wall.connection.call("moves", { since = wall.seq })
+    if not result then
+      return
+    end
+    if result.log == wall.log and wall.seq then
+      wall.live.add_moves(result.moves)
+    end
+    wall.log, wall.seq = result.log, result.seq
   end
 
   -- A board turned off or moved would otherwise keep its last picture forever.
@@ -182,6 +238,7 @@ local function run(ctx)
     if shown_board and shown_board ~= board then
       pcall(logistics_board.clear, peripheral, shown_board)
       shown_board = nil
+      wall = nil
     end
   end
 
@@ -230,7 +287,7 @@ local function run(ctx)
     end
     item_low = fresh
     apply_reactions()
-    draw_board(data)
+    draw_board(connection, data)
   end
 
   local function on_alert_message(sender, message)
@@ -242,6 +299,8 @@ local function run(ctx)
   end
 
   local timer = os.startTimer(1)
+  local frame_timer = os.startTimer(FRAME_SECONDS)
+  local next_moves = 0
   while true do
     local event, a, b, c = os.pullEvent()
     if event == "rednet_message" and c == logistics_alarms.ALERT_PROTOCOL then
@@ -251,6 +310,21 @@ local function run(ctx)
       refresh()
       check_notice()
       timer = os.startTimer(REFRESH_SECONDS)
+    elseif event == "timer" and a == frame_timer then
+      -- Frames only while a wall is shown; otherwise check back now and then.
+      if wall then
+        if os.clock() >= next_moves then
+          poll_wall_moves()
+          next_moves = os.clock() + MOVES_SECONDS
+        end
+        if wall.live.frame() then
+          frame_timer = os.startTimer(FRAME_SECONDS)
+        else
+          frame_timer = os.startTimer(MOVES_SECONDS)
+        end
+      else
+        frame_timer = os.startTimer(REFRESH_SECONDS)
+      end
     end
   end
 end

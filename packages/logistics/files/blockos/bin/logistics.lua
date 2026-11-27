@@ -8,7 +8,10 @@
 --   logistics storage label <chest> <label...>   (nothing removes it)
 --   logistics request <item> [count] [output]    deliver items to an output chest
 --   logistics map                      the network map, with item moves animated
---   logistics board <peripheral>|off   show a levels board on a monitor or Display Link
+--   logistics board <peripheral> [wall|list|auto] | off
+--                                      a board on a monitor or Display Link: the wall
+--                                      (whole network, animated) on big monitors, else
+--                                      the list of levels
 --   logistics sound note|sound|file <value> [volume] | test
 --                                      alarm sound: a note block instrument, a
 --                                      Minecraft sound event, or a .dfpwm audio file
@@ -42,7 +45,7 @@ local function print_usage()
   print("       logistics status | alerts | nodes | map")
   print("       logistics storage [list] | role <chest> <role> | label <chest> <label>")
   print("       logistics request <item> [count] [output chest]")
-  print("       logistics board <peripheral> | off")
+  print("       logistics board <peripheral> [wall|list|auto] | off")
   print("       logistics sound note|sound|file <value> [volume] | test")
   print("       logistics react add <item> <target> <side> | remove <item> | list")
   print("       logistics levels import <node>")
@@ -135,7 +138,9 @@ local function show_alerts(connection)
   end
 end
 
-local function set_board(name)
+local BOARD_STYLES = { auto = true, wall = true, list = true }
+
+local function set_board(name, style)
   if not (blockos.user and blockos.user.is_admin) then
     return fail("Only administrators can change the board.")
   end
@@ -147,8 +152,15 @@ local function set_board(name)
   if not peripheral.isPresent(name) then
     return fail("No peripheral named " .. name)
   end
+  if style and not BOARD_STYLES[style] then
+    return print_usage()
+  end
   blockos.config.set("blockos.logistics.board", name)
+  if style then
+    blockos.config.set("blockos.logistics.board_style", style)
+  end
   ui.print("Board shown on " .. name .. ".", "ok")
+  ui.print("A big monitor shows the wall (the whole network); 'list' for levels only.", "dim")
 end
 
 local SOUND_KINDS = { note = true, sound = true, file = true }
@@ -473,7 +485,7 @@ if command == "rename" then
   end
 elseif command == "board" then
   if options.words[2] then
-    set_board(options.words[2])
+    set_board(options.words[2], options.words[3])
   else
     print_usage()
   end

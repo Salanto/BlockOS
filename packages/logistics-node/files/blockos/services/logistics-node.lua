@@ -15,6 +15,8 @@
 -- and between checks that it has not moved to another computer.
 local DISCOVER_ROUNDS = 6
 local RECHECK_ROUNDS = 30
+-- Rounds between GPS fixes (the wall board groups nodes by height; ~5 min).
+local GPS_ROUNDS = 30
 
 local function file(name)
   return import("paths").top(import("logistics_client")[name])
@@ -178,9 +180,25 @@ local function run(ctx)
     end
   end
 
+  -- Where this node stands, when GPS hosts are in range (nil otherwise).
+  local position = nil
+  local rounds_since_gps = GPS_ROUNDS
+  local function locate()
+    rounds_since_gps = rounds_since_gps + 1
+    if rounds_since_gps < GPS_ROUNDS then
+      return
+    end
+    rounds_since_gps = 0
+    local ok, x, y, z = pcall(gps.locate, 2)
+    if ok and x then
+      position = { x = math.floor(x), y = math.floor(y), z = math.floor(z) }
+    end
+  end
+
   local function send_report()
     local report = node.report()
     report.node = hostname()
+    report.pos = position
     if controller_id then
       rednet.send(controller_id, wire.event(logistics_client.REPORT_TOPIC, report),
         logistics_client.NODE_PROTOCOL)
@@ -203,6 +221,7 @@ local function run(ctx)
     function()
       while true do
         node.round()
+        locate()
         look_for_controller()
         send_report()
         sleep(config.poll_seconds)

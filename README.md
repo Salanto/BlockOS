@@ -120,7 +120,12 @@ Alarms:
   Redstone Link to light lamps wirelessly.
 - **Speaker:** plays a note, any Minecraft sound, or a `.dfpwm` recording (an "ALERT!" voice
   clip works). Set it with `logistics sound ...`.
-- **Board:** `logistics board <monitor or Display Link>`, on any computer.
+- **Board:** `logistics board <monitor or Display Link>`, on any computer. A big monitor (about
+  5x3 blocks) shows the **wall**: the controller on the left, every node stacked on the right
+  with its chests coloured by how full they are, items flying along the rows as they move,
+  and low items, alerts and recent moves under the controller. Nodes that can reach GPS
+  hosts are grouped by height. Smaller monitors and Display Links show the list of levels
+  (`logistics board <name> list` forces it).
 
 **Run a farm until it is refilled:** give an item a refill target (Overview tab, `f`), for
 example "low below 200, refill to 1000". An alarm output for that item then stays on until
