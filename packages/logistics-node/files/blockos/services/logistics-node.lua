@@ -299,6 +299,13 @@ local function run(ctx)
     elseif hub then
       hub.update(report.node, report, node.proxy())
     end
+    local too_big = node.report_too_big()
+    if too_big then
+      import("notices").set("logistics_report", string.format("This node reports %d KB of items"
+        .. " every round: split it into smaller nodes", math.floor(too_big / 1024)))
+    else
+      import("notices").clear("logistics_report")
+    end
   end
 
   -- Start with the hub here; a controller elsewhere is looked up on the first round.

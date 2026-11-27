@@ -33,6 +33,10 @@ logistics_node.MAX_MOVES = 50
 --- The block list goes out only when it changed, or at least every this many reports
 -- (a lost report is corrected by then). Item counts go out every round.
 logistics_node.BLOCKS_EVERY = 6
+
+--- A report bigger than this (bytes, measured on full rounds) earns a notice: the node
+-- has so many item types that it should be split (many small nodes also count faster).
+logistics_node.REPORT_WARN_BYTES = 48 * 1024
 --- Sorting pauses while someone finds a chest, at most this long.
 logistics_node.FIND_PAUSE_SECONDS = 60
 --- Ports are left alone this long while items cross (or a marker is read).
@@ -122,6 +126,8 @@ function logistics_node.new(options)
     sources_read = nil, -- nil until the first read, so tools do not show "no storage"
     sort_paused_until = 0,
     finds = {}, -- [id] = { before, touched, until_clock }: players finding a chest
+    labels_sent = {}, -- [item] = label the controller has (labels go out only when new)
+    report_bytes = nil, -- size of the last full report (see REPORT_WARN_BYTES)
     holds = {}, -- [crossing] = clock until which ports are left alone
     report_seq = 0,
     -- Changes whenever the node starts, so the controller knows seqs began again.
@@ -220,18 +226,29 @@ function logistics_node.new(options)
     node.report_seq = node.report_seq + 1
     local blocks = node.list_storages()
     local blocks_text = textutils.serialise(blocks, { compact = true })
-    local is_due = node.report_seq - (node.blocks_sent_at or -math.huge)
+    -- Every BLOCKS_EVERY rounds everything goes out in full (a lost report corrects itself).
+    local is_full = node.report_seq - (node.full_sent_at or -math.huge)
       >= logistics_node.BLOCKS_EVERY
-    if blocks_text ~= node.blocks_sent or is_due then
-      node.blocks_sent, node.blocks_sent_at = blocks_text, node.report_seq
+    if is_full then
+      node.full_sent_at = node.report_seq
+      node.labels_sent = {}
+    end
+    if blocks_text ~= node.blocks_sent or is_full then
+      node.blocks_sent = blocks_text
     else
       blocks = nil -- unchanged: the controller keeps the last list
     end
+    -- Labels are most of a report: send one only when the controller lacks it.
     local totals = {}
     for item, found in pairs(node.totals) do
-      totals[item] = { count = found.count, label = found.label }
+      local entry = { count = found.count }
+      if node.labels_sent[item] ~= found.label then
+        entry.label = found.label
+        node.labels_sent[item] = found.label
+      end
+      totals[item] = entry
     end
-    return {
+    local report = {
       seq = node.report_seq,
       boot = node.boot,
       totals = totals,
@@ -242,6 +259,20 @@ function logistics_node.new(options)
       -- What this node can craft and is crafting (logistics-crafting sets node.crafter).
       crafting = node.crafter and node.crafter.summary() or nil,
     }
+    if is_full then
+      node.report_bytes = #textutils.serialise(report, { compact = true })
+    end
+    return report
+  end
+
+  --- Is this node's report too big (see REPORT_WARN_BYTES)?
+  -- @treturn[1] number its size in bytes, when too big
+  -- @treturn[2] nil
+  function node.report_too_big()
+    if node.report_bytes and node.report_bytes > logistics_node.REPORT_WARN_BYTES then
+      return node.report_bytes
+    end
+    return nil
   end
 
   -- Crafting (used on this computer by logistics-crafting; no network) ------
@@ -447,6 +478,13 @@ function logistics_node.new(options)
       end
     end
     node.finds[id] = nil
+    -- One clear answer: that chest was this player's, so it is no answer for others
+    -- searching at the same time.
+    if #changed == 1 then
+      for _, other in pairs(node.finds) do
+        other.touched[changed[1].handle] = true
+      end
+    end
     update_pause()
     return changed
   end
