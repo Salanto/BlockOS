@@ -9,7 +9,7 @@
 local args = { ... }
 local ui = blockos.ui
 local rpc = import("rpc")
-local turtle_remote = import("turtle_remote")
+local turtle_remote = import("turtle_remote_wire")
 
 -- Never retried: a lost answer must not make the turtle move twice.
 local ACT_OPTIONS = { relogin = true, retries = 0 }
@@ -38,11 +38,18 @@ local function fail(message)
   ui.print(tostring(message), "error")
 end
 
-local function list_turtles()
-  local domain = import("domain")
-  local hosts, err = domain.list_hosts()
+-- Turtles from the domain's host list, or (without a domain) the ones this computer
+-- heard announce themselves.
+local function known_turtles()
+  local found, domain = pcall(import, "domain")
+  local hosts, err
+  if found and domain.is_joined() then
+    hosts, err = domain.list_hosts()
+  else
+    hosts = blockos.net and blockos.net.peers() or {}
+  end
   if not hosts then
-    return fail(err)
+    return nil, err
   end
   local turtles = {}
   for _, host in ipairs(hosts) do
@@ -50,15 +57,25 @@ local function list_turtles()
       turtles[#turtles + 1] = host
     end
   end
-  ui.title("Turtles in the domain")
+  return turtles
+end
+
+local function list_turtles()
+  local turtles, err = known_turtles()
+  if not turtles then
+    return fail(err)
+  end
+  ui.title("Turtles")
   if #turtles == 0 then
     ui.print("  (none)", "faint")
     return
   end
   ui.table({
     { title = "TURTLE", key = "hostname" },
-    { title = "FUEL", key = function(host) return tostring(host.info.fuel or "?") end },
-    { title = "SEEN", key = function(host) return domain.describe_seen(host) end },
+    { title = "FUEL", key = function(host) return tostring((host.info or {}).fuel or "?") end },
+    { title = "SEEN", key = function(host)
+      return host.age and (math.floor(host.age) .. "s ago") or "-"
+    end },
   }, turtles)
 end
 

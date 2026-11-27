@@ -2,9 +2,10 @@
 -- request handlers of the turtle-remote service (protocol "blockos.remote").
 --
 -- Kept apart from the service so tests can call the handlers with a stub
--- turtle. Every request needs a logged-in domain user, checked with the
--- domain controller each time (rpc.require_user): no cached logins. Once a domain
--- admin ran `domain setup turtle-remote`, the user also needs the turtle-drivers role.
+-- turtle. Without a domain anyone may drive (standalone first, friends only). In a
+-- domain every request needs a logged-in domain user, checked with the domain
+-- controller each time (rpc.require_user): no cached logins. Once a domain admin ran
+-- `domain setup turtle-remote`, the user also needs the turtle-drivers role.
 --
 -- Operations:
 --   info                        { label, fuel, fuel_limit, selected, slots }
@@ -15,38 +16,13 @@ local rpc = import("rpc")
 
 local turtle_remote = {}
 
-turtle_remote.PROTOCOL = "blockos.remote"
-turtle_remote.ROLE = "turtle-drivers"
-turtle_remote.INVENTORY_SLOTS = 16
-
---- Argument schemas (see wire.validate).
-turtle_remote.ARGS = {
-  act = {
-    action = { type = "string", max = 16 },
-    -- wire's `max` limits lengths, not numbers: the upper bound is checked below.
-    slot = { type = "number", min = 1, optional = true },
-  },
-}
-
---- What a driver may do: action name -> turtle function name. Only these run;
--- anything else is refused, so a request can never call arbitrary functions.
-turtle_remote.ACTIONS = {
-  forward = "forward",
-  back = "back",
-  up = "up",
-  down = "down",
-  turn_left = "turnLeft",
-  turn_right = "turnRight",
-  dig = "dig",
-  dig_up = "digUp",
-  dig_down = "digDown",
-  place = "place",
-  place_up = "placeUp",
-  place_down = "placeDown",
-  suck = "suck",
-  drop = "drop",
-  refuel = "refuel",
-}
+-- The protocol is declared once in turtle_remote_wire (shared with the driver).
+local turtle_remote_wire = import("turtle_remote_wire")
+turtle_remote.PROTOCOL = turtle_remote_wire.PROTOCOL
+turtle_remote.ROLE = turtle_remote_wire.ROLE
+turtle_remote.INVENTORY_SLOTS = turtle_remote_wire.INVENTORY_SLOTS
+turtle_remote.ARGS = turtle_remote_wire.ARGS
+turtle_remote.ACTIONS = turtle_remote_wire.ACTIONS
 
 --- The turtle's state, for the driver's screen. Read-only calls only.
 -- @tparam table turtle_api The turtle API (tests pass a stub).
@@ -91,12 +67,20 @@ end
 -- @tparam[opt] table log A logger (info), to note who drove the turtle.
 -- @tparam[opt] function allows function(ctx) -> true or nil, err; default: roles.allows
 --   with turtle-drivers (tests pass their own)
+-- @tparam[opt] function is_joined function() -> boolean (default: ask the domain)
 -- @treturn table { [op] = function(request_ctx, args) }
-function turtle_remote.handlers(turtle_api, log, allows)
+function turtle_remote.handlers(turtle_api, log, allows, is_joined)
   local handlers = {}
   allows = allows or default_allows
+  is_joined = is_joined or function()
+    local found, domain = pcall(import, "domain")
+    return found and domain.is_joined()
+  end
 
   local function require_driver(ctx)
+    if not is_joined() then
+      return { name = "#" .. tostring(ctx.sender) } -- standalone: open
+    end
     local user, err = rpc.require_user(ctx)
     if not user then
       return nil, err

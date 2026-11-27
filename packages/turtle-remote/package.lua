@@ -2,9 +2,9 @@
 return {
   name = "turtle-remote",
   version = "0.0.0-dev",
-  description = "Drive turtles remotely over rednet (domain logins)",
-  -- Every request is checked with the domain controller, so it needs a domain.
-  depends = { net = ">=0.1.0-0", domain = ">=0.1.0-0" },
+  description = "Lets this turtle be driven remotely (install turtle-driver on the PC)",
+  -- Open without a domain; in a domain requests need a domain login.
+  depends = { net = ">=0.1.0-0", ["turtle-wire"] = ">=0.1.0-0" },
   optional = true,
   -- Managed mode: who may drive turtles (open to everyone until a domain admin sets it up).
   roles = {
