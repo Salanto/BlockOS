@@ -40,15 +40,20 @@ local ARGS = {
     storage = { type = "string", max = 96 },
     role = { type = "string", optional = true, max = 16 },
     label = { type = "string", optional = true, max = 64 },
+    pos = { type = "table", optional = true }, -- { x, y, z }: an output becomes a depot
+    clear_pos = { type = "boolean", optional = true },
     forget = { type = "boolean", optional = true }, -- drop the entry (missing chests)
   },
   moves = { since = { type = "number", optional = true } },
   -- `item` is an item id or (part of) its name.
+  -- `near` { x, y, z }: deliver to the nearest depot (for turtles and pockets).
   request = {
     item = ITEM,
     count = { type = "number", min = 1 },
     output = { type = "string", optional = true, max = 96 },
+    near = { type = "table", optional = true },
   },
+  depots = { near = { type = "table", optional = true } },
   node = { node = { type = "string", max = 32 } },
 }
 
@@ -300,6 +305,12 @@ function logistics_handlers.new(hub)
     return { log = hub.move_log, seq = hub.move_seq, moves = newer }
   end))
 
+  --- Output chests with a position, nearest first when `near` is given.
+  handlers.depots = with_args(ARGS.depots, user_op(function(_, args, visible)
+    local near = args.near and logistics.clean_pos(args.near)
+    return hub.depots(near, visible)
+  end))
+
   handlers.find_start = user_op(function(_, _, visible)
     return hub.find_start(visible)
   end)
@@ -318,7 +329,16 @@ function logistics_handlers.new(hub)
       if args.role ~= nil and not logistics.is_role(args.role) then
         return nil, "the role must be one of: " .. table.concat(logistics.ROLES, ", ")
       end
-      return hub.set_storage(row, { role = args.role, label = args.label, forget = args.forget })
+      if args.pos and not logistics.clean_pos(args.pos) then
+        return nil, "a position needs x, y and z"
+      end
+      return hub.set_storage(row, {
+        role = args.role,
+        label = args.label,
+        pos = args.pos,
+        clear_pos = args.clear_pos,
+        forget = args.forget,
+      })
     end)
   end)
 
@@ -328,6 +348,14 @@ function logistics_handlers.new(hub)
     if not item then
       return nil, item_error
     end
+    local near = nil
+    if args.near then
+      local near_error
+      near, near_error = logistics.clean_pos(args.near)
+      if not near then
+        return nil, near_error
+      end
+    end
     local output = nil
     if args.output then
       local output_error
@@ -336,7 +364,8 @@ function logistics_handlers.new(hub)
         return nil, output_error
       end
     end
-    local result, request_error = hub.request(item, math.floor(args.count), output, visible)
+    local result, request_error = hub.request(item, math.floor(args.count), output, visible,
+      near)
     if not result then
       return nil, request_error
     end

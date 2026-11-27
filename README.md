@@ -150,6 +150,18 @@ shows as **missing**, and `d` forgets it. Two nodes may both have a `minecraft:c
 it as `node/chest` then. For now items only move within one node (a request goes to the node
 that has the item and an output chest); moving items between nodes comes next.
 
+**Depots.** Give an output chest a position and it becomes a depot: `p` in the Storage tab,
+or `logistics storage pos <chest> here` from a pocket computer standing next to it (GPS), or
+`x y z`. `logistics request coal 16 here` then delivers to the nearest depot that has enough,
+and `logistics depots` lists them by distance. Programs do the same with `logistics_api`,
+e.g. a mining turtle that refuels on its way:
+
+```lua
+local logistics_api = import("logistics_api")
+local result, err = logistics_api.request("minecraft:coal", 16, { here = true })
+-- result.pos is where the depot is, result.moved how many are waiting there
+```
+
 `logistics map` (or `m` in the Storage tab) shows a node as a map: inputs and outputs on the
 left, storage on the right with fill bars, and items flying along the lines as they are sorted
 or requested; Tab shows the next node. Advanced computers get colours and mouse clicks; basic

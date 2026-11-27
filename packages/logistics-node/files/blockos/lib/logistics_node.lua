@@ -9,7 +9,8 @@
 --   node -> controller  event "report" { node, totals, blocks, moves, sources,
 --                       poll_seconds } (full state each round, so it corrects itself)
 --   controller -> node  rpc request { item, count, output? }, set_storage { storage,
---                       role?, label?, forget? }, find_start, find_finish, export_levels
+--                       role?, label?, pos?, clear_pos?, forget? }, find_start, find_finish,
+--                       export_levels
 -- In a domain only joined computers may call a node (computer token); without one it
 -- is open, like everything standalone.
 -- @module logistics_node
@@ -37,6 +38,8 @@ local ARGS = {
     storage = { type = "string", max = 64 },
     role = { type = "string", optional = true, max = 16 },
     label = { type = "string", optional = true, max = 64 },
+    pos = { type = "table", optional = true },
+    clear_pos = { type = "boolean", optional = true },
     forget = { type = "boolean", optional = true },
   },
 }
@@ -163,12 +166,14 @@ function logistics_node.new(options)
     for _, inventory in ipairs(node.inventories) do
       local fill = inventory.fill or {}
       seen[inventory.handle] = true
+      local entry = config.storages[inventory.handle]
       rows[#rows + 1] = {
         handle = inventory.handle,
         label = logistics.storage_name(config, inventory.handle),
         role = inventory.role,
         size = fill.size,
         used = fill.used,
+        pos = entry and entry.pos,
       }
     end
     -- A re-placed modem gives its chest a new name; the old entry shows up here so it
@@ -230,8 +235,9 @@ function logistics_node.new(options)
     return result, err
   end
 
-  --- Change a block's role or label, or forget a missing one.
-  -- @tparam table change { storage (handle or label), role?, label?, forget? }
+  --- Change a block's role, label or position, or forget a missing one.
+  -- @tparam table change { storage (handle or label), role?, label?, pos?, clear_pos?,
+  --   forget? }
   function node.set_storage(change)
     local handle, err = logistics.find_storage(config, handles(), change.storage)
     if not handle then
@@ -240,7 +246,11 @@ function logistics_node.new(options)
     if change.forget then
       config.storages[handle] = nil
     else
-      local ok, set_error = logistics.set_storage(config, handle, change.role, change.label)
+      local pos = change.pos
+      if change.clear_pos then
+        pos = false
+      end
+      local ok, set_error = logistics.set_storage(config, handle, change.role, change.label, pos)
       if not ok then
         return nil, set_error
       end

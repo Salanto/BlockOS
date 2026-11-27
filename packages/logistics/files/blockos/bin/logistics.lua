@@ -6,7 +6,12 @@
 --   logistics storage [list]           every chest with its node, role and label
 --   logistics storage role <chest> storage|input|output|ignore
 --   logistics storage label <chest> <label...>   (nothing removes it)
---   logistics request <item> [count] [output]    deliver items to an output chest
+--   logistics storage pos <chest> <x y z> | here | clear
+--                                      an output with a position is a depot
+--   logistics request <item> [count] [output | here]
+--                                      deliver items to an output chest (here: the
+--                                      nearest depot to this computer, by GPS)
+--   logistics depots                   the depots, nearest first
 --   logistics map                      the network map, with item moves animated
 --   logistics board <peripheral> [wall|list|auto] | off
 --                                      a board on a monitor or Display Link: the wall
@@ -42,9 +47,10 @@ local describe_request = logistics_tool.describe_request
 
 local function print_usage()
   print("Usage: logistics [--server <name>]")
-  print("       logistics status | alerts | nodes | map")
+  print("       logistics status | alerts | nodes | depots | map")
   print("       logistics storage [list] | role <chest> <role> | label <chest> <label>")
-  print("       logistics request <item> [count] [output chest]")
+  print("       logistics storage pos <chest> <x y z> | here | clear")
+  print("       logistics request <item> [count] [output chest | here]")
   print("       logistics board <peripheral> [wall|list|auto] | off")
   print("       logistics sound note|sound|file <value> [volume] | test")
   print("       logistics react add <item> <target> <side> | remove <item> | list")
@@ -278,19 +284,51 @@ local function show_storages(connection)
   }, rows, function(row) return row.role == "ignore" and "faint" or "text" end)
 end
 
+-- This computer's position by GPS (pocket computers and turtles next to a chest).
+local function here()
+  local x, y, z = gps.locate(2)
+  if not x then
+    return nil, "No GPS fix: are GPS hosts in range of a wireless modem?"
+  end
+  return { x = x, y = y, z = z }
+end
+
+-- pos <chest> x y z | here | clear
+local function position_args(call_args, words)
+  if words[4] == "clear" then
+    call_args.clear_pos = true
+  elseif words[4] == "here" then
+    local pos, err = here()
+    if not pos then
+      return nil, err
+    end
+    call_args.pos = pos
+  else
+    call_args.pos = { x = tonumber(words[4]), y = tonumber(words[5]), z = tonumber(words[6]) }
+  end
+  return call_args
+end
+
+local STORAGE_ACTIONS = { role = true, label = true, pos = true }
+
 local function change_storage(connection, words)
   local action, chest = words[2], words[3]
   if action == nil or action == "list" then
     return show_storages(connection)
   end
-  if not chest or (action ~= "role" and action ~= "label") then
+  if not chest or not STORAGE_ACTIONS[action] then
     return print_usage()
   end
   local call_args = { storage = chest }
   if action == "role" then
     call_args.role = words[4]
-  else
+  elseif action == "label" then
     call_args.label = table.concat(words, " ", 4)
+  else
+    local ok, err = position_args(call_args, words)
+    if not ok then
+      return fail(err)
+    end
   end
   local result, err = connection.call("set_storage", call_args)
   if not result then
@@ -299,16 +337,50 @@ local function change_storage(connection, words)
   ui.print("Changed " .. result.storage .. " on " .. tostring(result.node) .. ".", "ok")
 end
 
+-- The output may be "here": the nearest depot to this computer.
 local function request_items(connection, item, count_text, output)
   if not item then
     return print_usage()
   end
   local count = tonumber(count_text) or DEFAULT_REQUEST
-  local result, err = connection.call("request", { item = item, count = count, output = output })
+  local call_args = { item = item, count = count, output = output }
+  if output == "here" then
+    local pos, err = here()
+    if not pos then
+      return fail(err)
+    end
+    call_args.output, call_args.near = nil, pos
+  end
+  local result, err = connection.call("request", call_args)
   if not result then
     return fail(err)
   end
   ui.print(describe_request(result, count))
+  if result.pos then
+    ui.print("At " .. result.pos.x .. " " .. result.pos.y .. " " .. result.pos.z .. ".", "dim")
+  end
+end
+
+local function show_depots(connection)
+  local pos = here()
+  local depots, err = connection.call("depots", { near = pos })
+  if not depots then
+    return fail(err)
+  end
+  ui.title("Depots (" .. connection.describe .. ")")
+  ui.table({
+    { title = "DEPOT", key = "label" },
+    { title = "NODE", key = "node" },
+    { title = "AT", key = function(row)
+      return row.pos.x .. " " .. row.pos.y .. " " .. row.pos.z
+    end },
+    { title = "AWAY", key = function(row)
+      return row.distance and (math.floor(row.distance) .. "m") or "-"
+    end },
+  }, depots)
+  if #depots == 0 then
+    ui.print("No depots yet: 'logistics storage pos <output chest> here'.", "dim")
+  end
 end
 
 ------------------------------------------------------------------------------
@@ -465,6 +537,7 @@ local REMOTE_COMMANDS = {
   status = true,
   alerts = true,
   nodes = true,
+  depots = true,
   sound = true,
   react = true,
   storage = true,
@@ -502,6 +575,8 @@ elseif command == nil or REMOTE_COMMANDS[command] then
     show_alerts(connection)
   elseif command == "nodes" then
     show_nodes(connection)
+  elseif command == "depots" then
+    show_depots(connection)
   elseif command == "sound" then
     set_sound(connection, options.words[2], options.words[3], options.words[4])
   elseif command == "map" then

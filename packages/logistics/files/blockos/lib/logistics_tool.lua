@@ -306,6 +306,33 @@ function logistics_tool.run(connection)
     end
   end
 
+  -- An output with a position is a depot: requests "near" a place go to the nearest.
+  local function set_position(row)
+    local answers = ui.form("Position of " .. row.label,
+      { { label = "x y z (empty: here by GPS, - clears): " } })
+    if not answers then
+      return
+    end
+    local text = answers[1]
+    local change = { storage = storage_ref(row) }
+    if text == "-" then
+      change.clear_pos = true
+    elseif text == "" then
+      local x, y, z = gps.locate(2)
+      if not x then
+        return set_message("No GPS fix here; type the position instead.", "warn")
+      end
+      change.pos = { x = x, y = y, z = z }
+    else
+      local x, y, z = text:match("^%s*(%-?%d+)[%s,]+(%-?%d+)[%s,]+(%-?%d+)%s*$")
+      if not x then
+        return set_message("Type three numbers: x y z.", "warn")
+      end
+      change.pos = { x = tonumber(x), y = tonumber(y), z = tonumber(z) }
+    end
+    run("set_storage", change, change.clear_pos and "Position removed." or "Position set.")
+  end
+
   -- A configured chest that is gone (e.g. its modem was re-placed).
   local function forget(row)
     if row and row.is_missing and ui.confirm("Forget " .. row.label .. "?") then
@@ -321,16 +348,18 @@ function logistics_tool.run(connection)
     load = function() return connection.call("storages") end,
     describe = function(row)
       local fill = row.is_missing and "missing" or describe_fill(row)
-      return string.format("%-10s %-16s %-7s %s", ui.fit(row.node or "", 10),
-        ui.fit(row.label, 16), row.role, fill)
+      local depot = (row.role == "output" and row.pos) and " depot" or ""
+      return string.format("%-10s %-16s %-7s %s%s", ui.fit(row.node or "", 10),
+        ui.fit(row.label, 16), row.role, fill, depot)
     end,
     role = function(row) return row.role == "ignore" and "faint" or nil end,
     hints = { { "m", "Map" }, { "f", "Find" }, { "l", "Label" }, { "s/i/o/x", "Role" },
-      { "d", "Forget" } },
+      { "p", "Position" }, { "d", "Forget" } },
     keys = {
       m = function() logistics_tool.show_map(connection) end,
       f = find_chest,
       l = set_label,
+      p = set_position,
       s = function(row) set_role(row, "storage") end,
       i = function(row) set_role(row, "input") end,
       o = function(row) set_role(row, "output") end,

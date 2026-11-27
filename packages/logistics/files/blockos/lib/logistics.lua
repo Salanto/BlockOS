@@ -16,7 +16,8 @@
 -- Node config (/etc/blockos/logistics-node):
 --   poll_seconds     how often storage is read
 --   storage_side     the modem of the storage network (closed for rednet)
---   storages         [handle] = { role?, label? } per inventory (peripheral name);
+--   storages         [handle] = { role?, label?, pos? } per inventory (peripheral name);
+--                    pos { x, y, z } makes an output a depot (requests "near" a place);
 --                    no role means the block's default (containers: storage,
 --                    anything else: ignore)
 --   controller       the controller's hostname once one was found (no lone mode after)
@@ -170,22 +171,57 @@ function logistics.storage_name(config, handle)
   return entry and entry.label or handle
 end
 
---- Set an inventory's role and/or label. A label of "" removes it.
+--- Check a position { x, y, z } and round it to whole blocks.
+-- @param pos
+-- @treturn[1] table { x, y, z }
+-- @treturn[2] nil
+-- @treturn[2] string error message
+function logistics.clean_pos(pos)
+  if type(pos) ~= "table" then
+    return nil, "a position needs x, y and z"
+  end
+  local x, y, z = tonumber(pos.x), tonumber(pos.y), tonumber(pos.z)
+  if not (x and y and z) then
+    return nil, "a position needs x, y and z"
+  end
+  return { x = math.floor(x + 0.5), y = math.floor(y + 0.5), z = math.floor(z + 0.5) }
+end
+
+--- Straight-line distance between two positions.
+function logistics.distance(a, b)
+  local dx, dy, dz = a.x - b.x, a.y - b.y, a.z - b.z
+  return math.sqrt(dx * dx + dy * dy + dz * dz)
+end
+
+--- Set an inventory's role, label and/or position. A label of "" removes it; a
+-- position of false removes it.
 -- @tparam table config
 -- @tparam string handle
 -- @tparam[opt] string role
 -- @tparam[opt] string label
+-- @tparam[opt] table|boolean pos { x, y, z }, or false to remove it
 -- @treturn[1] true
 -- @treturn[2] nil
 -- @treturn[2] string error message
-function logistics.set_storage(config, handle, role, label)
+function logistics.set_storage(config, handle, role, label, pos)
   if role ~= nil and not logistics.is_role(role) then
     return nil, "the role must be one of: " .. table.concat(logistics.ROLES, ", ")
   end
   if label ~= nil and #label > logistics.MAX_LABEL_LENGTH then
     return nil, "labels may be at most " .. logistics.MAX_LABEL_LENGTH .. " characters"
   end
+  local clean_pos = nil
+  if pos then
+    local err
+    clean_pos, err = logistics.clean_pos(pos)
+    if not clean_pos then
+      return nil, err
+    end
+  end
   local entry = config.storages[handle] or {}
+  if pos ~= nil then
+    entry.pos = clean_pos or nil
+  end
   if role ~= nil then
     -- Stored even when it equals the default: defaults depend on the block.
     entry.role = role

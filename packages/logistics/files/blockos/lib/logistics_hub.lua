@@ -6,10 +6,11 @@
 --
 -- Each node is an entry with its last report and a proxy that acts on it:
 --   report  { totals = { [item] = { count, label } }, blocks = { { handle, label, role,
---             used?, size?, is_missing? } }, moves = { { from, to, item, count } },
---             sources, poll_seconds }
+--             used?, size?, pos?, is_missing? } }, moves = { { from, to, item, count } },
+--             sources, poll_seconds, pos? }
 --   proxy   request(item, count, output_handle) -> { moved, output } | nil, err
---           set_storage({ storage, role?, label?, forget? }) -> { storage } | nil, err
+--           set_storage({ storage, role?, label?, pos?, clear_pos?, forget? })
+--             -> { storage } | nil, err
 --           find_start() -> true | nil, err;  find_finish() -> { { handle, label } }
 -- The local proxy calls the node directly; the controller's proxy uses rpc
 -- (blockos.logistics.node).
@@ -283,6 +284,52 @@ function logistics_hub.new(options)
     return nil, "none in storage"
   end
 
+  --- Output chests with a position (depots), nearest first when `near` is given.
+  -- @tparam[opt] table near { x, y, z }
+  -- @tparam[opt] function visible
+  -- @treturn {table...} { node, handle, label, pos, distance? }
+  function hub.depots(near, visible)
+    local depots = {}
+    for _, name in ipairs(hub.node_names(visible)) do
+      for _, block in ipairs(hub.nodes[name].report.blocks or {}) do
+        if block.role == "output" and block.pos and not block.is_missing then
+          depots[#depots + 1] = {
+            node = name,
+            handle = block.handle,
+            label = block.label or block.handle,
+            pos = block.pos,
+            distance = near and logistics.distance(near, block.pos) or nil,
+          }
+        end
+      end
+    end
+    if near then
+      table.sort(depots, function(a, b) return a.distance < b.distance end)
+    end
+    return depots
+  end
+
+  -- The depot for a request near a place: the nearest whose node has enough of the
+  -- item, else the nearest whose node has some.
+  local function pick_depot(item, count, near, visible)
+    local fallback = nil
+    for _, depot in ipairs(hub.depots(near, visible)) do
+      local found = (hub.nodes[depot.node].report.totals or {})[item]
+      local stored = found and found.count or 0
+      if stored >= count then
+        return depot
+      end
+      if stored > 0 and not fallback then
+        fallback = depot
+      end
+    end
+    if fallback then
+      return fallback
+    end
+    return nil, "no depot has any: give an output chest next to the items a position "
+      .. "(logistics storage pos)"
+  end
+
   -- The counts drop at once, so the Catalog and a second request do not see items that
   -- already left (the next report corrects any difference).
   local function took(name, item, moved)
@@ -298,11 +345,19 @@ function logistics_hub.new(options)
   -- @tparam[opt] table output A row from list_storages (its node delivers); default: the
   --   node with the most of the item that has an output.
   -- @tparam[opt] function visible Which nodes the caller may use.
-  -- @treturn[1] table { moved, output, node }
+  -- @tparam[opt] table near { x, y, z }: deliver to the nearest depot (output chest
+  --   with a position) instead
+  -- @treturn[1] table { moved, output, output_label?, pos?, node }
   -- @treturn[2] nil
   -- @treturn[2] string error message
-  function hub.request(item, count, output, visible)
+  function hub.request(item, count, output, visible, near)
     local name, err
+    if near and not output then
+      output, err = pick_depot(item, count, near, visible)
+      if not output then
+        return nil, err
+      end
+    end
     if output then
       name = output.node
     else
@@ -321,12 +376,16 @@ function logistics_hub.new(options)
     end
     took(name, item, result.moved or 0)
     result.node = name
+    if output then
+      result.output_label = output.label
+      result.pos = output.pos
+    end
     return result
   end
 
-  --- Change a block's role or label (or forget a missing one) on its node.
+  --- Change a block's role, label or position (or forget a missing one) on its node.
   -- @tparam table row From list_storages.
-  -- @tparam table change { role?, label?, forget? }
+  -- @tparam table change { role?, label?, pos?, clear_pos?, forget? }
   function hub.set_storage(row, change)
     local entry = hub.nodes[row.node]
     if not entry then
@@ -336,6 +395,8 @@ function logistics_hub.new(options)
       storage = row.handle,
       role = change.role,
       label = change.label,
+      pos = change.pos,
+      clear_pos = change.clear_pos,
       forget = change.forget,
     })
     if not result then
@@ -348,6 +409,11 @@ function logistics_hub.new(options)
           table.remove(entry.report.blocks, index)
         else
           block.role = change.role or block.role
+          if change.clear_pos then
+            block.pos = nil
+          elseif change.pos then
+            block.pos = logistics.clean_pos(change.pos)
+          end
           if change.label then
             block.label = change.label ~= "" and change.label or block.handle
           end
