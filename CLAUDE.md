@@ -18,8 +18,13 @@ seamlessly by name instead of by raw computer ID:
 - **Mod:** CC:Tweaked **1.115.0**
 - **Modpack:** SkyFactory 5 (Minecraft 1.20.1, Forge)
 - **Language:** Lua, as run by CC:Tweaked's Cobalt VM (Lua 5.2 semantics, with a few 5.3
-  additions such as the `utf8` library). Do not use LuaJIT or Lua 5.4-only features
-  (e.g. `<const>`, `<close>`, integer `//` should not be assumed).
+  additions; see https://tweaked.cc/reference/feature_compat.html). Use freely:
+  `table.pack/unpack/move`, `string.pack/unpack`, `utf8`, `goto` (sparingly), `bit32`,
+  `__pairs`, `load` with an environment. Never use: `//` and the bitwise operators
+  (`&`, `|`, `<<`...), integers (`math.tointeger`, `math.type`, `math.maxinteger`),
+  `collectgarbage`, `os.exit`, `os.execute`, `string.dump`, `__ipairs`, `<const>`/`<close>`,
+  and Lua 5.5 additions such as `table.create` (newer than the CC:Tweaked we are locked
+  to). Features added in recent CC:Tweaked versions may be missing in 1.115.
 - Code runs **inside the game**. For testing outside the game it runs in the **CraftOS-PC**
   emulator (see Testing). CraftOS-PC uses C Lua 5.2 rather than Cobalt and targets an older
   CC:Tweaked (about 1.112), so passing tests are strong evidence, not proof: still check

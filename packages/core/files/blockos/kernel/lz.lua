@@ -42,14 +42,14 @@ local function take_a_breath_if_needed()
   end
 end
 
+-- Little-endian unsigned numbers (string.pack: CC:Tweaked has it, see the
+-- feature compatibility list).
 local function encode_u32(value)
-  return string.char(value % 256, math.floor(value / 256) % 256,
-    math.floor(value / 65536) % 256, math.floor(value / 16777216) % 256)
+  return string.pack("<I4", value)
 end
 
 local function decode_u32(data, position)
-  local a, b, c, d = data:byte(position, position + 3)
-  return a + b * 256 + c * 65536 + d * 16777216
+  return (string.unpack("<I4", data, position))
 end
 
 local function put_length(parts, value)
@@ -110,7 +110,7 @@ function lz.compress(data)
       put_length(parts, position - literal_start)
       parts[#parts + 1] = data:sub(literal_start, position - 1)
       put_length(parts, best_length - MIN_MATCH)
-      parts[#parts + 1] = string.char(best_offset % 256, math.floor(best_offset / 256))
+      parts[#parts + 1] = string.pack("<I2", best_offset)
       for at = position, position + best_length - 1 do
         remember(at)
       end
@@ -171,12 +171,11 @@ function lz.decompress(data)
       end
 
       local length = read_length() + MIN_MATCH
-      local low, high = data:byte(position, position + 1)
-      if not high then
+      if position + 1 > #data then
         error("compressed data is cut short", 0)
       end
+      local offset = string.unpack("<I2", data, position)
       position = position + 2
-      local offset = low + high * 256
       if offset == 0 or offset > count then
         error("compressed data is corrupt", 0)
       end

@@ -482,10 +482,7 @@ function logistics_crafter.new(options)
       return
     end
     job.state = "running"
-    local runs = {}
-    for index, run in ipairs(job.runs) do
-      runs[index] = run
-    end
+    local runs = table.move(job.runs, 1, #job.runs, 1, {}) -- runs may end meanwhile
     for _, run in ipairs(runs) do
       if find_job(job.item) ~= job then
         return -- the job finished (failed) meanwhile
@@ -506,10 +503,7 @@ function logistics_crafter.new(options)
       end
       return
     end
-    local jobs = {}
-    for index, job in ipairs(crafter.jobs) do
-      jobs[index] = job
-    end
+    local jobs = table.move(crafter.jobs, 1, #crafter.jobs, 1, {}) -- jobs may end meanwhile
     for _, job in ipairs(jobs) do
       if find_job(job.item) == job then
         tick_job(job)
