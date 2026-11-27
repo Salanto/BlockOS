@@ -96,11 +96,39 @@ local function run(ctx)
       " not set up for the domain yet: a domain admin can run 'domain setup'"
   end
 
+  -- New mail while someone is logged in: the controller tells this computer at once.
+  -- The notice updates, scripts can react to the "blockos_mail" event, and the user's
+  -- mail sound plays (a roaming setting: everyone picks their own).
+  local wire = import("wire")
+  local MAIL_SCHEMA = { to = "string", from = "string", unread = "number" }
+  local function on_mail(sender, message)
+    local membership = domain.membership()
+    local event = wire.parse(message, "event", MAIL_SCHEMA)
+    local user = blockos.user
+    if not (event and event.topic == "new_mail" and membership
+      and sender == membership.controller_id) then
+      return
+    end
+    if not (user and user.source == "domain" and user.name == event.data.to) then
+      return
+    end
+    if blockos.notices then
+      blockos.notices.mail = unread_notice(event.data.unread)
+    end
+    os.queueEvent("blockos_mail", event.data.from, event.data.unread)
+    local sound = domain.mail_sound(ctx.config.get("blockos.mail.sound"))
+    if sound then
+      import("sound").play(sound, { 18, 14 }) -- "ding dong"
+    end
+  end
+
   local interval = ctx.config.get("blockos.domain.heartbeat_interval", 300)
   local timer = os.startTimer(interval)
   while true do
-    local event, id = os.pullEvent()
-    if event == "timer" and id == timer then
+    local event, id, message, protocol = os.pullEvent()
+    if event == "rednet_message" and protocol == domain.MAIL_PROTOCOL then
+      on_mail(id, message)
+    elseif event == "timer" and id == timer then
       report()
       check_mail()
       timer = os.startTimer(interval)

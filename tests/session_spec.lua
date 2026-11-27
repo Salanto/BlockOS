@@ -204,4 +204,25 @@ return function(t)
     local changed = session.patch_multishell(tweaked)
     t.ok(changed and changed:find('shell.lua", ...)', 1, true), tostring(changed))
   end)
+
+  t.it("the mail sound comes from a setting and plays on a speaker", function()
+    local import = t.fresh_import()
+    local domain = import("domain")
+    t.eq(domain.mail_sound("note:chime").kind, "note")
+    t.eq(domain.mail_sound("file:/sounds/mail.dfpwm").value, "/sounds/mail.dfpwm")
+    t.eq(domain.mail_sound("sound:minecraft:entity.villager.yes").value,
+      "minecraft:entity.villager.yes")
+    t.eq(domain.mail_sound("off"), nil)
+    local sound = import("sound")
+    local notes = {}
+    sound.env.peripheral = t.fake_peripherals({
+      speaker_0 = { types = { "speaker" }, methods = {
+        playNote = function(_, _, pitch) notes[#notes + 1] = pitch end,
+      } },
+    })
+    t.ok(sound.play(domain.mail_sound("note:chime"), { 18, 14 }))
+    t.eq(table.concat(notes, ","), "18,14", "ding dong")
+    sound.env.peripheral = t.fake_peripherals({})
+    t.ok(not sound.play({ kind = "note", value = "bell" }), "no speaker, no sound")
+  end)
 end

@@ -211,7 +211,23 @@ function Directory:send_mail(from, to, text, time)
     end
     self.data.mail[name] = box
   end
-  return #names
+  return #names, names
+end
+
+--- The computers a user is logged in at right now (from their sessions).
+-- @tparam string name
+-- @tparam number now
+-- @treturn {number...} computer IDs
+function Directory:computers_of(name, now)
+  local ids, seen = {}, {}
+  for _, session in pairs(self.sessions) do
+    if session.name == name and session.computer and session.expires > now
+      and not seen[session.computer] then
+      seen[session.computer] = true
+      ids[#ids + 1] = session.computer
+    end
+  end
+  return ids
 end
 
 --- A user's messages, newest first.
@@ -905,12 +921,15 @@ end
 -- @treturn[1] table { token, name, groups, expires }
 -- @treturn[2] nil
 -- @treturn[2] string error message
-function Directory:login(name, password, now)
+-- @tparam[opt] number computer The computer ID the user logged in at (new mail is
+--   announced there).
+function Directory:login(name, password, now, computer)
   if not self:check_password(name, password) then
     return nil, "Login incorrect."
   end
   local token = new_token()
-  self.sessions[token] = { name = name, expires = now + directory.SESSION_SECONDS }
+  self.sessions[token] = { name = name, expires = now + directory.SESSION_SECONDS,
+    computer = computer }
   return {
     token = token,
     name = name,

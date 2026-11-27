@@ -78,89 +78,23 @@ function logistics_alarms.apply_redstone(wanted, applied)
   return now_applied
 end
 
-local function find_speaker()
-  for _, name in ipairs(logistics_alarms.env.peripheral.getNames()) do
-    if logistics_alarms.env.peripheral.hasType(name, "speaker") then
-      return logistics_alarms.env.peripheral.wrap(name)
-    end
-  end
-  return nil
-end
-
--- CC's DFPWM decoder lives in the rom as a `require` module; services have no
--- `require` of their own, so build one. The loaded modules call `require`
--- themselves (cc.audio.dfpwm needs cc.expect), so it lives in their environment.
-local function dfpwm_module()
-  local make_require = dofile("/rom/modules/main/cc/require.lua").make
-  local env = setmetatable({}, { __index = _ENV })
-  env.require = make_require(env, "/")
-  return env.require("cc.audio.dfpwm")
-end
-
--- Stream a .dfpwm file through the speaker, chunk by chunk.
-local function play_file(speaker, path, volume)
-  local handle = fs.exists(path) and fs.open(path, "rb")
-  if not handle then
-    return nil, "no sound file at " .. path
-  end
-  local decoder = dfpwm_module().make_decoder()
-  while true do
-    local chunk = handle.read(16 * 1024)
-    if not chunk then
-      break
-    end
-    local samples = decoder(chunk)
-    while not speaker.playAudio(samples, volume) do
-      os.pullEvent("speaker_audio_empty")
-    end
-  end
-  handle.close()
-  return true
-end
-
 --- The alarm sound used when nothing is configured: a short bell.
 logistics_alarms.DEFAULT_SOUND = { kind = "note", value = "bell", volume = 3 }
 
---- Check an alarm sound { kind = "note" | "sound" | "file", value, volume }.
--- `note` is a note block instrument ("bell"), `sound` a Minecraft sound event
--- ("minecraft:block.bell.use", or one from a mod or resource pack), and `file`
--- a .dfpwm audio file on this computer (e.g. a recorded "ALERT!" voice).
--- @treturn[1] true
--- @treturn[2] nil
--- @treturn[2] string error message
-function logistics_alarms.validate_sound(sound)
-  if type(sound) ~= "table" or type(sound.value) ~= "string" or sound.value == "" then
-    return nil, "a sound needs a kind and a value"
-  end
-  if sound.kind ~= "note" and sound.kind ~= "sound" and sound.kind ~= "file" then
-    return nil, "the sound kind must be note, sound or file"
-  end
-  return true
+--- Check an alarm sound (see the core sound module).
+function logistics_alarms.validate_sound(value)
+  return import("sound").validate(value)
 end
 
 --- Play the alarm sound on an attached speaker, if there is one.
--- @tparam[opt] table sound See validate_sound; default a bell.
+-- @tparam[opt] table value See the core sound module; default a bell.
 -- @treturn[1] true
 -- @treturn[2] nil
 -- @treturn[2] string why nothing played
-function logistics_alarms.chime(sound)
-  sound = sound or logistics_alarms.DEFAULT_SOUND
-  local speaker = find_speaker()
-  if not speaker then
-    return nil, "no speaker attached"
-  end
-  local volume = sound.volume or 1
-  if sound.kind == "file" then
-    return play_file(speaker, sound.value, volume)
-  elseif sound.kind == "sound" then
-    if not speaker.playSound(sound.value, volume) then
-      return nil, "the speaker did not play " .. sound.value
-    end
-    return true
-  end
-  speaker.playNote(sound.value, volume, 12)
-  speaker.playNote(sound.value, volume, 8)
-  return true
+function logistics_alarms.chime(value)
+  local sound = import("sound")
+  sound.env.peripheral = logistics_alarms.env.peripheral
+  return sound.play(value or logistics_alarms.DEFAULT_SOUND)
 end
 
 --- Build the alert event for one changed item.

@@ -27,6 +27,7 @@ return function(t)
       hostname = "pc1", admin_name = "admin", admin_password = "secret",
     }))
     domain.computer = { sender = 7, computer_token = joined.computer_token }
+    domain.import = import
     return domain
   end
 
@@ -441,5 +442,25 @@ return function(t)
     t.eq(full[1].text, "spam " .. (domain.directory.MAX_MAIL + 5))
     t.ok(domain.dir:remove_user("carol"))
     t.eq(domain.dir.data.mail.carol, nil)
+  end)
+
+  t.it("new mail is announced where the recipient is logged in", function()
+    local domain = new_domain()
+    local sent = {}
+    domain.import("dc_handlers").env.send = function(id, message, protocol)
+      sent[#sent + 1] = { id = id, message = message, protocol = protocol }
+    end
+    domain.dir:add_user("bob", "pw")
+    domain.dir:add_user("carol", "pw")
+    local admin = as_user(domain, login(domain, "admin", "secret"))
+    login(domain, "bob", "pw") -- bob sits at computer 7 (pc1)
+    domain.handlers.mail_send(admin, { to = "bob", text = "lunch?" })
+    t.eq(#sent, 1)
+    t.eq(sent[1].id, 7)
+    t.eq(sent[1].protocol, "blockos.mail")
+    t.eq(sent[1].message.data.from, "admin")
+    t.eq(sent[1].message.data.unread, 1)
+    domain.handlers.mail_send(admin, { to = "carol", text = "hi" })
+    t.eq(#sent, 1, "carol is not logged in anywhere: nothing to announce")
   end)
 end

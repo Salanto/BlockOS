@@ -7,11 +7,32 @@
 -- removed or the computer leaves the domain.
 -- @module domain
 
+local config = import("config")
 local fsx = import("fsx")
 local paths = import("paths")
 local rpc = import("rpc")
 
 local domain = {}
+
+domain.MAIL_PROTOCOL = "blockos.mail"
+
+config.define("blockos.mail.sound", {
+  description = "Sound for new mail: note:<instrument>, sound:<event>, file:<.dfpwm> or off.",
+  default = "note:chime",
+  type = "string",
+  roams = true, -- your own sound, on every computer you log into
+})
+
+--- The new-mail sound from its setting text ("note:chime", "file:/mail.dfpwm", "off").
+-- @tparam string text
+-- @treturn table|nil a sound for the core sound module, nil for off
+function domain.mail_sound(text)
+  local kind, value = tostring(text):match("^(%a+):(.+)$")
+  if kind == "note" or kind == "sound" or kind == "file" then
+    return { kind = kind, value = value, volume = 1 }
+  end
+  return nil
+end
 
 domain.PROTOCOL = "blockos.domain"
 domain.ADMINS = "domain-admins"

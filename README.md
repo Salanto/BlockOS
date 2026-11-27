@@ -90,6 +90,12 @@ when he logs in anywhere (or within a few minutes if he is logged in). `mail sen
 reaches every member of a group. `mail` lists yours, `mail read 1` shows one, `mail delete 1`
 removes it. The controller keeps the newest 20 per player.
 
+New mail arrives at once on the computer you are logged into, with a sound from an attached
+speaker: a "ding dong" by default. Pick your own with `profile set blockos.mail.sound
+file:/sounds/mail.dfpwm` (any clip converted to DFPWM, like music), `note:<instrument>`,
+`sound:<minecraft sound>` or `off`; it follows you to every computer. Your own scripts can
+react too: the `blockos_mail` event carries the sender and how many messages are unread.
+
 ## A package server
 
 On a computer with disk drives (attach as many as you like with wired modems):
