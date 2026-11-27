@@ -39,40 +39,6 @@ logistics_node.FIND_PAUSE_SECONDS = 60
 logistics_node.PORT_HOLD_SECONDS = 15
 
 
-local ARGS = {
-  request = {
-    item = { type = "string", max = 128 },
-    count = { type = "number", min = 1 },
-    output = { type = "string", optional = true, max = 64 },
-  },
-  set_storage = {
-    storage = { type = "string", max = 64 },
-    role = { type = "string", optional = true, max = 16 },
-    label = { type = "string", optional = true, max = 64 },
-    pos = { type = "table", optional = true },
-    clear_pos = { type = "boolean", optional = true },
-    forget = { type = "boolean", optional = true },
-  },
-  -- `hold` names one crossing: each holds the ports until its own last step.
-  port_hold = { seconds = { type = "number", min = 1, optional = true },
-    hold = { type = "string", optional = true, max = 40 },
-  },
-  to_port = {
-    item = { type = "string", max = 128 },
-    count = { type = "number", min = 1 },
-    port = { type = "string", max = 64 },
-    hold = { type = "string", optional = true, max = 40 },
-  },
-  from_port = {
-    port = { type = "string", max = 64 },
-    item = { type = "string", max = 128 },
-    count = { type = "number", min = 1 },
-    output = { type = "string", optional = true, max = 64 },
-    hold = { type = "string", optional = true, max = 40 },
-  },
-  push_marker = { port = { type = "string", max = 64 } },
-  craft = { item = { type = "string", max = 128 }, count = { type = "number", min = 1 } },
-}
 
 --- Clock (tests replace it).
 logistics_node.env = {
@@ -542,29 +508,19 @@ function logistics_node.new(options)
     return logistics_sorting.push_marker(node.inventories, port, record_move)
   end
 
-  --- The proxy a hub on this computer uses (lone mode).
+  --- The proxy a hub on this computer uses: the node itself (same functions as the
+  -- controller's proxy for a node elsewhere, see logistics_client.NODE_OPS).
   function node.proxy()
-    return {
-      request = node.request,
-      set_storage = node.set_storage,
-      find_start = node.find_start,
-      find_finish = node.find_finish,
-      port_hold = node.port_hold,
-      to_port = node.to_port,
-      from_port = node.from_port,
-      push_marker = node.push_marker,
-      craft = function(item, count) return node.craft(item, count) end,
-      export_levels = function() return node.export_levels_or_none() end,
-    }
+    return node
   end
 
   --- The lone-mode levels for the controller (the node service sets
-  -- node.export_levels).
-  function node.export_levels_or_none()
-    if not node.export_levels then
+  -- node.levels_exporter).
+  function node.export_levels()
+    if not node.levels_exporter then
       return nil, "this node keeps no levels"
     end
-    return node.export_levels()
+    return node.levels_exporter()
   end
 
   --- Start crafting (the controller asks when a watched item is low).
@@ -575,54 +531,13 @@ function logistics_node.new(options)
     return node.crafter.start(item, count)
   end
 
-  --- Handlers for the controller (protocol "blockos.logistics.node").
+  --- Handlers for the controller (protocol "blockos.logistics.node"), built from
+  -- logistics_client.NODE_OPS.
   -- @tparam[opt] function is_joined function() -> boolean (default: ask the domain)
   function node.handlers(is_joined)
-    local function allowed(ctx)
+    return import("logistics_client").node_handlers(node, function(ctx)
       return rpc.require_computer_if_joined(ctx, is_joined)
-    end
-    local function guarded(fn)
-      return function(ctx, args)
-        local ok, err = allowed(ctx)
-        if not ok then
-          return nil, err
-        end
-        return fn(args or {})
-      end
-    end
-    local handlers = {
-      request = rpc.with_args(ARGS.request, guarded(function(args)
-        return node.request(args.item, math.floor(args.count), args.output)
-      end)),
-      set_storage = rpc.with_args(ARGS.set_storage, guarded(node.set_storage)),
-      find_start = guarded(function(args) return node.find_start(args.id) end),
-      find_finish = guarded(function(args) return node.find_finish(args.id) end),
-      port_hold = rpc.with_args(ARGS.port_hold, guarded(function(args)
-        return node.port_hold(args.seconds, args.hold)
-      end)),
-      to_port = rpc.with_args(ARGS.to_port, guarded(function(args)
-        return node.to_port(args.item, math.floor(args.count), args.port, args.hold)
-      end)),
-      from_port = rpc.with_args(ARGS.from_port, guarded(function(args)
-        return node.from_port(args.port, args.item, math.floor(args.count), args.output,
-          args.hold)
-      end)),
-      push_marker = rpc.with_args(ARGS.push_marker, guarded(function(args)
-        return node.push_marker(args.port)
-      end)),
-      craft = rpc.with_args(ARGS.craft, guarded(function(args)
-        return node.craft(args.item, math.floor(args.count))
-      end)),
-      export_levels = guarded(function()
-        return node.export_levels_or_none()
-      end),
-    }
-    -- Moving items (and handing levels over) must never happen twice for one request.
-    for _, op in ipairs({ "request", "to_port", "from_port", "push_marker", "craft",
-      "export_levels" }) do
-      rpc.once(handlers[op])
-    end
-    return handlers
+    end)
   end
 
   return node

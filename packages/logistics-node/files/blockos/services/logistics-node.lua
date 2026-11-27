@@ -308,7 +308,7 @@ local function run(ctx)
 
   -- Start with the hub here; a controller elsewhere is looked up on the first round.
   enter("here")
-  node.export_levels = export_levels
+  node.levels_exporter = export_levels
 
   -- Be findable for `logistics levels import` and the controller's requests.
   if rednet.isOpen() then

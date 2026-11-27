@@ -48,6 +48,103 @@ function logistics_client.report_event(report)
   return wire.event(logistics_client.REPORT_TOPIC, report)
 end
 
+local ITEM = { type = "string", max = 128 }
+local BLOCK = { type = "string", max = 64 }
+local COUNT = { type = "number", min = 1 }
+local HOLD = { type = "string", optional = true, max = 40 }
+local SEARCH = { type = "string", optional = true, max = 40 }
+
+--- The operations a controller (or a hub on the node's computer) calls on a node
+-- (protocol NODE_PROTOCOL), declared once: the node's handlers and the controller's
+-- proxy are both built from this table. `args` is the order the node's functions take
+-- them in ("change" passes the whole table); `once` marks operations that must never
+-- run twice for one request (they move items); `timeout` is for slow ones.
+logistics_client.NODE_OPS = {
+  request = { args = { "item", "count", "output" }, once = true, timeout = 12,
+    schema = { item = ITEM, count = COUNT, output = { type = "string", optional = true,
+      max = 64 } } },
+  set_storage = { args = { "change" }, schema = {
+    storage = BLOCK,
+    role = { type = "string", optional = true, max = 16 },
+    label = { type = "string", optional = true, max = 64 },
+    pos = { type = "table", optional = true },
+    clear_pos = { type = "boolean", optional = true },
+    forget = { type = "boolean", optional = true },
+  } },
+  find_start = { args = { "id" }, timeout = 8, schema = { id = SEARCH } },
+  find_finish = { args = { "id" }, timeout = 8, schema = { id = SEARCH } },
+  -- `hold` names one crossing: each holds the ports until its own last step.
+  port_hold = { args = { "seconds", "hold" }, schema = {
+    seconds = { type = "number", min = 1, optional = true }, hold = HOLD } },
+  to_port = { args = { "item", "count", "port", "hold" }, once = true, timeout = 12,
+    schema = { item = ITEM, count = COUNT, port = BLOCK, hold = HOLD } },
+  from_port = { args = { "port", "item", "count", "output", "hold" }, once = true,
+    timeout = 12, schema = { port = BLOCK, item = ITEM, count = COUNT,
+      output = { type = "string", optional = true, max = 64 }, hold = HOLD } },
+  push_marker = { args = { "port" }, once = true, schema = { port = BLOCK } },
+  craft = { args = { "item", "count" }, once = true, schema = { item = ITEM, count = COUNT } },
+  export_levels = { args = {}, once = true, schema = {} },
+}
+
+-- The arguments of one call as the node's function takes them.
+local function unpack_args(spec, args)
+  if spec.args[1] == "change" then
+    return args
+  end
+  local values = {}
+  for index, name in ipairs(spec.args) do
+    local value = args[name]
+    if name == "count" and value then
+      value = math.floor(value)
+    end
+    values[index] = value
+  end
+  return table.unpack(values, 1, #spec.args)
+end
+
+--- A node's rpc handlers, built from NODE_OPS.
+-- @tparam table node Has a function per op (node.request(item, count, output), ...).
+-- @tparam function guard function(ctx) -> true | nil, err (who may call)
+-- @treturn table handlers
+function logistics_client.node_handlers(node, guard)
+  local handlers = {}
+  for op, spec in pairs(logistics_client.NODE_OPS) do
+    handlers[op] = rpc.with_args(spec.schema, function(ctx, args)
+      local ok, err = guard(ctx)
+      if not ok then
+        return nil, err
+      end
+      return node[op](unpack_args(spec, args or {}))
+    end)
+    if spec.once then
+      rpc.once(handlers[op])
+    end
+  end
+  return handlers
+end
+
+--- The proxy a controller uses for a node on another computer, built from NODE_OPS.
+-- @tparam function call function(op, args, timeout) -> result | nil, err
+-- @treturn table proxy (same functions as a node)
+function logistics_client.node_proxy(call)
+  local proxy = {}
+  for op, spec in pairs(logistics_client.NODE_OPS) do
+    proxy[op] = function(...)
+      local args
+      if spec.args[1] == "change" then
+        args = ...
+      else
+        args = {}
+        for index, name in ipairs(spec.args) do
+          args[name] = select(index, ...)
+        end
+      end
+      return call(op, args, spec.timeout)
+    end
+  end
+  return proxy
+end
+
 --- Operations that move items or wait for every node: a long timeout (a crossing
 -- between nodes is a chain of calls). Retrying is safe: rpc runs a request once.
 logistics_client.SLOW_OPS = { request = true, find_start = true, find_finish = true, craft = true }
