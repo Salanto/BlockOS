@@ -8,8 +8,9 @@
 --
 -- A depot is an output chest with a position (`logistics storage pos`). A lost answer
 -- is retried safely: rpc runs each request once, so nothing is delivered twice. Works
--- against the controller or a lone node (on that node itself). Without a domain login the call counts as the
--- computer's (allowed while logistics-users includes everyone, the default).
+-- against the controller or a lone node (on that node itself). Without a domain login
+-- the call counts as the computer's (allowed while logistics-users includes everyone,
+-- the default).
 -- @module logistics_api
 
 local logistics_client = import("logistics_client")
