@@ -162,5 +162,6 @@ return function(t)
     t.eq(result.moved, 5)
     t.eq(result.node, "node-1")
     t.eq(chests.out.slots[1].count, 5)
+    t.eq(hub.totals().iron.count, 25, "counted down once, not twice")
   end)
 end

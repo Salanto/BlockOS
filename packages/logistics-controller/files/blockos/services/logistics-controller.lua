@@ -5,6 +5,9 @@
 -- Nodes find it through the domain service record "logistics" (or
 -- "logistics-<name>"), else by its rednet name; they report every round. A node that
 -- stops reporting is shown as stale, never forgotten automatically.
+--
+-- Items cross between nodes through ports on a wired main cable (logistics_ports):
+-- ports are paired automatically when a node gives a chest the "port" role.
 
 local function config_path()
   return import("paths").top(import("logistics_client").CONTROLLER_FILE)
@@ -25,6 +28,14 @@ local function remote_proxy(rpc, id, protocol)
     find_start = function() return call("find_start") end,
     find_finish = function() return call("find_finish") end,
     export_levels = function() return call("export_levels") end,
+    port_hold = function() return call("port_hold") end,
+    to_port = function(item, count, port)
+      return call("to_port", { item = item, count = count, port = port }, 12)
+    end,
+    from_port = function(port, item, count, output)
+      return call("from_port", { port = port, item = item, count = count, output = output }, 12)
+    end,
+    push_marker = function(port) return call("push_marker", { port = port }) end,
   }
 end
 
@@ -54,6 +65,7 @@ local function run(ctx)
   local logistics_client = import("logistics_client")
   local logistics_handlers = import("logistics_handlers")
   local logistics_hub = import("logistics_hub")
+  local logistics_ports = import("logistics_ports")
   local log = ctx.log
 
   local path = config_path()
@@ -69,9 +81,12 @@ local function run(ctx)
   end
 
   local hostname = blockos.net and blockos.net.hostname() or ("#" .. os.getComputerID())
+  local ports = logistics_ports.new(config, save)
   local hub = logistics_hub.new({
     config = config,
     save = save,
+    transfer = ports.transfer,
+    port_status = ports.status,
     hostname = hostname,
     title = "Logistics" .. (config.name and (" " .. config.name) or ""),
   })
@@ -137,6 +152,14 @@ local function run(ctx)
     local proxy = (entry and entry.proxy.id == sender) and entry.proxy
       or remote_proxy(rpc, sender, logistics_client.NODE_PROTOCOL)
     hub.update(name, event.data, proxy)
+    for _, handle in ipairs(ports.check(name, event.data.blocks)) do
+      local main, err = ports.pair(name, handle, proxy)
+      if main then
+        log.info("port %s/%s is %s on the main cable", name, handle, main)
+      else
+        log.warn("pairing port %s/%s: %s", name, handle, tostring(err))
+      end
+    end
   end
 
   local ok, err = pcall(parallel.waitForAny,

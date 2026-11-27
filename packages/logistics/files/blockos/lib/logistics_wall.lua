@@ -200,7 +200,9 @@ local function short_count(count)
 end
 
 local function fill_role(block)
-  if block.role == "input" then
+  if block.role == "port" then
+    return "bar"
+  elseif block.role == "input" then
     return "bar_dim"
   elseif block.role == "output" then
     return "key"
@@ -217,7 +219,9 @@ local function fill_role(block)
 end
 
 local function fill_char(block)
-  if block.role == "input" then
+  if block.role == "port" then
+    return "p"
+  elseif block.role == "input" then
     return "i"
   elseif block.role == "output" then
     return "o"

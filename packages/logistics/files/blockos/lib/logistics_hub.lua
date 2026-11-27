@@ -43,6 +43,10 @@ end
 --   save      function() -> true | nil, err
 --   hostname  name used in alerts
 --   title     optional, e.g. "Logistics kitchen"
+--   transfer  optional function(from_entry, to_entry, item, count, output_handle)
+--             -> { moved, output } | nil, err: carries items between nodes (the
+--             controller's ports); without it items only move within one node
+--   port_status  optional function(node, handle) -> "paired" | "pairing", for ports
 -- @treturn table hub
 function logistics_hub.new(options)
   local config = logistics.normalise(options.config)
@@ -238,6 +242,9 @@ function logistics_hub.new(options)
         for key, value in pairs(block) do
           row[key] = value
         end
+        if row.role == "port" and options.port_status then
+          row.port = options.port_status(name, row.handle)
+        end
         rows[#rows + 1] = row
       end
     end
@@ -339,7 +346,49 @@ function logistics_hub.new(options)
     end
   end
 
-  --- Deliver items to an output chest.
+  local function stored_on(name, item)
+    local found = (hub.nodes[name].report.totals or {})[item]
+    return found and found.count or 0
+  end
+
+  -- The node with the most of an item, other than `except`.
+  local function richest(item, visible, except)
+    local best, best_count = nil, 0
+    for _, name in ipairs(hub.node_names(visible)) do
+      local count = stored_on(name, item)
+      if name ~= except and count > best_count then
+        best, best_count = name, count
+      end
+    end
+    return best
+  end
+
+  -- Where to deliver when nothing was named. With ports, any node with an output will
+  -- do when the nodes holding the item have none.
+  local function pick_target(item, count, near, visible)
+    if near then
+      local depot, err = pick_depot(item, count, near, visible)
+      if not depot and options.transfer then
+        depot = hub.depots(near, visible)[1]
+      end
+      if not depot then
+        return nil, nil, err
+      end
+      return depot.node, depot
+    end
+    local name, err = pick_node(item, visible)
+    if not name and options.transfer and richest(item, visible) then
+      for _, candidate in ipairs(hub.node_names(visible)) do
+        if has_output(candidate) then
+          return candidate
+        end
+      end
+    end
+    return name, nil, err
+  end
+
+  --- Deliver items to an output chest. With ports (the controller's `transfer`),
+  -- what the output's node lacks comes from the node with the most of it.
   -- @tparam string item Item id.
   -- @tparam number count
   -- @tparam[opt] table output A row from list_storages (its node delivers); default: the
@@ -347,21 +396,15 @@ function logistics_hub.new(options)
   -- @tparam[opt] function visible Which nodes the caller may use.
   -- @tparam[opt] table near { x, y, z }: deliver to the nearest depot (output chest
   --   with a position) instead
-  -- @treturn[1] table { moved, output, output_label?, pos?, node }
+  -- @treturn[1] table { moved, output, output_label?, pos?, node, from? }
   -- @treturn[2] nil
   -- @treturn[2] string error message
   function hub.request(item, count, output, visible, near)
     local name, err
-    if near and not output then
-      output, err = pick_depot(item, count, near, visible)
-      if not output then
-        return nil, err
-      end
-    end
     if output then
       name = output.node
     else
-      name, err = pick_node(item, visible)
+      name, output, err = pick_target(item, count, near, visible)
     end
     if not name then
       return nil, err
@@ -370,17 +413,46 @@ function logistics_hub.new(options)
     if not entry then
       return nil, "no node called " .. tostring(name)
     end
-    local result, request_error = entry.proxy.request(item, count, output and output.handle)
-    if not result then
-      return nil, request_error
+    local transfer = options.transfer
+    local handle = output and output.handle
+    local have = stored_on(name, item)
+    local moved, source = 0, nil
+
+    if have > 0 or not transfer then
+      local wanted = transfer and math.min(count, have) or count
+      local result, request_error = entry.proxy.request(item, wanted, handle)
+      if not result then
+        return nil, request_error
+      end
+      moved = result.moved or 0
+      handle = handle or result.output
+      took(name, item, moved)
     end
-    took(name, item, result.moved or 0)
-    result.node = name
-    if output then
-      result.output_label = output.label
-      result.pos = output.pos
+
+    if transfer and moved < count then
+      source = richest(item, visible, name)
+      if source then
+        local crossed, cross_error = transfer(hub.nodes[source], entry, item, count - moved, handle)
+        if crossed then
+          took(source, item, crossed.moved or 0)
+          moved = moved + (crossed.moved or 0)
+          handle = handle or crossed.output
+        elseif moved == 0 then
+          return nil, cross_error
+        end
+      elseif moved == 0 then
+        return nil, "none in storage"
+      end
     end
-    return result
+
+    return {
+      moved = moved,
+      output = handle,
+      node = name,
+      from = source,
+      output_label = output and output.label,
+      pos = output and output.pos,
+    }
   end
 
   --- Change a block's role, label or position (or forget a missing one) on its node.

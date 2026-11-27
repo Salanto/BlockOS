@@ -297,11 +297,11 @@ function logistics_tool.run(connection)
       end
       row = changed[ui.menu({ title = "Several chests changed", items = names })]
     end
-    local actions = { "Set label", "Storage", "Input", "Output", "Ignore", "Cancel" }
+    local actions = { "Set label", "Storage", "Input", "Output", "Ignore", "Port", "Cancel" }
     local choice = ui.menu({ title = "Found " .. row.label, items = actions })
     if choice == 1 then
       set_label(row)
-    elseif choice <= 5 then
+    elseif choice <= 6 then
       set_role(row, actions[choice]:lower())
     end
   end
@@ -349,11 +349,14 @@ function logistics_tool.run(connection)
     describe = function(row)
       local fill = row.is_missing and "missing" or describe_fill(row)
       local depot = (row.role == "output" and row.pos) and " depot" or ""
+      if row.port then
+        depot = " " .. row.port
+      end
       return string.format("%-10s %-16s %-7s %s%s", ui.fit(row.node or "", 10),
         ui.fit(row.label, 16), row.role, fill, depot)
     end,
     role = function(row) return row.role == "ignore" and "faint" or nil end,
-    hints = { { "m", "Map" }, { "f", "Find" }, { "l", "Label" }, { "s/i/o/x", "Role" },
+    hints = { { "m", "Map" }, { "f", "Find" }, { "l", "Label" }, { "s/i/o/x/t", "Role" },
       { "p", "Position" }, { "d", "Forget" } },
     keys = {
       m = function() logistics_tool.show_map(connection) end,
@@ -364,6 +367,7 @@ function logistics_tool.run(connection)
       i = function(row) set_role(row, "input") end,
       o = function(row) set_role(row, "output") end,
       x = function(row) set_role(row, "ignore") end,
+      t = function(row) set_role(row, "port") end,
       d = forget,
     },
   }

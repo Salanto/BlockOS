@@ -115,7 +115,7 @@ return function(t)
     t.eq(result.node, "west")
     t.eq(result.output_label, "West depot")
     t.eq(api.depots({ here = true })[1].node, "west")
-    t.eq(api.count("coal"), 105)
+    t.eq(api.count("coal"), 102, "105 minus the 3 just requested")
     t.eq(api.count("diamond"), 0)
     api.locate = function() return nil end
     local _, err = api.request("coal", 1, { here = true })

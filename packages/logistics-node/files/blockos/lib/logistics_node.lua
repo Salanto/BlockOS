@@ -10,7 +10,9 @@
 --                       poll_seconds } (full state each round, so it corrects itself)
 --   controller -> node  rpc request { item, count, output? }, set_storage { storage,
 --                       role?, label?, pos?, clear_pos?, forget? }, find_start, find_finish,
---                       export_levels
+--                       export_levels; ports (M3): port_hold { seconds }, to_port { item,
+--                       count, port }, from_port { port, item, count, output? },
+--                       push_marker { port }
 -- In a domain only joined computers may call a node (computer token); without one it
 -- is open, like everything standalone.
 -- @module logistics_node
@@ -26,6 +28,8 @@ local logistics_node = {}
 logistics_node.MAX_MOVES = 50
 --- Sorting pauses while someone finds a chest, at most this long.
 logistics_node.FIND_PAUSE_SECONDS = 60
+--- Ports are left alone this long while items cross (or a marker is read).
+logistics_node.PORT_HOLD_SECONDS = 15
 
 
 local ARGS = {
@@ -42,6 +46,19 @@ local ARGS = {
     clear_pos = { type = "boolean", optional = true },
     forget = { type = "boolean", optional = true },
   },
+  port_hold = { seconds = { type = "number", min = 1, optional = true } },
+  to_port = {
+    item = { type = "string", max = 128 },
+    count = { type = "number", min = 1 },
+    port = { type = "string", max = 64 },
+  },
+  from_port = {
+    port = { type = "string", max = 64 },
+    item = { type = "string", max = 128 },
+    count = { type = "number", min = 1 },
+    output = { type = "string", optional = true, max = 64 },
+  },
+  push_marker = { port = { type = "string", max = 64 } },
 }
 
 --- Clock (tests replace it).
@@ -113,6 +130,7 @@ function logistics_node.new(options)
     totals = {},
     sources_read = nil, -- nil until the first read, so tools do not show "no storage"
     sort_paused_until = 0,
+    ports_held_until = 0,
   }
   local pending_moves = {}
 
@@ -150,8 +168,10 @@ function logistics_node.new(options)
   function node.round()
     local totals, blocks, failures, inventories = logistics_sources.read_all(sources, role_of)
     node.inventories, node.totals, node.sources_read = inventories, totals, blocks
-    if logistics_node.env.clock() >= node.sort_paused_until then
-      local _, sort_failures = logistics_sorting.sort_inputs(inventories, record_move)
+    local now = logistics_node.env.clock()
+    if now >= node.sort_paused_until then
+      local skip_ports = now < node.ports_held_until
+      local _, sort_failures = logistics_sorting.sort_inputs(inventories, record_move, skip_ports)
       for _, failure in ipairs(sort_failures) do
         failures[#failures + 1] = failure
       end
@@ -192,12 +212,17 @@ function logistics_node.new(options)
     return rows
   end
 
-  --- What the controller gets each round. Moves are handed over only once.
+  --- What the controller gets each round. Moves are handed over only once. The totals
+  -- are a copy: a hub on this computer lowers its own counts after a request.
   function node.report()
     local moves = pending_moves
     pending_moves = {}
+    local totals = {}
+    for item, found in pairs(node.totals) do
+      totals[item] = { count = found.count, label = found.label }
+    end
     return {
-      totals = node.totals,
+      totals = totals,
       blocks = node.list_storages(),
       moves = moves,
       sources = node.sources_read,
@@ -306,6 +331,47 @@ function logistics_node.new(options)
     return changed
   end
 
+  -- Ports ------------------------------------------------------------------
+
+  local function took(item, moved)
+    local found = node.totals[item]
+    if found then
+      found.count = math.max(0, found.count - moved)
+    end
+  end
+
+  --- Leave ports alone for a while: items are about to cross.
+  function node.port_hold(seconds)
+    local until_clock = logistics_node.env.clock() + (seconds or logistics_node.PORT_HOLD_SECONDS)
+    node.ports_held_until = math.max(node.ports_held_until, until_clock)
+    return true
+  end
+
+  --- Move items from storage into a port (the first step of a crossing).
+  function node.to_port(item, count, port)
+    node.port_hold()
+    local result, err = logistics_sorting.to_port(node.inventories, item, count, port, record_move)
+    if result then
+      took(item, result.moved)
+    end
+    return result, err
+  end
+
+  --- Move items that arrived in a port on to an output (the last step); ports are
+  -- sorted again from the next round.
+  function node.from_port(port, item, count, output)
+    local result, err = logistics_sorting.from_port(node.inventories, port, item, count, output,
+      record_move)
+    node.ports_held_until = 0
+    return result, err
+  end
+
+  --- Put one item into a port so the controller can pair it with the main cable.
+  function node.push_marker(port)
+    node.port_hold()
+    return logistics_sorting.push_marker(node.inventories, port, record_move)
+  end
+
   --- The proxy a hub on this computer uses (lone mode).
   function node.proxy()
     return {
@@ -313,6 +379,10 @@ function logistics_node.new(options)
       set_storage = node.set_storage,
       find_start = node.find_start,
       find_finish = node.find_finish,
+      port_hold = node.port_hold,
+      to_port = node.to_port,
+      from_port = node.from_port,
+      push_marker = node.push_marker,
     }
   end
 
@@ -347,6 +417,18 @@ function logistics_node.new(options)
       set_storage = rpc.with_args(ARGS.set_storage, guarded(node.set_storage)),
       find_start = guarded(node.find_start),
       find_finish = guarded(node.find_finish),
+      port_hold = rpc.with_args(ARGS.port_hold, guarded(function(args)
+        return node.port_hold(args.seconds)
+      end)),
+      to_port = rpc.with_args(ARGS.to_port, guarded(function(args)
+        return node.to_port(args.item, math.floor(args.count), args.port)
+      end)),
+      from_port = rpc.with_args(ARGS.from_port, guarded(function(args)
+        return node.from_port(args.port, args.item, math.floor(args.count), args.output)
+      end)),
+      push_marker = rpc.with_args(ARGS.push_marker, guarded(function(args)
+        return node.push_marker(args.port)
+      end)),
       export_levels = guarded(function()
         if not export_levels then
           return nil, "this node keeps no levels"

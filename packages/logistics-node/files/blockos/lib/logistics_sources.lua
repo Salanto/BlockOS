@@ -65,7 +65,8 @@ function logistics_sources.read_all(sources, role_of)
       local role = role_of and role_of(handle, source) or "storage"
       local inventory = { handle = handle, role = role, source = source }
       inventories[#inventories + 1] = inventory
-      if (role == "input" or role == "output") and type(source.fill) == "function" then
+      local is_transit = role == "input" or role == "output" or role == "port"
+      if is_transit and type(source.fill) == "function" then
         local ok, fill = pcall(source.fill, handle)
         inventory.fill = ok and fill or nil
       elseif role == "storage" then

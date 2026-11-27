@@ -143,12 +143,22 @@ real levels, so a missed alert (an unloaded chunk) never leaves the farm running
   `logistics request iron 64 [output]` from any computer.
 - **ignore** (the default for everything else: furnaces, machines, trash cans): never counted
   or touched, so sorting never fills a machine by accident.
+- **port**: how items cross between nodes (see below).
 
 Give chests labels with `l`. To find out which chest is which, press `f` and drop any item into
 it (sorting pauses meanwhile). A chest whose modem was re-placed gets a new name; its old entry
 shows as **missing**, and `d` forgets it. Two nodes may both have a `minecraft:chest_0`: name
-it as `node/chest` then. For now items only move within one node (a request goes to the node
-that has the item and an output chest); moving items between nodes comes next.
+it as `node/chest` then.
+
+**Ports: items between nodes.** Run one wired cable, the main cable, from the controller past
+every node. Next to each node, put a chest with two modems: one on the node's storage cable,
+one on the main cable, both switched on (red). Give it the **port** role (`t` in the Storage
+tab). The controller pairs it by itself: the node drops one item in, and the controller sees
+which chest on its cable changed (the Storage tab shows "pairing", then "paired"). From then
+on a request for an output on node B takes what B lacks from the node that has the most:
+node A fills its port, the controller moves the items to B's port over the main cable, and B
+puts them into the output. Anything left in a port goes back into storage on the next
+round.
 
 **Depots.** Give an output chest a position and it becomes a depot: `p` in the Storage tab,
 or `logistics storage pos <chest> here` from a pocket computer standing next to it (GPS), or

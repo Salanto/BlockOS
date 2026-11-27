@@ -136,7 +136,10 @@ end
 --   input     emptied into storage automatically
 --   output    requested items are delivered here
 --   ignore    not counted and never touched (furnaces, machines, trash)
-logistics.ROLES = { "storage", "input", "output", "ignore" }
+--   port      also on the main cable: items cross to other nodes through it (the
+--             controller moves them port to port); anything left in it is sorted
+--             back into storage like an input
+logistics.ROLES = { "storage", "input", "output", "ignore", "port" }
 logistics.DEFAULT_ROLE = "storage"
 logistics.MAX_LABEL_LENGTH = 32
 

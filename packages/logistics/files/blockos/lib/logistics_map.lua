@@ -79,7 +79,7 @@ function logistics_map.layout(storages, width, height)
     end
   end
   for _, row in ipairs(present) do
-    if row.role == "input" then
+    if row.role == "input" or row.role == "port" then
       left_rows[#left_rows + 1] = row
     elseif row.role == "output" then
       outputs[#outputs + 1] = row
@@ -389,7 +389,7 @@ end
 -- What can be done with one chest: label, role, and for outputs a request.
 local function chest_menu(view, node)
   local actions = { "Set label", "Role: storage", "Role: input", "Role: output",
-    "Role: ignore" }
+    "Role: ignore", "Role: port" }
   if node.role == "output" then
     actions[#actions + 1] = "Get items here"
   end

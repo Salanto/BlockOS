@@ -57,16 +57,18 @@ local function sort_slot(inventories, input, slot, stack, moves_left, on_move)
   return moves, nil
 end
 
---- Empty every input block into storage (one capped round).
+--- Empty every input block (and port) into storage (one capped round).
 -- @tparam {table...} inventories From logistics_sources.read_all.
 -- @tparam[opt] function on_move function(from, to, item, count), per move made
+-- @tparam[opt] boolean skip_ports Leave ports alone (an item is crossing right now).
 -- @treturn number Moves made.
 -- @treturn {table...} failures: { handle, error }, for the log
-function logistics_sorting.sort_inputs(inventories, on_move)
+function logistics_sorting.sort_inputs(inventories, on_move, skip_ports)
   local moves = 0
   local failures = {}
   for _, input in ipairs(inventories) do
-    if input.role == "input" and can_move(input.source) then
+    local is_input = input.role == "input" or (input.role == "port" and not skip_ports)
+    if is_input and can_move(input.source) then
       local ok, slots = pcall(input.source.list, input.handle)
       if not ok then
         failures[#failures + 1] = { handle = tostring(input.handle), error = tostring(slots) }
@@ -89,14 +91,18 @@ function logistics_sorting.sort_inputs(inventories, on_move)
   return moves, failures
 end
 
-local function find_output(inventories, handle)
+local function find_block(inventories, role, handle)
   for _, inventory in ipairs(inventories) do
     local is_wanted = handle == nil or inventory.handle == handle
-    if inventory.role == "output" and is_wanted and can_move(inventory.source) then
+    if inventory.role == role and is_wanted and can_move(inventory.source) then
       return inventory
     end
   end
   return nil
+end
+
+local function find_output(inventories, handle)
+  return find_block(inventories, "output", handle)
 end
 
 -- Take up to `wanted` of an item out of one storage block into the output.
@@ -140,6 +146,18 @@ function logistics_sorting.request(inventories, item, count, output_handle, on_m
   if not output then
     return nil, "no output chest: give one the 'output' role in the Storage tab"
   end
+  return logistics_sorting.deliver(inventories, item, count, output, on_move)
+end
+
+--- Move items from storage into one block (an output, or a port for another node).
+-- @tparam {table...} inventories
+-- @tparam string item
+-- @tparam number count
+-- @tparam table target An entry of `inventories`.
+-- @tparam[opt] function on_move
+-- @treturn table { moved, output }
+function logistics_sorting.deliver(inventories, item, count, target, on_move)
+  local output = target
   local moved = 0
   for _, storage in ipairs(storage_targets(inventories, output.source, item)) do
     if moved >= count then
@@ -154,6 +172,59 @@ function logistics_sorting.request(inventories, item, count, output_handle, on_m
     end
   end
   return { moved = moved, output = output.handle }
+end
+
+--- Move items into a port, for the controller to carry to another node.
+-- @treturn[1] table { moved, output }
+-- @treturn[2] nil
+-- @treturn[2] string error message
+function logistics_sorting.to_port(inventories, item, count, port_handle, on_move)
+  local port = find_block(inventories, "port", port_handle)
+  if not port then
+    return nil, "no port called " .. tostring(port_handle)
+  end
+  return logistics_sorting.deliver(inventories, item, count, port, on_move)
+end
+
+--- Move items that arrived in a port on to an output.
+-- @treturn[1] table { moved, output }
+-- @treturn[2] nil
+-- @treturn[2] string error message
+function logistics_sorting.from_port(inventories, port_handle, item, count, output_handle,
+    on_move)
+  local port = find_block(inventories, "port", port_handle)
+  local output = find_output(inventories, output_handle)
+  if not port then
+    return nil, "no port called " .. tostring(port_handle)
+  end
+  if not output then
+    return nil, "no output chest: give one the 'output' role in the Storage tab"
+  end
+  local moved = take_from(port, output, item, count, on_move)
+  return { moved = moved, output = output.handle }
+end
+
+--- Put one item from storage into a port, so the controller can tell which block on
+-- the main cable it is (the one that changed). It is sorted back later.
+-- @treturn[1] table { item }
+-- @treturn[2] nil
+-- @treturn[2] string error message
+function logistics_sorting.push_marker(inventories, port_handle, on_move)
+  local port = find_block(inventories, "port", port_handle)
+  if not port then
+    return nil, "no port called " .. tostring(port_handle)
+  end
+  for _, storage in ipairs(inventories) do
+    if storage.role == "storage" and storage.source == port.source and storage.items then
+      for item in pairs(storage.items) do
+        local moved = take_from(storage, port, item, 1, on_move)
+        if moved > 0 then
+          return { item = item }
+        end
+      end
+    end
+  end
+  return nil, "nothing in storage to mark the port with"
 end
 
 return logistics_sorting
