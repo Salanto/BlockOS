@@ -56,10 +56,12 @@ local tabs = {
     load = "list_computer_roles",
     describe = function(role)
       local used = #role.computers > 0 and (" (" .. #role.computers .. " pc)") or ""
-      return string.format("%-16s %s%s", role.name, table.concat(role.packages, ","), used)
+      local only = role.prune and " [only]" or ""
+      return string.format("%-16s %s%s%s", role.name, table.concat(role.packages, ","), used,
+        only)
     end,
-    hints = { { "a", "Add" }, { "p", "Packages" }, { "c", "Computers" }, { "s", "Setting" },
-      { "d", "Delete" } },
+    hints = { { "a", "Add" }, { "p", "Packages" }, { "c", "Computers" }, { "k", "Keep only" },
+      { "s", "Setting" }, { "d", "Delete" } },
   },
   {
     title = "DNS",
@@ -215,10 +217,27 @@ actions[2] = {
 }
 
 -- Remote admin: ask the computer itself (protocol blockos.manage, domain admins only).
-local function manage_call(host, op, call_args)
+local function manage_call(host, op, call_args, timeout)
   local rpc = import("rpc")
   return rpc.call(host.id, import("manage").PROTOCOL, op, call_args,
-    { relogin = true, retries = 0 })
+    { relogin = true, retries = 0, timeout = timeout })
+end
+
+-- What applying its roles would change (the computer asks the controller and the package
+-- source, so it may take a few seconds).
+local PLAN_SECONDS = 10
+
+local function show_plan(host)
+  ui.print("")
+  ui.print("Plan (what its roles would change)", "title")
+  local preview, err = manage_call(host, "plan", nil, PLAN_SECONDS)
+  if not preview then
+    ui.status(tostring(err), "error")
+    return
+  end
+  for _, line in ipairs(import("computer_config").plan_lines(preview)) do
+    ui.print("  " .. line.text, line.role)
+  end
 end
 
 local function wait_key(text)
@@ -260,6 +279,7 @@ local function show_info(host)
   for _, notice in ipairs(status.notices or {}) do
     ui.status(notice, "warn")
   end
+  show_plan(host)
   wait_key()
 end
 
@@ -400,6 +420,23 @@ actions[4] = {
   c = function(role)
     if role then
       choose_computers(role.name)
+    end
+  end,
+  -- Keep only these: computers with the role remove optional packages none of their
+  -- roles list (core, net and domain always stay). The computer info shows the plan.
+  k = function(role)
+    if not role then
+      return
+    end
+    local prune = not role.prune
+    local question = prune
+      and ("Computers with " .. role.name .. " remove packages their roles do not list. On?")
+      or ("Computers with " .. role.name .. " keep packages their roles do not list. Off?")
+    if ui.confirm(question) then
+      run("computer_role_set", { name = role.name, packages = role.packages,
+        settings = role.settings, prune = prune },
+        role.name .. (prune and ": keep only these (i in Computers shows the plan)."
+          or ": other packages are kept."))
     end
   end,
   s = function(role)

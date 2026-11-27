@@ -23,11 +23,12 @@ local function run(ctx)
   local pending = nil -- fetched packages waiting for nobody to be logged in
 
   local function apply(result)
-    log.info("applying: %s", computer_config.describe(result.changes))
+    log.info("applying: %s", computer_config.describe(result.changes, result.removals))
     local function progress(text)
       log.info("%s", text)
     end
-    local ok, err = pkg.apply(result.packages, { progress = progress })
+    local ok, err = pkg.apply(result.packages, { progress = progress,
+      remove = result.removals })
     if not ok then
       log.error("update failed: %s", tostring(err))
       pending = nil
@@ -57,7 +58,7 @@ local function run(ctx)
     local is_auto = ctx.config.get("blockos.domain.auto_update", true)
     if not is_forced and not is_auto then
       log.info("updates available but automatic updates are off: %s",
-        computer_config.describe(result.changes))
+        computer_config.describe(result.changes, result.removals))
       return
     end
     if is_forced or not blockos.user then
@@ -65,8 +66,8 @@ local function run(ctx)
       return
     end
     pending = result
-    import("notices").set("update", #result.changes ..
-      " package update(s) ready: applied when you log out")
+    import("notices").set("update", (#result.changes + #result.removals) ..
+      " package change(s) ready: applied when you log out")
   end
 
   local logged_out = import("session").LOGGED_OUT_EVENT

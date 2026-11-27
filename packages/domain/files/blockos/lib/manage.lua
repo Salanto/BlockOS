@@ -1,6 +1,7 @@
 --- Remote admin: what a domain admin can do on a joined computer from dsa (protocol
 -- "blockos.manage"): see its health, reboot it, update it now, control services, read
--- its log, and open a remote shell (see remote_shell.lua). Domain admins only, checked
+-- its log, see what its roles would change (plan), and open a remote shell (see
+-- remote_shell.lua). Domain admins only, checked
 -- with the domain controller on every request.
 -- @module manage
 
@@ -33,6 +34,7 @@ manage.env = {
     return { free = fs.getFreeSpace("/"), capacity = fs.getCapacity and fs.getCapacity("/") }
   end,
   installed = function() return import("pkg").installed() end,
+  preview = function() return import("computer_config").preview() end,
 }
 
 --- What dsa shows about a computer.
@@ -107,6 +109,11 @@ function manage.handlers(shells)
   handlers.update = admin(function()
     manage.env.queue(manage.UPDATE_NOW_EVENT)
     return { checking = true }
+  end)
+
+  --- What applying its roles would do now, without changing anything.
+  handlers.plan = admin(function()
+    return manage.env.preview()
   end)
 
   handlers.service = rpc.with_args(manage.ARGS.service, admin(function(_, args)

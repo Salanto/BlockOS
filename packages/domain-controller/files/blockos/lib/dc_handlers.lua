@@ -71,6 +71,8 @@ local ARGS = {
     name = NAME,
     packages = "table",
     settings = { type = "table", optional = true },
+    -- keep only these: computers remove optional packages their roles do not list
+    prune = { type = "boolean", optional = true },
   },
   computer_assign = { hostname = NAME, roles = "table" },
   route = { to = NAME },

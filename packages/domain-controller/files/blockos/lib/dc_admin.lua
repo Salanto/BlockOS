@@ -77,7 +77,7 @@ function dc_admin.attach(handlers, internal)
       return dir:set_manager(args.group, args.managed_by)
     end },
     computer_role_set = { ARGS.computer_role, function(args)
-      return dir:set_computer_role(args.name, args.packages, args.settings)
+      return dir:set_computer_role(args.name, args.packages, args.settings, args.prune)
     end },
     computer_role_del = { ARGS.name, function(args)
       return dir:remove_computer_role(args.name)

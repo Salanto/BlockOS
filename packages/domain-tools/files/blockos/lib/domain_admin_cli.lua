@@ -20,6 +20,7 @@ local function print_usage()
   print("       domain computer list | computer remove <hostname>")
   print("       domain computer roles | role <name> <package...> | role-del <name>")
   print("       domain computer setting <role> <key> [value] | assign <host> [role...]")
+  print("       domain computer only <role> on|off   keep only the roles' packages")
   print("       domain dns list | dns add <type> <host> [protocol] | dns del <type>")
 end
 
@@ -136,6 +137,7 @@ local function computer_role_command(action, words)
       { title = "ROLE", key = "name" },
       { title = "PACKAGES", key = function(role) return table.concat(role.packages, ", ") end },
       { title = "COMPUTERS", key = function(role) return table.concat(role.computers, ", ") end },
+      { title = "ONLY", key = function(role) return role.prune and "yes" or "" end },
     }, roles)
   elseif action == "role" and words[3] then
     local existing = find_computer_role(words[3])
@@ -156,6 +158,17 @@ local function computer_role_command(action, words)
     settings[words[4]] = setting_value(words[5])
     call("computer_role_set", { name = role.name, packages = role.packages, settings = settings },
       "Setting saved.")
+  elseif action == "only" and (words[4] == "on" or words[4] == "off") then
+    local role, err = find_computer_role(words[3])
+    if not role then
+      return fail(err)
+    end
+    local prune = words[4] == "on"
+    call("computer_role_set", { name = role.name, packages = role.packages,
+      settings = role.settings, prune = prune }, prune
+      and ("Computers with " .. role.name .. " now remove packages their roles do not list"
+        .. " ('domain update --plan' there shows what).")
+      or ("Computers with " .. role.name .. " keep packages their roles do not list."))
   elseif action == "assign" and words[3] then
     call("computer_assign", { hostname = words[3], roles = { table.unpack(words, 4) } },
       words[3] .. " applies its roles within 30 minutes ('domain update' there does it now).")

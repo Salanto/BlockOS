@@ -8,6 +8,7 @@ local function print_usage()
   print("Usage: domain status")
   print("       domain join <domain> | leave [--force]")
   print("       domain update            check this computer's roles and updates now")
+  print("       domain update --plan     show what that would change, change nothing")
   print("       domain user|group|computer|dns|setup ...   (package domain-tools)")
 end
 
@@ -111,6 +112,18 @@ elseif ADMIN_COMMANDS[command] then
     fail("Managing the domain needs the domain-tools package: pkg install domain-tools")
   else
     admin.run(args)
+  end
+elseif command == "update" and args[2] == "--plan" then
+  local computer_config = import("computer_config")
+  local preview, err = computer_config.preview()
+  if not preview then
+    fail(err)
+  else
+    ui.title("Plan for this computer (roles: " .. (#preview.roles > 0
+      and table.concat(preview.roles, ", ") or "none") .. ")")
+    for _, line in ipairs(computer_config.plan_lines(preview)) do
+      ui.print(line.text, line.role)
+    end
   end
 elseif command == "update" then
   os.queueEvent(import("computer_config").UPDATE_NOW_EVENT)
