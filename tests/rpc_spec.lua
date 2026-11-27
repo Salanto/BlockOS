@@ -160,8 +160,8 @@ return function(t)
       -- Other timers (the server's sleep) are kept too; the caller's is among them.
       local found = false
       while events.count() > 0 and not found do
-        local name, fired = events.pull()
-        found = name == "timer" and fired == timer
+        local kind, fired = events.pull()
+        found = kind == "timer" and fired == timer
       end
       t.ok(found, "the caller's timer was kept too")
     end)

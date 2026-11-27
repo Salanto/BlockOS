@@ -159,15 +159,11 @@ local function run(ctx)
   -- Be findable: by rednet name (works without a domain) and, in a domain, as the
   -- "logistics" (or "logistics-<name>") service record.
   local service_type = logistics_client.service_type(config.name)
-  if rednet.isOpen() then
-    pcall(rednet.host, logistics_client.PROTOCOL, service_type)
-  end
-  local found, domain = pcall(import, "domain")
-  if found and domain.is_joined() then
-    local registered, err = domain.register_service(service_type, logistics_client.PROTOCOL)
-    if not registered then
-      log.warn("could not register the %s service record: %s", service_type, tostring(err))
-    end
+  local registered, register_error = import("discovery").advertise(service_type,
+    logistics_client.PROTOCOL)
+  if not registered then
+    log.warn("could not register the %s service record: %s", service_type,
+      tostring(register_error))
   end
 
   local function on_report(sender, message)

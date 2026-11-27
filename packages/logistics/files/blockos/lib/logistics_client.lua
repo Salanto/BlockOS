@@ -128,18 +128,9 @@ function logistics_client.find_server(name, is_service)
     name = nil
   end
   local service_type = logistics_client.service_type(name)
-  local found_domain, domain = pcall(import, "domain")
-  if found_domain and domain.is_joined() then
-    local service = domain.find_service(service_type)
-    if service then
-      return service.id, service.host
-    end
-  end
-  local id = rpc.find(logistics_client.PROTOCOL, service_type)
-  if id then
-    return id, service_type
-  end
-  return nil
+  local id, label = import("discovery").find(service_type, logistics_client.PROTOCOL,
+    { rednet_name = service_type })
+  return id, label, service_type
 end
 
 --- Connect to the hub.
@@ -155,7 +146,8 @@ function logistics_client.connect(name, options)
   if hub and (name == nil or name == hub.config.name) then
     return logistics_client.local_connection(hub.handlers, hub.describe)
   end
-  local server_id, label = logistics_client.find_server(name, options and options.is_service)
+  local server_id, label, service_type = logistics_client.find_server(name,
+    options and options.is_service)
   if not server_id then
     return nil, "no logistics controller found (install logistics-controller on a computer)"
   end
@@ -170,7 +162,11 @@ function logistics_client.connect(name, options)
       if logistics_client.SLOW_OPS[op] then
         call_options.timeout = logistics_client.SLOW_TIMEOUT
       end
-      return rpc.call(server_id, logistics_client.PROTOCOL, op, args, call_options)
+      local result, err = rpc.call(server_id, logistics_client.PROTOCOL, op, args, call_options)
+      if not result and tostring(err):find("no answer") then
+        import("discovery").forget(service_type) -- look it up again next time
+      end
+      return result, err
     end,
   }
 end
