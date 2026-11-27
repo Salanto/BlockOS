@@ -87,7 +87,9 @@ logistics_node.env = {
 --   modem sees inventories (blocks placed against the computer still count);
 --   is_shared when that modem is the only one (it then carries rednet too and is
 --   not closed); is_ambiguous when several modems see inventories (the one seeing
---   the most is picked; `logistics node side` changes it)
+--   the most is picked; `logistics node side` changes it). A modem with other
+--   computers behind it is the main network: it is picked only when nothing else sees
+--   chests, and then counts as shared (never closed: the node would drop off rednet).
 function logistics_node.detect_sides(api)
   api = api or peripheral
   local modems, candidates = 0, {}
@@ -96,14 +98,18 @@ function logistics_node.detect_sides(api)
       modems = modems + 1
       local modem = api.wrap(side)
       if modem.getNamesRemote and not (modem.isWireless and modem.isWireless()) then
-        local count = 0
+        local count, has_computers = 0, false
         for _, name in ipairs(modem.getNamesRemote()) do
           if modem.hasTypeRemote(name, "inventory") then
             count = count + 1
           end
+          if modem.hasTypeRemote(name, "computer") then
+            has_computers = true
+          end
         end
         if count > 0 then
-          candidates[#candidates + 1] = { side = side, count = count }
+          candidates[#candidates + 1] = { side = side, count = count,
+            has_computers = has_computers }
         end
       end
     end
@@ -111,10 +117,16 @@ function logistics_node.detect_sides(api)
   if #candidates == 0 then
     return {}
   end
-  table.sort(candidates, function(a, b) return a.count > b.count end)
+  table.sort(candidates, function(a, b)
+    if a.has_computers ~= b.has_computers then
+      return not a.has_computers
+    end
+    return a.count > b.count
+  end)
+  local best = candidates[1]
   return {
-    storage_side = candidates[1].side,
-    is_shared = modems == 1 or nil,
+    storage_side = best.side,
+    is_shared = (modems == 1 or best.has_computers) or nil,
     is_ambiguous = #candidates > 1 or nil,
   }
 end

@@ -152,6 +152,8 @@ local function run(ctx)
     config = config,
     describe = hostname,
   }
+  -- A node on this same computer hands its reports over directly (no rednet).
+  blockos.logistics_controller = hub
 
   -- Be findable: by rednet name (works without a domain) and, in a domain, as the
   -- "logistics" (or "logistics-<name>") service record.
@@ -216,6 +218,7 @@ local function run(ctx)
   )
   hub.stop()
   blockos.logistics_hub = nil
+  blockos.logistics_controller = nil
   if not ok then
     error(err, 0)
   end

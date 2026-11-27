@@ -37,8 +37,11 @@ local function run(ctx)
   end
 
   local function check_mail()
-    if blockos.notices then
-      blockos.notices.mail = mail_notice(blockos.user)
+    local user = blockos.user
+    local notice = mail_notice(user)
+    -- The answer took a moment: only show it if the same user is still logged in.
+    if blockos.notices and blockos.user == user then
+      blockos.notices.mail = notice
     end
   end
 

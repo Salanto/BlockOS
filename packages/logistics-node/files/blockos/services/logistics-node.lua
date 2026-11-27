@@ -9,12 +9,16 @@
 -- Lone mode: until a controller is found, the node runs a hub over itself, so its own
 -- terminal can use `logistics` (catalog, requests, levels, map). Once a controller has
 -- been found the node stays its node, and its levels can be moved over with
--- `logistics levels import <node>` on the controller.
+-- `logistics levels import <node>` on the controller. When the controller cannot be
+-- found three times in a row (or after `logistics node alone`), the node is alone
+-- again. A controller on this same computer gets the reports directly.
 
 -- Rounds between looking for a controller while none is known (lookups cost ~2 s),
 -- and between checks that it has not moved to another computer.
 local DISCOVER_ROUNDS = 6
 local RECHECK_ROUNDS = 30
+-- Lookups in a row that find no controller before the node is alone again.
+local LOST_LOOKUPS = 3
 -- Rounds between GPS fixes (the wall board groups nodes by height; ~5 min).
 local GPS_ROUNDS = 30
 
@@ -107,6 +111,9 @@ local function run(ctx)
   local hub = nil
 
   local function start_hub()
+    if blockos.logistics_controller then
+      return -- a controller runs on this computer: it is the hub
+    end
     local levels = fs.exists(levels_path) and fsx.read_table(levels_path) or {}
     hub = logistics_hub.new({
       config = levels,
@@ -131,8 +138,10 @@ local function run(ctx)
   local function stop_hub()
     if hub then
       hub.stop()
+      if blockos.logistics_hub and blockos.logistics_hub.hub == hub then
+        blockos.logistics_hub = nil
+      end
       hub = nil
-      blockos.logistics_hub = nil
     end
   end
 
@@ -169,7 +178,28 @@ local function run(ctx)
     end
   end
 
+  local missed_lookups = 0
+
+  -- Alone again (the controller is gone for good, or `logistics node alone`).
+  function node.go_alone()
+    controller_id, node.controller_id = nil, nil
+    config.controller = nil
+    save()
+    missed_lookups = 0
+    start_hub()
+    log.info("no controller: this node runs alone again")
+  end
+
   local function look_for_controller()
+    if blockos.logistics_controller then
+      -- A controller on this computer: no lookup, no rednet.
+      if hub or config.controller ~= "local" then
+        stop_hub()
+        config.controller = "local"
+        save()
+      end
+      return
+    end
     rounds_since_lookup = rounds_since_lookup + 1
     if rounds_since_lookup < (controller_id and RECHECK_ROUNDS or DISCOVER_ROUNDS) then
       return
@@ -177,7 +207,36 @@ local function run(ctx)
     rounds_since_lookup = 0
     local id, label = logistics_client.find_server(nil, true)
     if id and id ~= os.getComputerID() then
+      missed_lookups = 0
       on_controller_found(id, label)
+    elseif config.controller ~= nil and not hub then
+      missed_lookups = missed_lookups + 1
+      if missed_lookups >= LOST_LOOKUPS then
+        node.go_alone()
+      end
+    end
+  end
+
+  -- No storage modem at the first start (the cable came later): keep looking, and
+  -- start over with the scoped view once one shows up.
+  local rounds_since_detect = 0
+  local function redetect()
+    if config.storage_side then
+      return
+    end
+    rounds_since_detect = rounds_since_detect + 1
+    if rounds_since_detect < DISCOVER_ROUNDS then
+      return
+    end
+    rounds_since_detect = 0
+    local sides = logistics_node.detect_sides()
+    if sides.storage_side then
+      config.storage_side, config.is_shared = sides.storage_side, sides.is_shared
+      if not sides.is_shared then
+        import("net").close_side(sides.storage_side)
+      end
+      save()
+      error("found the storage modem on " .. sides.storage_side .. "; starting over", 0)
     end
   end
 
@@ -200,7 +259,9 @@ local function run(ctx)
     local report = node.report()
     report.node = hostname()
     report.pos = position
-    if controller_id then
+    if blockos.logistics_controller then
+      blockos.logistics_controller.update(report.node, report, node.proxy())
+    elseif controller_id then
       rednet.send(controller_id, wire.event(logistics_client.REPORT_TOPIC, report),
         logistics_client.NODE_PROTOCOL)
     elseif hub then
@@ -224,6 +285,7 @@ local function run(ctx)
         node.round()
         locate()
         look_for_controller()
+        redetect()
         send_report()
         sleep(config.poll_seconds)
       end

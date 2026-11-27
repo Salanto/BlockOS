@@ -21,7 +21,14 @@ function logistics_scope.new(side, api)
     return api
   end
 
+  -- The name list is asked for on every wrap and type check of a round; within one
+  -- game tick it cannot change, so it is built once per tick.
+  local cached, cached_at
   local function names()
+    local now = os.clock()
+    if cached and cached_at == now then
+      return cached
+    end
     local list = {}
     local modem = api.wrap(side)
     if modem and modem.getNamesRemote then
@@ -34,6 +41,7 @@ function logistics_scope.new(side, api)
         list[#list + 1] = attached
       end
     end
+    cached, cached_at = list, now
     return list
   end
 

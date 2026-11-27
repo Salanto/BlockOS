@@ -36,6 +36,29 @@ return function(t)
 
     local none = node.detect_sides(t.fake_peripherals({ right = WIRELESS }))
     t.eq(none.storage_side, nil)
+
+    -- The main cable has computers (and ports, depots) on it: never the storage modem
+    -- when another modem sees chests, and never closed when it is the only choice.
+    local function main_cable(remote)
+      local modem = wired_modem(remote)
+      modem.methods.hasTypeRemote = function(name, kind)
+        if kind == "computer" then
+          return name:find("^computer") ~= nil
+        end
+        return kind == "inventory" and name:find("^chest") ~= nil
+      end
+      return modem
+    end
+    local busy = node.detect_sides(t.fake_peripherals({
+      left = main_cable({ "computer_1", "chest_9", "chest_8", "chest_7" }),
+      top = wired_modem({ "chest_1" }),
+    }))
+    t.eq(busy.storage_side, "top", "the small storage cable, not the busy main cable")
+    local only_main = node.detect_sides(t.fake_peripherals({
+      left = main_cable({ "computer_1", "chest_9" }),
+      right = WIRELESS,
+    }))
+    t.eq(only_main.is_shared, true, "a cable with computers is never closed")
   end)
 
   -- A storage network (chest_a, out) on the left modem, a main network with

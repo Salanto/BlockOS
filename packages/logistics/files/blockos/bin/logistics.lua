@@ -29,6 +29,8 @@
 --   logistics node private <node>      managed mode: only members of the role
 --                                      logistics-node-<node> see that node's items
 --   logistics node side <side>         on a node: which modem is the storage network
+--   logistics node alone               on a node: stop reporting to a controller that
+--                                      is gone for good, run alone again
 --   logistics craft [<item> [count]]  crafting: what can be made, jobs, start one
 --                                      (logistics craft help: teaching and recipes)
 --   logistics rename <name> | --clear  on the controller: register as logistics-<name>
@@ -57,7 +59,7 @@ local function print_usage()
   print("       logistics sound note|sound|file <value> [volume] | test")
   print("       logistics react add <item> <target> <side> | remove <item> | list")
   print("       logistics levels import <node>")
-  print("       logistics node forget|private <node> | side <side>")
+  print("       logistics node forget|private <node> | side <side> | alone")
   print("       logistics craft [<item> [count]] | craft help")
   print("       logistics rename <name> | rename --clear")
 end
@@ -567,6 +569,16 @@ elseif command == "board" then
   end
 elseif command == "node" and options.words[2] == "side" then
   set_node_side(options.words[3])
+elseif command == "node" and options.words[2] == "alone" then
+  local node = blockos.logistics_node
+  if not (node and node.go_alone) then
+    fail("Run this on a logistics node (package logistics-node).")
+  elseif not (blockos.user and blockos.user.is_admin) then
+    fail("Only administrators can change this.")
+  else
+    node.go_alone()
+    ui.print("This node runs alone now ('logistics' works here again).", "ok")
+  end
 elseif command == "craft" then
   import("logistics_craft_cli").run(options.words, function() return connect(options) end)
 elseif command == nil or REMOTE_COMMANDS[command] then
