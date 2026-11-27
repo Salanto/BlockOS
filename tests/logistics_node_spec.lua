@@ -210,6 +210,49 @@ return function(t)
     t.eq(node.sort_paused_until, 0)
   end)
 
+  t.it("a chest one player found is no answer for another searching at once", function()
+    local import = t.fresh_import()
+    local chests, api = fake_world()
+    local node = new_node(import, api)
+    node.round()
+    node.find_start("alice")
+    node.find_start("bob")
+    chests.top.slots[2] = { name = "stick", count = 1 } -- alice drops a stick in
+    t.eq(node.find_finish("alice")[1].handle, "top")
+    t.eq(#node.find_finish("bob"), 0, "bob did not touch a chest")
+  end)
+
+  t.it("labels go out only when new, and in full every few rounds", function()
+    local import = t.fresh_import()
+    local _, api = fake_world()
+    local node = new_node(import, api)
+    local logistics_node = import("logistics_node")
+    node.round()
+    local first = node.report()
+    local item = next(first.totals)
+    t.ok(item and first.totals[item].label, "the first report carries labels")
+    local second = node.report()
+    t.eq(second.totals[item].label, nil, "known labels are left out")
+    t.eq(second.totals[item].count, first.totals[item].count)
+    import("logistics_alarms").env.broadcast = function() end
+    local hub = import("logistics_hub").new({ config = {}, save = function() return true end })
+    hub.update("n", first, {})
+    hub.update("n", second, {})
+    t.eq(hub.nodes.n.report.totals[item].label, first.totals[item].label,
+      "the hub keeps the label it had")
+    local report
+    for _ = 3, logistics_node.BLOCKS_EVERY + 1 do
+      report = node.report()
+    end
+    t.ok(report.totals[item].label, "a full round sends every label again")
+    t.eq(node.report_too_big(), nil)
+    logistics_node.REPORT_WARN_BYTES = 10
+    for _ = 1, logistics_node.BLOCKS_EVERY do
+      node.report()
+    end
+    t.ok(node.report_too_big(), "a big report is noticed on the next full round")
+  end)
+
   t.it("the block list goes out only when it changed (counts every round)", function()
     local import = t.fresh_import()
     local _, api = fake_world()

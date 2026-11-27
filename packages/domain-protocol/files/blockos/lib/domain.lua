@@ -413,7 +413,9 @@ function domain.login_provider()
     login = function(name, password)
       local session, err = domain.login(name, password)
       if not session then
-        if tostring(err):find("unreachable") then
+        -- Login is quick (no search for a moved controller), so a dead one says "no answer".
+        local text = tostring(err)
+        if text:find("unreachable") or text:find("no answer") then
           return nil, "Domain controller unreachable; use .\\name for local accounts."
         end
         return nil, err

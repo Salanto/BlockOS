@@ -261,6 +261,11 @@ function logistics_hub.new(options)
     if report.blocks == nil and old then
       report.blocks = old.blocks -- unchanged since the last list (see logistics_node)
     end
+    -- Labels come only when new (see logistics_node): keep the ones already known.
+    local old_totals = old and old.totals or {}
+    for item, found in pairs(report.totals or {}) do
+      found.label = found.label or (old_totals[item] and old_totals[item].label) or item
+    end
     entry.report, entry.proxy, entry.seen = report, proxy, logistics_hub.env.clock()
     -- Moves this report includes no longer need subtracting (all of them when the
     -- node restarted: its counts are fresh).
