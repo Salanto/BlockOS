@@ -9,6 +9,9 @@
 --                               scan_error?, scan? = { radius, age, is_shifted, palette,
 --                               cells = { { x, y, z, palette index } } } }; offsets from
 --                               the turtle in world axes, the layers around its height
+--   follow { player, distance? } walk after a player (never digs) -> { following }
+--   stop                        stop following -> { stopped }
+-- info also says { following?, follow_status? }.
 -- @module turtle_remote_wire
 
 local turtle_remote_wire = {}
@@ -26,6 +29,10 @@ turtle_remote_wire.ARGS = {
   },
   look = {
     radius = { type = "number", min = 1, optional = true },
+  },
+  follow = {
+    player = { type = "string", max = 32 },
+    distance = { type = "number", min = 1, optional = true },
   },
 }
 

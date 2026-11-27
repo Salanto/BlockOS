@@ -11,6 +11,7 @@
 --   info                        { label, fuel, fuel_limit, selected, slots }
 --   act { action, slot? }       run one action -> { ok, detail, info }
 --   look { radius? }            what it sees (turtle_vision)
+--   follow { player, distance? }, stop   walk after a player (turtle_follow)
 -- @module turtle_remote
 
 local rpc = import("rpc")
@@ -27,8 +28,10 @@ turtle_remote.ACTIONS = turtle_remote_wire.ACTIONS
 
 --- The turtle's state, for the driver's screen. Read-only calls only.
 -- @tparam table turtle_api The turtle API (tests pass a stub).
--- @treturn table { label, fuel, fuel_limit, selected, slots = { [n] = count } }
-function turtle_remote.info(turtle_api)
+-- @tparam[opt] table follower Its turtle_follow (adds following, follow_status).
+-- @treturn table { label, fuel, fuel_limit, selected, slots = { [n] = count },
+--   following?, follow_status? }
+function turtle_remote.info(turtle_api, follower)
   local slots = {}
   for slot = 1, turtle_remote.INVENTORY_SLOTS do
     slots[slot] = turtle_api.getItemCount(slot)
@@ -39,6 +42,8 @@ function turtle_remote.info(turtle_api)
     fuel_limit = turtle_api.getFuelLimit(),
     selected = turtle_api.getSelectedSlot(),
     slots = slots,
+    following = follower and follower.target or nil,
+    follow_status = follower and follower.status or nil,
   }
 end
 
@@ -70,9 +75,11 @@ end
 --   with turtle-drivers (tests pass their own)
 -- @tparam[opt] function is_joined function() -> boolean (default: ask the domain)
 -- @treturn table { [op] = function(request_ctx, args) }
+-- @treturn table the turtle_follow follower (the service runs follower.run)
 function turtle_remote.handlers(turtle_api, log, allows, is_joined)
   local handlers = {}
   local vision = import("turtle_vision").new(turtle_api)
+  local follower = import("turtle_follow").new(turtle_api, vision, log)
   allows = allows or default_allows
   is_joined = is_joined or function()
     local found, domain = pcall(import, "domain")
@@ -99,7 +106,7 @@ function turtle_remote.handlers(turtle_api, log, allows, is_joined)
     if not user then
       return nil, err
     end
-    return turtle_remote.info(turtle_api)
+    return turtle_remote.info(turtle_api, follower)
   end
 
   -- The last driver is logged once per change of driver, not per keypress.
@@ -113,12 +120,15 @@ function turtle_remote.handlers(turtle_api, log, allows, is_joined)
       log.info("driven by %s from #%s", tostring(user.name), tostring(ctx.sender))
       last_driver = user.name
     end
+    if follower.target then
+      follower.stop("taken over by " .. tostring(user.name)) -- manual driving wins
+    end
     local ok, detail = run_action(turtle_api, args)
     if ok == nil and detail then
       return nil, detail
     end
     vision.after_action(args.action, ok == true)
-    return { ok = ok == true, detail = detail, info = turtle_remote.info(turtle_api) }
+    return { ok = ok == true, detail = detail, info = turtle_remote.info(turtle_api, follower) }
   end)
   rpc.once(handlers.act) -- a repeat must never move the turtle twice
 
@@ -131,7 +141,25 @@ function turtle_remote.handlers(turtle_api, log, allows, is_joined)
     return vision.look(args.radius)
   end)
 
-  return handlers
+  handlers.follow = rpc.with_args(turtle_remote.ARGS.follow, function(ctx, args)
+    local user, err = require_driver(ctx)
+    if not user then
+      return nil, err
+    end
+    follower.start(args.player, args.distance)
+    return { following = args.player }
+  end)
+
+  function handlers.stop(ctx)
+    local user, err = require_driver(ctx)
+    if not user then
+      return nil, err
+    end
+    follower.stop("stopped by " .. tostring(user.name))
+    return { stopped = true }
+  end
+
+  return handlers, follower
 end
 
 return turtle_remote

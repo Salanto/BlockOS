@@ -28,12 +28,13 @@ local HINTS = {
   "w/s fwd/back  a/d turn  space/c up/down",
   "f/r/v dig  e/t/g place  i/o suck/drop",
   "u refuel  1-9 [ ] slot  z/x layer  m map",
-  "l look again  q quit",
+  "l look  p follow a player  q quit",
 }
 
 -- Below this width the map and the inventory take turns (m switches).
 local SIDE_BY_SIDE_WIDTH = 45
 local INVENTORY_WIDTH = 20
+local FOLLOW_REFRESH_SECONDS = 2
 
 local function print_usage()
   print("Usage: remote list | remote <turtle>")
@@ -100,6 +101,12 @@ local function draw_inventory(info, x, y)
       local cell_role = slot == info.selected and "title" or "dim"
       ui.text_at(x + (column - 1) * 5, y + 2 + row, cell, cell_role)
     end
+  end
+  if info.following then
+    ui.text_at(x, y + 7, ui.fit("Following " .. info.following, INVENTORY_WIDTH), "ok")
+    ui.text_at(x, y + 8, ui.fit(tostring(info.follow_status or ""), INVENTORY_WIDTH), "dim")
+  elseif info.follow_status then
+    ui.text_at(x, y + 7, ui.fit(tostring(info.follow_status), INVENTORY_WIDTH), "faint")
   end
 end
 
@@ -178,10 +185,44 @@ local function drive(name)
   local look = look_now()
   local view = { layer = 0, show_map = true }
 
+  -- p: stop following, or ask who to follow (the turtle walks by itself, never digs).
+  local function follow_toggle(current)
+    if current and current.following then
+      local _, err = rpc.call(id, turtle_remote.PROTOCOL, "stop", nil, { relogin = true })
+      return err and tostring(err) or "Stopped following.", err and "error" or "ok"
+    end
+    local width, height = ui.size()
+    local player = ui.field_prompt(1, height - #HINTS, width, "Follow player: ")
+    if not player or player == "" then
+      return "Not following anyone.", "dim"
+    end
+    local result, err = rpc.call(id, turtle_remote.PROTOCOL, "follow", { player = player },
+      { relogin = true })
+    if not result then
+      return tostring(err), "error"
+    end
+    return "Following " .. player .. " (a move key takes over).", "ok"
+  end
+
+  -- While following, the turtle moves by itself: redraw now and then.
+  local function next_key()
+    local timer = info and info.following and os.startTimer(FOLLOW_REFRESH_SECONDS)
+    while true do
+      local event, value = os.pullEvent()
+      if event == "char" then
+        return value
+      elseif event == "timer" and value == timer then
+        info = rpc.call(id, turtle_remote.PROTOCOL, "info", nil, { relogin = true }) or info
+        look = look_now() or look
+        return nil
+      end
+    end
+  end
+
   local message, role = "Ready.", "ok"
   while true do
     draw(name, info, look, view, message, role)
-    local _, char = os.pullEvent("char")
+    local char = next_key()
     if char == "q" then
       break
     end
@@ -191,8 +232,12 @@ local function drive(name)
       view.show_map = not view.show_map
     elseif char == "l" then
       look = look_now() or look
+      info = rpc.call(id, turtle_remote.PROTOCOL, "info", nil, { relogin = true }) or info
+    elseif char == "p" then
+      message, role = follow_toggle(info)
+      info = rpc.call(id, turtle_remote.PROTOCOL, "info", nil, { relogin = true }) or info
     end
-    local request = request_for(char, info)
+    local request = char and request_for(char, info) -- nil: only a redraw
     if request then
       local result, call_error = rpc.call(id, turtle_remote.PROTOCOL, "act", request, ACT_OPTIONS)
       if not result then

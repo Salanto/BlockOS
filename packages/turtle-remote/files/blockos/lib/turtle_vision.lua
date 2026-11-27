@@ -167,6 +167,15 @@ function turtle_vision.new(turtle_api)
     return result
   end
 
+  --- Where the turtle is in the world (GPS once, then followed through its moves).
+  -- @treturn table|nil { x, y, z }, nil without GPS
+  function vision.position()
+    if not vision.is_gps then
+      locate()
+    end
+    return vision.is_gps and copy(vision.pos) or nil
+  end
+
   --- Follow a driver's action (only successful ones change anything).
   -- @tparam string action An action name (turtle_remote_wire.ACTIONS).
   -- @tparam boolean ok Did it work?
