@@ -22,7 +22,7 @@ local REPO_DIR = "blockos-repo"
 local ADMINS = rpc.DOMAIN_ADMINS
 
 local root_override = nil
-local scan_cache, scan_at = nil, nil -- the last scan of the drives (see repo.scan)
+local scan_cache, scan_at, scan_roots = nil, nil, nil -- the last scan (see repo.scan)
 
 --- Use these directories instead of the mounted drives (tests).
 -- @tparam {string...}|nil roots
@@ -54,7 +54,7 @@ local function repo_dir(root)
 end
 
 --- How long a scan of the drives is reused (packages change only through store, which
--- forgets it; the wait covers floppies swapped by hand).
+-- forgets it; a floppy taken out or put in is noticed at once).
 repo.SCAN_SECONDS = 30
 
 local function copy_scan(found)
@@ -71,10 +71,23 @@ end
 
 --- All stored packages.
 -- @treturn table { [name] = { root, version, size, sum, depends, optional, exclusive } }
+-- The drives present right now, as one text (to notice a floppy taken out or put in).
+local function roots_now()
+  local present = {}
+  for _, root in ipairs(repo.roots()) do
+    if fs.exists(root) then
+      present[#present + 1] = root
+    end
+  end
+  return table.concat(present, "|")
+end
+
 function repo.scan()
-  if scan_cache and os.clock() - scan_at < repo.SCAN_SECONDS then
+  local roots = roots_now()
+  if scan_cache and roots == scan_roots and os.clock() - scan_at < repo.SCAN_SECONDS then
     return copy_scan(scan_cache)
   end
+  scan_roots = roots
   local found = {}
   for _, root in ipairs(repo.roots()) do
     local dir = repo_dir(root)
