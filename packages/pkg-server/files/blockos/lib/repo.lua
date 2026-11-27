@@ -1,10 +1,11 @@
---- Package storage for the package server, spread over disk drives.
+--- Package storage for the package server: the computer first, then disk drives.
 --
--- Every mounted drive is used, including drives on a wired modem network (CC
--- mounts them as /disk2, /disk3, ...), plus the computer's own disk as a last
--- resort. Each package is stored as <root>/blockos-repo/<name>.pkg with a small
--- <name>.meta next to it, so listing packages never has to read whole packages.
--- A drive that disappears just makes its packages unavailable.
+-- Packages go to the computer's own disk while it has room and spill over to the
+-- floppies in attached disk drives (directly or on a wired modem network) when it is
+-- full, one disk after the other (the same places as diskstore uses). Each package is
+-- stored as <root>/blockos-repo/<name>.pkg with a small <name>.meta next to it, so
+-- listing packages never has to read whole packages. A drive that disappears just
+-- makes its packages unavailable.
 --
 -- Access rules (/etc/blockos/pkg-server): { [name] = { groups = { ... } } }.
 -- Packages without a rule are public.
@@ -28,23 +29,21 @@ function repo.set_roots(roots)
   root_override = roots
 end
 
---- Directories packages are stored under: every disk, then the local disk.
+--- Directories packages are stored under, in the order they are filled: this
+-- computer, then every disk.
 -- @treturn {string...}
 function repo.roots()
   if root_override then
     return root_override
   end
   local roots = {}
-  for _, side in ipairs(peripheral.getNames()) do
-    if peripheral.getType(side) == "drive" and disk.hasData(side) then
-      roots[#roots + 1] = "/" .. disk.getMountPath(side)
-    end
+  local store = import("diskstore").open(REPO_DIR, {
+    computer = "first",
+    computer_path = fs.combine(paths.top("var"), REPO_DIR),
+  })
+  for _, place in ipairs(store.places()) do
+    roots[#roots + 1] = "/" .. fs.getDir(place) -- the folder's parent: <root>/blockos-repo
   end
-  local local_root = paths.top("var")
-  if not fs.exists(local_root) then
-    fs.makeDir(local_root)
-  end
-  roots[#roots + 1] = local_root
   return roots
 end
 
@@ -83,18 +82,19 @@ local function remove_everywhere(name)
   end
 end
 
-local function roomiest_root(needed)
-  local best, best_free = nil, -1
+-- The first place (in fill order) with room for a package.
+local function first_root_with_room(needed)
   for _, root in ipairs(repo.roots()) do
-    local free = fs.getFreeSpace(root)
-    if free >= needed and free > best_free then
-      best, best_free = root, free
+    local existing = fs.exists(root) and root or fs.getDir(root)
+    if fs.getFreeSpace(existing ~= "" and existing or "/") >= needed then
+      return root
     end
   end
-  return best
+  return nil
 end
 
---- Store a package (replacing any older copy) on the drive with most free space.
+--- Store a package (replacing any older copy): on this computer while it has room,
+-- else on the first disk that has.
 -- @tparam string raw The .pkg file contents.
 -- @treturn[1] table Its metadata.
 -- @treturn[2] nil
@@ -116,9 +116,9 @@ function repo.store(raw)
   }
   local meta_text = textutils.serialise(meta)
   remove_everywhere(manifest.name)
-  local root = roomiest_root(#raw + #meta_text + 1024)
+  local root = first_root_with_room(#raw + #meta_text + 1024)
   if not root then
-    return nil, "no drive has room for " .. manifest.name
+    return nil, "no room for " .. manifest.name .. ": add a disk drive with a floppy"
   end
   local dir = repo_dir(root)
   fsx.write(fs.combine(dir, manifest.name .. ".pkg"), raw)
