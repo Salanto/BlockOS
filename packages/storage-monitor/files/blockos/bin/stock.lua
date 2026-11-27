@@ -6,6 +6,11 @@
 --   stock rename <name> | --clear   rename this stock computer (stock-<name>), or
 --                                   go back to plain "stock"
 --   stock status | alerts           print the current state
+--   stock storage [list]            every inventory with its role and label
+--   stock storage role <chest> storage|input|output|ignore
+--   stock storage label <chest> <label...>   (nothing removes it)
+--   stock request <item> [count] [output]    deliver items to an output chest
+--   stock map                       the network map, with item moves animated
 --   stock board <peripheral>|off    show a stock board on a monitor or Display Link
 --   stock access add|remove admin|viewer|computer <name>
 --   stock sound note|sound|file <value> [volume] | test
@@ -21,11 +26,23 @@ local args = { ... }
 local ui = blockos.ui
 local stock = import("stock")
 local stock_client = import("stock_client")
+local stock_tool = import("stock_tool")
+
+-- Shared with the full-screen tool (lib/stock_tool.lua).
+local ACCESS_LISTS = stock_tool.ACCESS_LISTS
+local DEFAULT_REQUEST = stock_tool.DEFAULT_REQUEST
+local describe_alert = stock_tool.describe_alert
+local alert_role = stock_tool.alert_role
+local load_alert_history = stock_tool.load_alert_history
+local describe_fill = stock_tool.describe_fill
+local describe_request = stock_tool.describe_request
 
 local function print_usage()
   print("Usage: stock [--server <name>]")
   print("       stock setup [--name <name>] | rename <name> | rename --clear")
   print("       stock status | alerts")
+  print("       stock storage [list] | role <chest> <role> | label <chest> <label>")
+  print("       stock request <item> [count] [output chest] | map")
   print("       stock board <peripheral> | off")
   print("       stock access add|remove admin|viewer|computer <name>")
   print("       stock sound note|sound|file <value> [volume] | test")
@@ -53,7 +70,6 @@ local function fail(message)
 end
 
 -- The two usual reasons a stock computer sees no storage at all.
-local NO_STORAGE_SHORT = "No storage found: right-click each wired modem"
 local function print_no_storage_hint()
   ui.print("No storage found. Right-click each wired modem so it turns red,", "warn")
   ui.print("and put it on the storage's interface block (multiblocks).", "warn")
@@ -163,27 +179,6 @@ local function show_status(connection)
   if data.sources == 0 then
     print_no_storage_hint()
   end
-end
-
--- "12:04 LOW: Copper Ingot 0/1" (older stock computers send no time).
-local function describe_alert(alert)
-  local state = alert.is_low and "LOW" or "ok again"
-  local time = alert.time and (alert.time .. " ") or ""
-  return string.format("%s%s: %s %d/%d", time, state, alert.label or alert.item, alert.count,
-    alert.limit)
-end
-
--- Only the newest alert of an item is in colour; older ones are history.
-local function alert_role(alert)
-  if not alert.is_current then
-    return "faint"
-  end
-  return alert.is_low and "error" or "ok"
-end
-
-local function load_alert_history(connection)
-  local alerts, err = connection.call("alerts")
-  return alerts and stock.alert_history(alerts), err
 end
 
 local function show_alerts(connection)
@@ -308,7 +303,6 @@ local function change_reactions(connection, action, typed, target, side)
   show_reactions()
 end
 
-local ACCESS_LISTS = { admin = "admins", viewer = "viewers", computer = "computers" }
 
 -- Access lists are not updated when a domain user or group is deleted; point
 -- out entries that no longer exist (computer lists hold hostnames: skipped).
@@ -350,296 +344,58 @@ local function change_access(connection, action, kind, name)
 end
 
 ------------------------------------------------------------------------------
--- The full-screen tool
+-- Logistics
 ------------------------------------------------------------------------------
 
-local function run_tool(connection)
-  local state = { tab = 1, rows = {}, list = ui.new_list(), message = nil, role = "dim" }
+local function describe_storage_fill(row)
+  return row.is_missing and "missing" or describe_fill(row)
+end
 
-  local function set_message(text, role)
-    state.message, state.role = text, role or "dim"
+local function show_storages(connection)
+  local rows, err = connection.call("storages")
+  if not rows then
+    return fail(err)
   end
+  ui.title("Storage (" .. connection.describe .. ")")
+  ui.table({
+    { title = "CHEST", key = "label" },
+    { title = "ROLE", key = "role" },
+    { title = "FILL", key = describe_storage_fill },
+    { title = "NAME", key = "handle" },
+  }, rows, function(row) return row.role == "ignore" and "faint" or "text" end)
+end
 
-  local function run(op, call_args, success)
-    local result, err = connection.call(op, call_args)
-    if result then
-      set_message(success, "ok")
-    else
-      set_message(err, "error")
-    end
-    return result
+local function change_storage(connection, words)
+  local action, chest = words[2], words[3]
+  if action == nil or action == "list" then
+    return show_storages(connection)
   end
-
-  -- Keys that work without a selected row.
-  local ROWLESS_KEYS = { W = true, a = true, s = true, t = true }
-
-  local function choose_sound()
-    local kinds = { "note", "sound", "file" }
-    local labels = { "Note block instrument", "Minecraft sound", "Audio file (.dfpwm)" }
-    local examples = { "bell", "minecraft:block.bell.use", "/sounds/alert.dfpwm" }
-    local choice = ui.menu({
-      title = "Alarm sound",
-      text = "A .dfpwm file plays any recording, e.g. an ALERT voice clip.",
-      items = labels,
-    })
-    local answers = ui.form(labels[choice], {
-      { label = "Value (" .. examples[choice] .. "): " },
-      { label = "Volume 1-3: " },
-    })
-    if answers then
-      local volume = tonumber(answers[2]) or 1
-      local sound = { kind = kinds[choice], value = answers[1], volume = volume }
-      run("settings", { sound = sound }, "Alarm sound changed.")
-    end
+  if not chest or (action ~= "role" and action ~= "label") then
+    return print_usage()
   end
-
-  local function load_watches()
-    local data = connection.call("watches")
-    return data and data.watches or {}
+  local call_args = { storage = chest }
+  if action == "role" then
+    call_args.role = words[4]
+  else
+    call_args.label = table.concat(words, " ", 4)
   end
-
-  local tabs = {}
-
-  tabs[1] = {
-    title = "Overview",
-    load = function()
-      local data, err = connection.call("status")
-      if data and data.sources == 0 then
-        set_message(NO_STORAGE_SHORT, "warn")
-      end
-      return data and data.rows, err
-    end,
-    describe = function(row)
-      local target = row.refill_to and (" to " .. row.refill_to) or ""
-      return string.format("%-18s %6d/%d%s %s", row.label, row.count, row.limit, target,
-        row.is_low and "LOW" or "")
-    end,
-    role = function(row) return row.is_low and "error" or nil end,
-    hints = { { "e", "Limit" }, { "f", "Refill to" }, { "d", "Unwatch" } },
-    keys = {
-      f = function(row)
-        local answers = ui.form("Refill " .. row.label .. " to (0 = off)",
-          { { label = "Refill to: " } })
-        if answers then
-          local refill_to = tonumber(answers[1]) or 0
-          run("watch", { item = row.item, limit = row.limit, refill_to = refill_to },
-            refill_to > 0 and ("Refills to " .. refill_to .. ".") or "Refill target removed.")
-        end
-      end,
-      e = function(row)
-        local answers = ui.form("Limit for " .. row.label, { { label = "Limit: " } })
-        if answers then
-          run("watch", { item = row.item, limit = tonumber(answers[1]) or 0 }, "Limit changed.")
-        end
-      end,
-      d = function(row)
-        if ui.confirm("Stop watching " .. row.label .. "?") then
-          run("unwatch", { item = row.item }, "No longer watched.")
-        end
-      end,
-    },
-  }
-
-  tabs[2] = {
-    title = "Catalog",
-    load = function() return connection.call("catalog") end,
-    describe = function(row)
-      return string.format("%-20s %7d %s", row.label, row.count, row.is_watched and "watched" or "")
-    end,
-    hints = { { "w", "Watch" }, { "W", "Watch all" } },
-    keys = {
-      w = function(row)
-        local default = tostring(math.max(1, math.floor(row.count / 2)))
-        local answers = ui.form("Watch " .. row.label .. " (now " .. row.count .. ")",
-          { { label = "Limit (" .. default .. "): " } })
-        if answers then
-          local limit = tonumber(answers[1]) or tonumber(default)
-          run("watch", { item = row.item, limit = limit }, row.label .. " is watched.")
-        end
-      end,
-      W = function()
-        local answers = ui.form("Watch everything", { { label = "Limit as % of count: " } })
-        if answers then
-          local share = (tonumber(answers[1]) or 50) / 100
-          local result = run("watch_all", { share = share }, "Watching more items.")
-          if result then
-            set_message("Added " .. result.added .. " items.", "ok")
-          end
-        end
-      end,
-    },
-  }
-
-  tabs[3] = {
-    title = "Alarms",
-    load = function() return load_watches() end,
-    describe = function(row)
-      local outputs = {}
-      for _, output in ipairs(row.outputs or {}) do
-        outputs[#outputs + 1] = output.target .. ":" .. output.side
-      end
-      local shown = #outputs > 0 and table.concat(outputs, " ") or "-"
-      return string.format("%-18s %s", row.label, shown)
-    end,
-    hints = { { "o", "Output" }, { "x", "Clear" }, { "s", "Sound" }, { "t", "Test" } },
-    keys = {
-      s = choose_sound,
-      t = function() run("test_sound", nil, "Played the alarm sound.") end,
-      o = function(row)
-        local targets = connection.call("outputs")
-        if not targets then
-          return set_message("Only admins can change alarms.", "error")
-        end
-        local names = {}
-        for index, target in ipairs(targets) do
-          names[index] = target.target
-        end
-        local target_menu = { title = "Redstone output for " .. row.label, items = names }
-        local target = targets[ui.menu(target_menu)]
-        local side_menu = { title = "Side of " .. target.target, items = stock.SIDES }
-        local side = stock.SIDES[ui.menu(side_menu)]
-        local outputs = row.outputs or {}
-        outputs[#outputs + 1] = { target = target.target, side = side }
-        run("watch", { item = row.item, limit = row.limit, outputs = outputs }, "Output added.")
-      end,
-      x = function(row)
-        run("watch", { item = row.item, limit = row.limit, outputs = {} }, "Outputs cleared.")
-      end,
-    },
-  }
-
-  tabs[4] = {
-    title = "Alerts",
-    load = function() return load_alert_history(connection) end,
-    describe = describe_alert,
-    role = alert_role,
-    hints = {},
-    keys = {},
-  }
-
-  tabs[5] = {
-    title = "Access",
-    load = function()
-      local access, err = connection.call("access")
-      if not access then
-        return nil, err
-      end
-      local rows = {}
-      for kind, list_name in pairs(ACCESS_LISTS) do
-        for _, name in ipairs(access[list_name]) do
-          rows[#rows + 1] = { kind = kind, name = name }
-        end
-      end
-      table.sort(rows, function(a, b) return a.kind .. a.name < b.kind .. b.name end)
-      return rows
-    end,
-    describe = function(row) return string.format("%-9s %s", row.kind, row.name) end,
-    hints = { { "a", "Add" }, { "d", "Remove" } },
-    keys = {
-      a = function()
-        local kinds = { "admin", "viewer", "computer" }
-        local kind = kinds[ui.menu({ title = "Add to the access list", items = kinds })]
-        local answers = ui.form("Add " .. kind, { { label = "Name: " } })
-        if answers then
-          local result = connection.call("access")
-          if result then
-            local list = result[ACCESS_LISTS[kind]]
-            list[#list + 1] = answers[1]
-            run("set_access", { [ACCESS_LISTS[kind]] = list }, answers[1] .. " added.")
-          end
-        end
-      end,
-      d = function(row)
-        if ui.confirm("Remove " .. row.name .. "?") then
-          local result = connection.call("access")
-          if result then
-            local list = {}
-            for _, name in ipairs(result[ACCESS_LISTS[row.kind]]) do
-              if name ~= row.name then
-                list[#list + 1] = name
-              end
-            end
-            run("set_access", { [ACCESS_LISTS[row.kind]] = list }, row.name .. " removed.")
-          end
-        end
-      end,
-    },
-  }
-
-  local function refresh()
-    local rows, err = tabs[state.tab].load()
-    state.rows = rows or {}
-    if not rows then
-      set_message(err, "error")
-    end
+  local result, err = connection.call("set_storage", call_args)
+  if not result then
+    return fail(err)
   end
+  ui.print("Changed " .. result.storage .. ".", "ok")
+end
 
-  local function draw()
-    local _, height = ui.size()
-    ui.clear()
-    ui.header(1, "Stock " .. ui.GLYPHS.dot .. " " .. connection.describe,
-      blockos.user and blockos.user.name)
-    local titles = {}
-    for index, tab in ipairs(tabs) do
-      titles[index] = tab.title
-    end
-    ui.tabs(2, titles, state.tab)
-    local lines = {}
-    for index, row in ipairs(state.rows) do
-      lines[index] = tabs[state.tab].describe(row)
-    end
-    ui.draw_list(state.list, lines, 3, height - 2)
-    if state.message then
-      ui.line(height - 1, state.message, state.role)
-    end
-    local hints = { { "q", "Quit" } }
-    for _, hint in ipairs(tabs[state.tab].hints) do
-      hints[#hints + 1] = hint
-    end
-    hints[#hints + 1] = { "r", "Refresh" }
-    ui.footer(hints)
+local function request_items(connection, item, count_text, output)
+  if not item then
+    return print_usage()
   end
-
-  local function switch_tab(index)
-    if tabs[index] then
-      state.tab = index
-      state.list = ui.new_list()
-      set_message(nil)
-      refresh()
-    end
+  local count = tonumber(count_text) or DEFAULT_REQUEST
+  local result, err = connection.call("request", { item = item, count = count, output = output })
+  if not result then
+    return fail(err)
   end
-
-  refresh()
-  while true do
-    draw()
-    local event, value = os.pullEvent()
-    if event == "char" then
-      local number = tonumber(value)
-      if number then
-        switch_tab(number)
-      elseif value == "q" then
-        break
-      elseif value == "r" then
-        set_message(nil)
-        refresh()
-      else
-        local action = tabs[state.tab].keys[value]
-        local row = state.rows[state.list.selected]
-        if action and (row or ROWLESS_KEYS[value]) then
-          action(row)
-          refresh()
-        end
-      end
-    elseif event == "key" then
-      local _, height = ui.size()
-      if value == keys.tab then
-        switch_tab(state.tab % #tabs + 1)
-      else
-        ui.list_key(state.list, value, #state.rows, height - 4)
-      end
-    end
-  end
-  ui.clear()
+  ui.print(describe_request(result, count))
 end
 
 ------------------------------------------------------------------------------
@@ -721,7 +477,16 @@ end
 
 ------------------------------------------------------------------------------
 
-local REMOTE_COMMANDS = { status = true, alerts = true, access = true, sound = true, react = true }
+local REMOTE_COMMANDS = {
+  status = true,
+  alerts = true,
+  access = true,
+  sound = true,
+  react = true,
+  storage = true,
+  request = true,
+  map = true,
+}
 
 local options = parse_args()
 local command = options.words[1]
@@ -753,11 +518,17 @@ elseif command == nil or REMOTE_COMMANDS[command] then
     change_access(connection, options.words[2], options.words[3], options.words[4])
   elseif command == "sound" then
     set_sound(connection, options.words[2], options.words[3], options.words[4])
+  elseif command == "map" then
+    stock_tool.show_map(connection)
+  elseif command == "storage" then
+    change_storage(connection, options.words)
+  elseif command == "request" then
+    request_items(connection, options.words[2], options.words[3], options.words[4])
   elseif command == "react" then
     change_reactions(connection, options.words[2], options.words[3], options.words[4],
       options.words[5])
   else
-    run_tool(connection)
+    stock_tool.run(connection)
   end
 else
   print_usage()

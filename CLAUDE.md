@@ -226,7 +226,7 @@ minutes marks the service `failed`. `condition` returning false marks it `n/a`.
 | `blockos.manage`   | rpc, served by the `manage` service on every joined computer; domain-admins only. status (version, uptime, user, services, disk, packages, turtle fuel/position, notices), reboot, update (applies roles and updates now, even if someone is logged in), service `{ name, action }`, log `{ lines }`, shell_open `{ width, height }`. |
 | `blockos.manage.shell` | events of a remote shell session (`remote_shell.lua`, `rsh <computer>`): target -> viewer `frame` `{ session, lines = { { y, text, fg, bg } }, x, y, blink }` (changed lines only) and `closed`; viewer -> target `input` `{ session, event }` (keys, chars, paste, mouse, terminate), `ping`, `close`. The session runs a real shell (BlockOS path, as the admin who opened it) in a hidden window; local keyboard input never reaches it; it closes after 60 s without ping. |
 | `blockos.pkg`      | rpc. index (filtered by the caller's groups), fetch `{ name }` (raw .pkg), publish `{ raw }` (domain-admins). |
-| `blockos.stock`    | rpc. status, alerts (viewers, admins or listed computers); catalog, watches (viewers, admins); outputs, watch, unwatch, watch_all, settings, test_sound, access, set_access (admins). Found via the domain service record `stock` / `stock-<name>`. |
+| `blockos.stock`    | rpc. status, alerts (viewers, admins or listed computers); catalog, watches, storages, moves `{ since? }` (with a `log` id that changes on restart), find_start, find_finish, request `{ item, count, output? }` (viewers, admins); outputs, watch, unwatch, watch_all, settings, test_sound, access, set_access, set_storage `{ storage, role?, label?, forget? }` (admins). Items and chests may be named by id, label or part of it. Found via the domain service record `stock` / `stock-<name>`. |
 | `blockos.remote`   | rpc, served by the `turtle-remote` service on joined turtles. info, act `{ action, slot? }` (domain users; only the actions listed in `turtle_remote.ACTIONS`, plus select). Never retried by the driver, so a lost answer cannot move a turtle twice. |
 | `blockos.stock.alert` | event `stock_alert` `{ server, item, label, count, limit, is_low }`, sent directly to each computer on the stock computer's access list, only when an item goes low or recovers. |
 
@@ -318,7 +318,8 @@ Peer liveness uses the local receive time, never the sender's clock.
   redstone/relay lamps, a speaker sound (note, Minecraft sound or .dfpwm file), monitor and
   Create Display Board boards, alerts to listed computers, a per-computer access list, refill
   targets and reactions on other computers (level-triggered: they poll status, alerts only
-  speed them up); the shared wire format.
+  speed them up); the shared wire format. Item logistics on top: per-inventory roles
+  (storage/input/output/ignore) and labels, inputs sorted into storage, requests to outputs.
 - **Next:** remote control for PCs (turtles done: `turtle-remote` package, `remote <turtle>`),
   built on rpc, wire and domain logins. More
   storage sources (e.g. an ME/RS bridge) as separate packages adding

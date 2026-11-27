@@ -12,6 +12,9 @@
 --   any_low_outputs  redstone outputs that are on while any item is low
 --   access           { admins = {...}, viewers = {...}, computers = {...} }
 --   name             optional: this stock computer's name ("kitchen")
+--   storages         [handle] = { role?, label? } per inventory (peripheral name);
+--                    no role means the block's default (containers: storage,
+--                    anything else: ignore)
 -- @module stock
 
 local stock = {}
@@ -100,7 +103,143 @@ function stock.normalise(config)
   config.access.admins = config.access.admins or {}
   config.access.viewers = config.access.viewers or {}
   config.access.computers = config.access.computers or {}
+  config.storages = config.storages or {}
   return config
+end
+
+------------------------------------------------------------------------------
+-- Storage roles (item logistics)
+------------------------------------------------------------------------------
+
+--- What an inventory is for:
+--   storage   counted; items are sorted into it and requested from it
+--   input     emptied into storage automatically
+--   output    requested items are delivered here
+--   ignore    not counted and never touched (furnaces, machines, trash)
+stock.ROLES = { "storage", "input", "output", "ignore" }
+stock.DEFAULT_ROLE = "storage"
+stock.MAX_LABEL_LENGTH = 32
+
+local VALID_ROLES = {}
+for _, role in ipairs(stock.ROLES) do
+  VALID_ROLES[role] = true
+end
+
+--- @tparam string role
+-- @treturn boolean
+function stock.is_role(role)
+  return VALID_ROLES[role] == true
+end
+
+--- The role of an inventory: the one set for it, else the block's default.
+-- @tparam table config
+-- @tparam string handle Peripheral name.
+-- @tparam[opt] string default The block's default role (see the source's
+--   default_role); "storage" when not given.
+-- @treturn string
+function stock.role_of(config, handle, default)
+  local entry = config.storages[handle]
+  return entry and entry.role or default or stock.DEFAULT_ROLE
+end
+
+--- The name to show for an inventory: its label, else its peripheral name.
+-- @tparam table config
+-- @tparam string handle
+-- @treturn string
+function stock.storage_name(config, handle)
+  local entry = config.storages[handle]
+  return entry and entry.label or handle
+end
+
+--- Set an inventory's role and/or label. A label of "" removes it.
+-- @tparam table config
+-- @tparam string handle
+-- @tparam[opt] string role
+-- @tparam[opt] string label
+-- @treturn[1] true
+-- @treturn[2] nil
+-- @treturn[2] string error message
+function stock.set_storage(config, handle, role, label)
+  if role ~= nil and not stock.is_role(role) then
+    return nil, "the role must be one of: " .. table.concat(stock.ROLES, ", ")
+  end
+  if label ~= nil and #label > stock.MAX_LABEL_LENGTH then
+    return nil, "labels may be at most " .. stock.MAX_LABEL_LENGTH .. " characters"
+  end
+  local entry = config.storages[handle] or {}
+  if role ~= nil then
+    -- Stored even when it equals the default: defaults depend on the block.
+    entry.role = role
+  end
+  if label ~= nil then
+    entry.label = label ~= "" and label or nil
+  end
+  config.storages[handle] = next(entry) ~= nil and entry or nil
+  return true
+end
+
+-- Case-insensitive matching for names typed by people: an exact match wins,
+-- otherwise the only partial match; several partial matches are ambiguous.
+local function match_one(query, candidates)
+  local wanted = query:lower()
+  local partial = {}
+  for _, candidate in ipairs(candidates) do
+    local is_partial = false
+    for _, text in ipairs(candidate.names) do
+      local lowered = text:lower()
+      if lowered == wanted then
+        return candidate.value
+      end
+      is_partial = is_partial or lowered:find(wanted, 1, true) ~= nil
+    end
+    if is_partial then
+      partial[#partial + 1] = candidate
+    end
+  end
+  if #partial == 1 then
+    return partial[1].value
+  end
+  if #partial == 0 then
+    return nil, "nothing matches " .. query
+  end
+  local shown = {}
+  for index = 1, math.min(5, #partial) do
+    shown[index] = partial[index].names[#partial[index].names]
+  end
+  return nil, query .. " is ambiguous: " .. table.concat(shown, ", ")
+end
+
+--- Find an item by id or (part of) its label, e.g. "iron" or "minecraft:iron_ingot".
+-- @tparam table totals [item] = { count, label }
+-- @tparam string query
+-- @treturn[1] string Item id.
+-- @treturn[2] nil
+-- @treturn[2] string error message
+function stock.find_item(totals, query)
+  local candidates = {}
+  for item, found in pairs(totals) do
+    candidates[#candidates + 1] = { value = item, names = { item, found.label or item } }
+  end
+  table.sort(candidates, function(a, b) return a.value < b.value end)
+  return match_one(query, candidates)
+end
+
+--- Find an inventory by peripheral name or (part of) its label.
+-- @tparam table config
+-- @tparam {string...} handles Inventories currently found.
+-- @tparam string query
+-- @treturn[1] string Handle.
+-- @treturn[2] nil
+-- @treturn[2] string error message
+function stock.find_storage(config, handles, query)
+  local candidates = {}
+  for _, handle in ipairs(handles) do
+    candidates[#candidates + 1] = {
+      value = handle,
+      names = { handle, stock.storage_name(config, handle) },
+    }
+  end
+  return match_one(query, candidates)
 end
 
 --- Check a redstone output { target, side }.
