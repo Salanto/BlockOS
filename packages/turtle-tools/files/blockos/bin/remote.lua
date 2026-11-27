@@ -188,18 +188,19 @@ local function drive(name)
   -- p: stop following, or ask who to follow (the turtle walks by itself, never digs).
   local function follow_toggle(current)
     if current and current.following then
-      local _, err = rpc.call(id, turtle_remote.PROTOCOL, "stop", nil, { relogin = true })
-      return err and tostring(err) or "Stopped following.", err and "error" or "ok"
+      local _, stop_error = rpc.call(id, turtle_remote.PROTOCOL, "stop", nil, { relogin = true })
+      return stop_error and tostring(stop_error) or "Stopped following.",
+        stop_error and "error" or "ok"
     end
     local width, height = ui.size()
     local player = ui.field_prompt(1, height - #HINTS, width, "Follow player: ")
     if not player or player == "" then
       return "Not following anyone.", "dim"
     end
-    local result, err = rpc.call(id, turtle_remote.PROTOCOL, "follow", { player = player },
-      { relogin = true })
+    local result, follow_error = rpc.call(id, turtle_remote.PROTOCOL, "follow",
+      { player = player }, { relogin = true })
     if not result then
-      return tostring(err), "error"
+      return tostring(follow_error), "error"
     end
     return "Following " .. player .. " (a move key takes over).", "ok"
   end
