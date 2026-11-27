@@ -95,7 +95,7 @@ return function(t)
     end
     machines.recycler = {}
     function node.has_recycler()
-      return world.has_recycler == true
+      return node.recycler_on == true
     end
     function node.recycle(item, count, from)
       local source = from and machines[from] or store
@@ -427,7 +427,7 @@ return function(t)
 
   t.it("scrap goes to the recycler instead of storage, also old scrap", function()
     local world = new_world({ [COPPER] = 9, [ZINC] = 9, [SCRAP] = 4 })
-    world.has_recycler = true
+    world.node.recycler_on = true
     world.result = SCRAP
     local crafter = new_crafter(world)
     crafter.start(BRASS, 1)
