@@ -44,6 +44,23 @@ local COLOUR_THEME = {
   selected_text = colours.black,
   logo_top = colours.lime,
   logo_side = colours.brown,
+  -- Block colours for maps (e.g. the turtle map): one role per CC colour.
+  map_white = colours.white,
+  map_orange = colours.orange,
+  map_magenta = colours.magenta,
+  map_light_blue = colours.lightBlue,
+  map_yellow = colours.yellow,
+  map_lime = colours.lime,
+  map_pink = colours.pink,
+  map_grey = colours.grey,
+  map_light_grey = colours.lightGrey,
+  map_cyan = colours.cyan,
+  map_purple = colours.purple,
+  map_blue = colours.blue,
+  map_brown = colours.brown,
+  map_green = colours.green,
+  map_red = colours.red,
+  map_black = colours.black,
 }
 
 -- Basic terminals display greyscale: only white, black, grey and light grey.
@@ -68,6 +85,23 @@ local GREYSCALE_THEME = {
   selected_text = colours.black,
   logo_top = colours.white,
   logo_side = colours.lightGrey,
+  -- Map colours by brightness (maps on basic screens draw symbols instead).
+  map_white = colours.white,
+  map_orange = colours.lightGrey,
+  map_magenta = colours.lightGrey,
+  map_light_blue = colours.lightGrey,
+  map_yellow = colours.white,
+  map_lime = colours.lightGrey,
+  map_pink = colours.lightGrey,
+  map_grey = colours.grey,
+  map_light_grey = colours.lightGrey,
+  map_cyan = colours.grey,
+  map_purple = colours.grey,
+  map_blue = colours.grey,
+  map_brown = colours.grey,
+  map_green = colours.grey,
+  map_red = colours.grey,
+  map_black = colours.black,
 }
 
 --- Set while drawing on another screen (e.g. a monitor) whose colour support

@@ -13,6 +13,8 @@ local repo_dir = args[2] or "/repo"
 
 local SANDBOX = "/sandbox"
 local REPORT_FILE = "/test-report.txt"
+-- Written line by line, so a run that hangs still shows where (tools/craftos-run.sh).
+local PROGRESS_FILE = "/test-progress.txt"
 
 -- Every package's kernel/ and lib/ directory, like /blockos/kernel and /blockos/lib
 -- on an installed computer.
@@ -33,13 +35,17 @@ local results = { passed = 0, failed = 0, skipped = 0, lines = {} }
 -- Headless CraftOS-PC always reports a colour terminal. BlockOS only tells basic
 -- from advanced through term.isColour(), so a basic computer is simulated with a
 -- terminal that reports no colour support. Windows created on top of it inherit that.
+--
+-- The native terminal itself, with only isColour replaced: no window in between.
+-- With a window as the root terminal, headless CraftOS-PC slowed the whole computer
+-- down more and more over a run (the release build went from 1 s to minutes, and runs
+-- hit the CI time limit), visible or not; advanced runs on a window did the same.
 local function basic_terminal()
-  local width, height = term.native().getSize()
-  local screen = window.create(term.native(), 1, 1, width, height)
   local function no_colour()
     return false
   end
-  return setmetatable({ isColour = no_colour, isColor = no_colour }, { __index = screen })
+  return setmetatable({ isColour = no_colour, isColor = no_colour },
+    { __index = term.native() })
 end
 
 local root_terminal = term.native()
@@ -48,20 +54,38 @@ if expected_type == "basic" then
 end
 term.redirect(root_terminal)
 
+local function progress(line)
+  local handle = fs.open(PROGRESS_FILE, "a")
+  handle.write(line .. "\n")
+  handle.close()
+end
+
 local function report(line)
   print(line)
   results.lines[#results.lines + 1] = line
+  progress(line)
 end
 
 ------------------------------------------------------------------------------
 -- The `t` helper passed to every spec
 ------------------------------------------------------------------------------
 
+-- Real time in seconds (os.clock is CPU time, which misses waiting).
+local function now()
+  return os.epoch("utc") / 1000
+end
+
 local t = {}
 
 t.repo = repo_dir
 t.sandbox = SANDBOX
 t.computer_type = expected_type
+
+--- Note how long the current test took so far (shown in the report), for tracing
+-- slow steps: t.lap("build").
+function t.lap(label)
+  report(string.format("        %s at %.1fs", label, now() - t.started))
+end
 
 --- Fail unless `value` is truthy.
 function t.ok(value, message)
@@ -241,19 +265,30 @@ function t.fake_chest(slots)
 end
 
 --- Register a test.
+-- Tests slower than this show their time, so slow runs can be traced.
+local SLOW_SECONDS = 1
+
+local function timing(started)
+  local seconds = now() - started
+  return seconds >= SLOW_SECONDS and string.format(" (%.1fs)", seconds) or ""
+end
+
 function t.it(name, fn)
   t.reset_sandbox()
   _G.blockos = nil
+  local started = now()
+  t.started = started
+  progress("  ...   " .. name)
   local ok, err = pcall(fn)
   if ok then
     results.passed = results.passed + 1
-    report("  ok    " .. name)
+    report("  ok    " .. name .. timing(started))
   elseif type(err) == "table" and err.skip then
     results.skipped = results.skipped + 1
     report("  skip  " .. name .. " (" .. tostring(err.skip) .. ")")
   else
     results.failed = results.failed + 1
-    report("  FAIL  " .. name)
+    report("  FAIL  " .. name .. timing(started))
     report("        " .. tostring(err))
   end
   term.redirect(root_terminal)
@@ -276,6 +311,7 @@ local function run_specs()
   table.sort(spec_files)
 
   for _, file in ipairs(spec_files) do
+    local started = now()
     report(file)
     local spec, load_error = loadfile(fs.combine(spec_dir, file), nil, _ENV)
     if not spec then
@@ -288,6 +324,7 @@ local function run_specs()
         report("  FAIL  spec crashed: " .. tostring(err))
       end
     end
+    report("  -- " .. file .. timing(started))
   end
 end
 

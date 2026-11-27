@@ -81,6 +81,9 @@ if [ -n "$copy_out_dir" ] && [ -d "$computer_dir/out" ]; then
 fi
 if [ -f "$computer_dir/test-report.txt" ]; then
   cat "$computer_dir/test-report.txt"
+elif [ -f "$computer_dir/test-progress.txt" ]; then
+  echo "No report; progress so far (the last \"...\" line is where it stopped):"
+  cat "$computer_dir/test-progress.txt"
 fi
 
 

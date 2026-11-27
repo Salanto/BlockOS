@@ -66,6 +66,7 @@ Protocol and library packages come along by themselves as dependencies. A storag
 | Mail | `mail-server` (needs disk drives) | `mail-client` (notices, sound), `mail-tools` (the mail app) |
 | Messages | | `msg` (receives), `msg-tools` (the msg command) |
 | Turtles | `turtle-remote` on the turtle | `turtle-tools` (the remote command) |
+| Players | `player-locator` (next to a Player Detector) | none (turtles ask it) |
 | Packages | `pkg-server`, `pkg-server-tools` | |
 
 ## A domain (one login for all computers)
@@ -265,6 +266,28 @@ replaces it. On its first start it takes over the chest roles and labels and kee
 limits and alarms running on the node itself. On other computers, `pkg install logistics` (and
 `pkg remove storage-monitor`); settings like `blockos.stock.board` move to
 `blockos.logistics.*` by themselves.
+
+## Driving turtles
+
+`pkg install turtle-remote` on the turtle and `pkg install turtle-tools` where you drive from,
+then `remote <turtle>` (`remote list` shows them). `w`/`s` move, `a`/`d` turn, space and `c`
+go up and down, `f`/`r`/`v` dig, `e`/`t`/`g` place.
+
+**The map.** Next to the inventory you see what the turtle sees, from above and turned with
+it, so ahead is always up: `#` walls, `.` floor you can stand on, `~` water (red: lava), `&`
+trees and plants, `C` chests, `@` machines, and the arrow is the turtle. Every turtle knows
+what is directly in front, above and below. Make it a **Geoscanning Turtle** (Advanced
+Peripherals' Geo Scanner on a turtle) and the map fills in 8 blocks around it. `z`/`x`
+show the level below or above, `l` looks again, `m` switches between map and inventory on
+small screens. The turtle works out which way it faces from GPS after the first step, or by
+comparing the block in front with the scan; until then the map points north and shows `?`.
+
+**Follow a player.** Press `p` and type a name: the turtle walks after that player and stays
+about 3 blocks away. It never digs; it goes around or climbs over what is in the way. Any move
+key takes over again, `p` stops it. It stops by itself when stuck, low on fuel, when the
+player is more than 128 blocks away or out of sight for half a minute. It needs GPS hosts and
+one **player locator** somewhere: a computer with an Advanced Peripherals Player Detector next
+to it and `pkg install player-locator` (one is enough for the whole world).
 
 ## Music
 

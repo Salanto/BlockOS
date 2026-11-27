@@ -9,7 +9,11 @@
 local function run(ctx)
   local rpc = import("rpc")
   local turtle_remote = import("turtle_remote")
-  rpc.serve(turtle_remote.PROTOCOL, turtle_remote.handlers(turtle, ctx.log))
+  local handlers, follower = turtle_remote.handlers(turtle, ctx.log)
+  parallel.waitForAny(
+    function() rpc.serve(turtle_remote.PROTOCOL, handlers) end,
+    follower.run -- walks only while a driver asked it to follow someone
+  )
 end
 
 return {

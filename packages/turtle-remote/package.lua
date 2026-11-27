@@ -5,6 +5,10 @@ return {
   kind = "application",
   description = "Lets this turtle be driven remotely (install turtle-tools on the PC)",
   -- Open without a domain; in a domain requests need a domain login.
-  depends = { net = ">=0.1.0-0", ["turtle-protocol"] = ">=0.1.0-0" },
+  depends = {
+    net = ">=0.1.0-0",
+    ["turtle-protocol"] = ">=0.1.0-0",
+    ["players-protocol"] = ">=0.1.0-0", -- follow: where the player is
+  },
   optional = true,
 }
