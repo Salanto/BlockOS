@@ -20,7 +20,7 @@ local function run(ctx)
       local tick = os.startTimer(remote_shell.PING_SECONDS)
       while true do
         local event = table.pack(os.pullEventRaw())
-        if event[1] == "blockos_manage_reboot" then
+        if event[1] == manage.REBOOT_EVENT then
           ctx.log.info("reboot requested by a domain admin")
           sleep(1) -- let the reply leave first
           os.reboot()

@@ -41,6 +41,14 @@ directory.MAX_INFO_BYTES = 1024
 directory.MAX_ROLE_BYTES = 1024
 directory.MAX_ROLES_PER_COMPUTER = 8
 
+--- Mail: messages kept per user (the oldest go first) and the longest message.
+directory.MAX_MAIL = 20
+directory.MAX_MAIL_LENGTH = 300
+
+--- Largest roaming profile (serialised) and how many apps it may list.
+directory.MAX_PROFILE_BYTES = 1024
+directory.MAX_PROFILE_APPS = 8
+
 --- Computers not seen for this many days are marked stale (never deleted
 -- automatically: a turtle may be away for a long time).
 directory.STALE_DAYS = 7
@@ -91,6 +99,8 @@ function directory.load(data, sessions)
   data.computers = data.computers or {}
   data.services = data.services or {}
   data.computer_roles = data.computer_roles or {}
+  data.profiles = data.profiles or {}
+  data.mail = data.mail or {}
   for _, group in ipairs(directory.BUILTIN_GROUPS) do
     data.groups[group] = data.groups[group] or { members = {} }
   end
@@ -142,11 +152,183 @@ function Directory:remove_user(name)
     return nil, "cannot remove the last domain admin"
   end
   self.data.users[name] = nil
+  self.data.profiles[name] = nil
+  self.data.mail[name] = nil
   for _, group in pairs(self.data.groups) do
     group.members[name] = nil
   end
   self:end_sessions_of(name)
   return true
+end
+
+------------------------------------------------------------------------------
+-- Mail
+------------------------------------------------------------------------------
+
+-- Who a message to `to` reaches: one user, or every member of a group.
+local function recipients_of(self, to)
+  if self.data.users[to] then
+    return { to }
+  end
+  if not self.data.groups[to] then
+    return nil, "no user or group called " .. tostring(to)
+  end
+  local names = {}
+  for name in pairs(self.data.users) do
+    if self:is_member(to, name) then
+      names[#names + 1] = name
+    end
+  end
+  table.sort(names)
+  return names
+end
+
+--- Send a message to a user or to every member of a group.
+-- @tparam string from Sender: a user name, or a computer's hostname for notices.
+-- @tparam string to User or group.
+-- @tparam string text
+-- @tparam number time Seconds since the epoch (UTC).
+-- @treturn[1] number How many users got it.
+-- @treturn[2] nil
+-- @treturn[2] string error message
+function Directory:send_mail(from, to, text, time)
+  if type(text) ~= "string" or text == "" then
+    return nil, "the message is empty"
+  end
+  if #text > directory.MAX_MAIL_LENGTH then
+    return nil, "messages may be at most " .. directory.MAX_MAIL_LENGTH .. " characters"
+  end
+  local names, err = recipients_of(self, to)
+  if not names then
+    return nil, err
+  end
+  self.data.mail_seq = (self.data.mail_seq or 0) + 1
+  for _, name in ipairs(names) do
+    local box = self.data.mail[name] or {}
+    box[#box + 1] = { id = self.data.mail_seq, from = from, to = to, text = text, time = time }
+    while #box > directory.MAX_MAIL do
+      table.remove(box, 1)
+    end
+    self.data.mail[name] = box
+  end
+  return #names, names
+end
+
+--- The computers a user is logged in at right now (from their sessions).
+-- @tparam string name
+-- @tparam number now
+-- @treturn {number...} computer IDs
+function Directory:computers_of(name, now)
+  local ids, seen = {}, {}
+  for _, session in pairs(self.sessions) do
+    if session.name == name and session.computer and session.expires > now
+      and not seen[session.computer] then
+      seen[session.computer] = true
+      ids[#ids + 1] = session.computer
+    end
+  end
+  return ids
+end
+
+--- A user's messages, newest first.
+-- @tparam string name
+-- @treturn {table...} { id, from, to, text, time, is_read? }
+function Directory:list_mail(name)
+  local box = self.data.mail[name] or {}
+  local list = {}
+  for index = #box, 1, -1 do
+    list[#list + 1] = box[index]
+  end
+  return list
+end
+
+--- How many unread messages a user has.
+function Directory:unread_mail(name)
+  local count = 0
+  for _, message in ipairs(self.data.mail[name] or {}) do
+    if not message.is_read then
+      count = count + 1
+    end
+  end
+  return count
+end
+
+--- Mark a message read, or delete it.
+-- @tparam string name
+-- @tparam number id
+-- @tparam boolean is_delete
+function Directory:change_mail(name, id, is_delete)
+  local box = self.data.mail[name] or {}
+  for index, message in ipairs(box) do
+    if message.id == id then
+      if is_delete then
+        table.remove(box, index)
+      else
+        message.is_read = true
+      end
+      self.data.mail[name] = #box > 0 and box or nil
+      return true
+    end
+  end
+  return nil, "no such message"
+end
+
+------------------------------------------------------------------------------
+-- Roaming profiles
+------------------------------------------------------------------------------
+
+local function check_profile(profile)
+  if type(profile.apps) ~= "table" or #profile.apps > directory.MAX_PROFILE_APPS then
+    return nil, "a profile lists at most " .. directory.MAX_PROFILE_APPS .. " apps"
+  end
+  for _, app in ipairs(profile.apps) do
+    if type(app) ~= "string" or not app:match("^[%w_%-%.]+$") or #app > 32 then
+      return nil, "invalid app name: " .. tostring(app)
+    end
+  end
+  for key, value in pairs(profile.settings) do
+    if type(key) ~= "string" or not key:match("^blockos%.") then
+      return nil, "settings must be blockos.* keys: " .. tostring(key)
+    end
+    local kind = type(value)
+    if kind ~= "string" and kind ~= "number" and kind ~= "boolean" then
+      return nil, "setting " .. key .. " must be text, a number or true/false"
+    end
+  end
+  if #textutils.serialise(profile, { compact = true }) > directory.MAX_PROFILE_BYTES then
+    return nil, "profile too large (at most " .. directory.MAX_PROFILE_BYTES .. " bytes)"
+  end
+  return true
+end
+
+--- A user's roaming profile: the apps opened at login and settings that follow them.
+-- @tparam string name
+-- @treturn table { apps = {...}, settings = { [blockos.* key] = value } }
+function Directory:get_profile(name)
+  local profile = self.data.profiles[name] or {}
+  return { apps = profile.apps or {}, settings = profile.settings or {} }
+end
+
+--- Replace parts of a user's roaming profile.
+-- @tparam string name
+-- @tparam table changes { apps?, settings? }
+-- @treturn[1] table The new profile.
+-- @treturn[2] nil
+-- @treturn[2] string error message
+function Directory:set_profile(name, changes)
+  if not self.data.users[name] then
+    return nil, "no such user"
+  end
+  local profile = self:get_profile(name)
+  profile.apps = changes.apps or profile.apps
+  profile.settings = changes.settings or profile.settings
+  local ok, err = check_profile(profile)
+  if not ok then
+    return nil, err
+  end
+  local is_empty = #profile.apps == 0 and next(profile.settings) == nil
+  self.data.profiles[name] = not is_empty and profile or nil
+  return profile
 end
 
 function Directory:set_password(name, password)
@@ -739,12 +921,15 @@ end
 -- @treturn[1] table { token, name, groups, expires }
 -- @treturn[2] nil
 -- @treturn[2] string error message
-function Directory:login(name, password, now)
+-- @tparam[opt] number computer The computer ID the user logged in at (new mail is
+--   announced there).
+function Directory:login(name, password, now, computer)
   if not self:check_password(name, password) then
     return nil, "Login incorrect."
   end
   local token = new_token()
-  self.sessions[token] = { name = name, expires = now + directory.SESSION_SECONDS }
+  self.sessions[token] = { name = name, expires = now + directory.SESSION_SECONDS,
+    computer = computer }
   return {
     token = token,
     name = name,

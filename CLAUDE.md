@@ -66,6 +66,7 @@ may log in, which packages a computer may pull, and who may use services and con
 | Local accounts | Always available as `.\name`, e.g. when the controller is down. A bare name means a domain user once joined. Domain admins are admins on every joined computer. |
 | AD-integrated DNS | The controller holds host records (`<host>.<domain>`, updated by each computer itself) and service records (e.g. `pkg -> storage`). Services register records pointing at their own computer at start (`domain.register_service`); domain-admins can add any record. |
 | Users and Computers tool | `dsa` (full-screen) and `domain` (command line). |
+| Roaming profiles | Each domain user's profile (`profiles[name]`: up to 8 apps and `blockos.*` settings, 1KB) lives in the directory. At login the domain-client's session hook (`session.set_login_hook`) fetches it: apps open in tabs on advanced devices (the rom multishell is started with its first shell running `bin/session-apps.lua`, see `session.patch_multishell`; plain multishell if the rom file differs) and are listed on basic ones; settings defined with `roams = true` (`config.define`) apply for the session only (`config.set_session`). `profile` command. |
 | Group policy (computer roles) | Named computer roles in the directory (`computer_roles`: packages + `blockos.*` settings), assigned to computers in `dsa`/`domain computer assign`. Each joined computer's `computer-config` service fetches its merged config (`computer_config`, computer token) after boot, every `blockos.domain.update_interval` s (30 min) and on `blockos_update_now` (`domain update`, later remote admin), applies settings, installs missing packages and updates changed ones (only those) from the pkg server or GitHub; it reboots when nobody is logged in, otherwise a notice says the update applies after logout. `blockos.domain.auto_update = false` turns automatic installs off. Packages are never removed by roles. |
 
 Login providers: `auth.register_provider(name, provider)`; core has `local`, the `domain`
@@ -87,7 +88,7 @@ Things to keep in mind:
 ## Design principles
 
 - **Fun first (friends only):** we only play with friends, so when realism and fun disagree,
-  fun wins. Default to open (e.g. stock computers are viewable by everyone), avoid extra
+  fun wins. Default to open (e.g. logistics is usable by everyone), avoid extra
   password prompts and admin chores, give common actions a short path, and don't add
   permission tiers or safety rules that only matter against strangers. Keep only safeguards
   against *accidents* (bad updates, full disks, missed events).
@@ -222,13 +223,15 @@ minutes marks the service `failed`. `condition` returning false marks it `n/a`.
 |--------------------|----------------------------------------------------------------|
 | `blockos`          | rednet's built-in `rednet.host` / `rednet.lookup` hostname records |
 | `blockos.announce` | event `announce` `{ hostname, kind, version, services, info, hello? }`, broadcast at boot and every 5 min, **only by computers not in a domain**; a `hello` gets a direct reply |
-| `blockos.domain`   | rpc. join, leave, login, validate, logout, validate_computer, host_update, resolve, list_hosts, service_find/add/del/register/unregister, list_users/groups/computers/services, user_add/del/passwd/enable, group_add/del/addmember/rmmember/set_everyone/set_manager, group_get (any joined computer: role info for modules), computer_role_set/del, computer_assign, list_computer_roles, computer_config (the calling computer's merged roles), computer_remove, dc_status. The controller also hosts this protocol under the domain name, so `rednet.lookup("blockos.domain", "home")` finds it. |
+| `blockos.domain`   | rpc. join, leave, login, validate, logout, validate_computer, host_update, resolve, list_hosts, service_find/add/del/register/unregister, list_users/groups/computers/services, user_add/del/passwd/enable, group_add/del/addmember/rmmember/set_everyone/set_manager, group_get (any joined computer: role info for modules), computer_role_set/del, computer_assign, list_computer_roles, computer_config (the calling computer's merged roles), computer_remove, profile_get, profile_set `{ apps?, settings? }` (the logged-in user's own roaming profile), mail_send `{ to (user or group), text }` (a user, or a joined computer for notices), mail_list, mail_unread, mail_read `{ id }`, mail_delete `{ id }` (own mailbox; newest 20 kept), dc_status. The controller also hosts this protocol under the domain name, so `rednet.lookup("blockos.domain", "home")` finds it. |
 | `blockos.manage`   | rpc, served by the `manage` service on every joined computer; domain-admins only. status (version, uptime, user, services, disk, packages, turtle fuel/position, notices), reboot, update (applies roles and updates now, even if someone is logged in), service `{ name, action }`, log `{ lines }`, shell_open `{ width, height }`. |
 | `blockos.manage.shell` | events of a remote shell session (`remote_shell.lua`, `rsh <computer>`): target -> viewer `frame` `{ session, lines = { { y, text, fg, bg } }, x, y, blink }` (changed lines only) and `closed`; viewer -> target `input` `{ session, event }` (keys, chars, paste, mouse, terminate), `ping`, `close`. The session runs a real shell (BlockOS path, as the admin who opened it) in a hidden window; local keyboard input never reaches it; it closes after 60 s without ping. |
+| `blockos.mail`     | event `new_mail` `{ to, from, unread }`, sent by the domain controller to each computer the recipient is logged in at (sessions remember their computer); the domain-client checks it came from its controller, updates the notice, queues the local event `blockos_mail` (from, unread) and plays the user's `blockos.mail.sound` (roaming). |
 | `blockos.pkg`      | rpc. index (filtered by the caller's groups), fetch `{ name }` (raw .pkg), publish `{ raw }` (domain-admins). |
-| `blockos.stock`    | rpc. status, alerts (viewers, admins or listed computers); catalog, watches (viewers, admins); outputs, watch, unwatch, watch_all, settings, test_sound, access, set_access (admins). Found via the domain service record `stock` / `stock-<name>`. |
+| `blockos.logistics` | rpc, served by the hub (the controller; a lone node only to its own terminal). status, alerts, catalog (with per-node counts), watches, nodes, storages (with node), moves `{ since? }` (with a `log` id that changes on restart), find_start, find_finish, request `{ item, count, output?, near? }` (near `{ x, y, z }`: the nearest depot, an output with a position, whose node has enough, else the nearest with some), depots `{ near? }`, recipes, jobs, craft `{ item, count }` (logistics-users); supply `{ node, item, count, target }` (a node's crafter: joined computers, open without a domain; carried through the ports into the machine `target`); outputs, watch, unwatch, watch_all, settings, test_sound, set_storage `{ storage, role?, label?, pos?, clear_pos?, forget? }`, forget_node, import_levels `{ node }` (logistics-admins or domain-admins). Open until `domain setup logistics`; a node whose role `logistics-node-<node>` exists is only visible to its members. Items and chests may be named by id, label or part of it; chests also as `node/name`. Found via the domain service record `logistics` / `logistics-<name>`, else rednet name. |
+| `blockos.logistics.node` | controller <-> nodes. Node -> controller event `report` `{ node, totals, blocks, moves, sources, poll_seconds }` every round (full state). Controller -> node rpc (never retried): request `{ item, count, output? }`, set_storage, find_start, find_finish, export_levels, and for ports port_hold `{ seconds? }`, to_port `{ item, count, port }`, from_port `{ port, item, count, output? }`, push_marker `{ port }` (one item into the port, so the controller can pair it with the main-cable inventory that changed), craft `{ item, count }` (when logistics-crafting runs there; reports then carry `crafting = { recipes, jobs }`). In a domain only joined computers may call a node (computer token). |
 | `blockos.remote`   | rpc, served by the `turtle-remote` service on joined turtles. info, act `{ action, slot? }` (domain users; only the actions listed in `turtle_remote.ACTIONS`, plus select). Never retried by the driver, so a lost answer cannot move a turtle twice. |
-| `blockos.stock.alert` | event `stock_alert` `{ server, item, label, count, limit, is_low }`, sent directly to each computer on the stock computer's access list, only when an item goes low or recovers. |
+| `blockos.logistics.alert` | event `level_alert` `{ server, item, label, count, limit, is_low }`, broadcast by the hub only when an item goes low or recovers. |
 
 **Wire format** (`net/lib/wire.lua`): every message uses one envelope, so nothing is parsed by
 hand:
@@ -240,7 +243,11 @@ hand:
 Each protocol declares its payload once as a schema (`{ hostname = { type = "string", max = 32 } }`).
 Receivers call `wire.parse(message, kind, schema)`, and rpc handlers are wrapped in
 `rpc.with_args(schema, fn)`. Unknown fields are ignored, and messages with a newer major version
-are dropped. **New protocols must use wire and declare schemas.**
+are dropped. **New protocols must use wire and declare schemas.** Declare each protocol
+name, event topic, schema and local event name once, in the module both sides load (e.g.
+`domain.MAIL_*`, `logistics_client.REPORT_*`, `manage.PROTOCOL`), and build outgoing events
+with a function that checks them against the schema (`domain.mail_event`,
+`logistics_client.report_event`); never retype a protocol string.
 
 **rpc** (`net/lib/rpc.lua`): handlers return a result, or `nil, err`. Rednet has no
 request/response, so rpc only adds reply matching, timeouts/retries and a server loop that
@@ -275,7 +282,8 @@ Peer liveness uses the local receive time, never the sender's clock.
 - Manifest flags: `optional` (not in the base install), `exclusive` (must run alone),
   `media_only` (path prefixes kept in the package for building disks but not installed),
   `roles` (directory roles for managed mode: `{ { name, default = "everyone" | "installer" |
-  "nobody", description } }`, kept in `packages.db` for `roles.lua`).
+  "nobody", description } }`, kept in `packages.db` for `roles.lua`), `replaces` (names of
+  packages it takes over: installing it removes them, files it shares with them stay).
 - **Storage housekeeping:** `blockos status` shows where disk space goes; `blockos cleanup`
   deletes the previous version (no rollback afterwards) and the old log. Boot finishes or
   removes interrupted `.tmp` writes in `/etc/blockos`. The domain controller saves only
@@ -314,15 +322,23 @@ Peer liveness uses the local receive time, never the sender's clock.
 ## Roadmap
 
 - **Done (milestone 2):** rpc layer, domain controller with DNS, package server.
-- **Milestone 3:** StorageMonitor (`storage-monitor` package): stock watching with limits,
-  redstone/relay lamps, a speaker sound (note, Minecraft sound or .dfpwm file), monitor and
-  Create Display Board boards, alerts to listed computers, a per-computer access list, refill
-  targets and reactions on other computers (level-triggered: they poll status, alerts only
-  speed them up); the shared wire format.
-- **Next:** remote control for PCs (turtles done: `turtle-remote` package, `remote <turtle>`),
-  built on rpc, wire and domain logins. More
-  storage sources (e.g. an ME/RS bridge) as separate packages adding
-  `lib/storage_sources/<kind>.lua`.
+- **Milestone 3 (done):** stock watching (limits, refill targets, redstone/relay lamps, a
+  speaker sound, monitor and Create Display Link boards, reactions on other computers), item
+  logistics (chest roles, sorting, requests, the network map), managed mode and computer
+  roles in the directory, remote admin (`rsh`, dsa).
+- **Logistics family** (replaces `storage-monitor`): `logistics` (tools, hub, levels),
+  `logistics-node` (one per storage network; its storage modem is closed for rednet via
+  `blockos.net.closed_sides`, sources only see it through `logistics_scope`; works alone in
+  lone mode), `logistics-controller` (merges nodes, routes requests, levels). Built: the wall
+  board (`logistics_wall`), depots (outputs with a position, `near` routing, `logistics_api`
+  for programs), ports (`logistics_ports` on the controller: role `port`, paired by a marker
+  item, crossing = node A to_port, controller pushItems port to port on the wired main cable,
+  node B from_port; pairings in the controller config), crafting (`logistics-crafting` on a
+  node: role `machine`, recipes of supply/wait/retrieve steps taught by example or written,
+  retries on timeout or listed scrap; the crafter calls its node in-process, the hub asks
+  for a craft when a watched item with a recipe is low and carries missing ingredients). Later: crafting, AE2 and courier modules.
+- **Then:** roaming profiles, mail. More storage sources (e.g. an ME/RS bridge) as packages
+  adding `lib/storage_sources/<kind>.lua`.
 - **Later:** uninstall of BlockOS itself, local IPC via custom events, tab completion,
   pocket computer support.
 

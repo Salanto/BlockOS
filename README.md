@@ -78,6 +78,24 @@ it, `s` starts or stops a service, `l` reads its log, and `c` opens a **remote s
 screen on yours, your keys on it, like ssh. `rsh <computer>` does the same from any shell. Hold
 Ctrl+T to leave; F12 sends Ctrl+T to the remote computer.
 
+**Roaming profiles.** Your apps and some settings follow you to every joined computer.
+`profile app add logistics` opens logistics in its own tab whenever you log in on an advanced
+computer (basic ones list your apps on the welcome screen); `profile set
+blockos.logistics.server kitchen` makes every terminal you log into use that controller.
+`profile` shows yours, `profile keys` which settings can follow you. Profile settings apply
+only while you are logged in and never change the computer's own settings.
+
+**Mail.** `mail send bob the iron farm is jammed` leaves Bob a message; he sees "1 new message"
+when he logs in anywhere (or within a few minutes if he is logged in). `mail send miners ...`
+reaches every member of a group. `mail` lists yours, `mail read 1` shows one, `mail delete 1`
+removes it. The controller keeps the newest 20 per player.
+
+New mail arrives at once on the computer you are logged into, with a sound from an attached
+speaker: a "ding dong" by default. Pick your own with `profile set blockos.mail.sound
+file:/sounds/mail.dfpwm` (any clip converted to DFPWM, like music), `note:<instrument>`,
+`sound:<minecraft sound>` or `off`; it follows you to every computer. Your own scripts can
+react too: the `blockos_mail` event carries the sender and how many messages are unread.
+
 ## A package server
 
 On a computer with disk drives (attach as many as you like with wired modems):
@@ -86,37 +104,139 @@ so other computers install and update from it right away: `pkg` uses a package s
 finds one (setting, domain record or the network) and GitHub otherwise (`--github` forces it).
 `pkgserver allow <name> <group>` limits a package to a group.
 
-## Watching stock
+## Logistics
 
-Know when you are running out of something, with lamps, a sound and a board.
+Know what you have and where, get items delivered, and know when you are running out, with
+lamps, a sound and a board. Three packages:
 
-1. On the computer next to your chests (attach as many as you like with wired modems; Create
-   Item Vaults work too): `pkg install storage-monitor`, then `stock setup`. It can watch
-   everything already in the chests, with a limit at a share of the current count.
-2. Run `stock` to adjust it:
-   - **Overview:** counts against limits.
-   - **Catalog:** watch more items.
-   - **Alarms:** redstone outputs per item, plus the alarm sound.
-   - **Alerts:** recent changes.
-   - **Access:** who may look, configure, or receive alerts.
-3. Wire up the alarms:
-   - **Lamps:** on the computer, or on Redstone Relays anywhere on the wired network.
-     Feed a Create Redstone Link to light lamps wirelessly.
-   - **Speaker:** plays a note, any Minecraft sound, or a `.dfpwm` recording (an "ALERT!" voice
-     clip works). Set it with `stock sound ...`.
-   - **Board:** `stock board <monitor or Display Link>`, on the stock computer or any computer
-     on its access list.
+- **logistics-node**, on the computer next to a group of chests (attach as many as you like
+  with wired modems; Create Item Vaults work too). It counts them, sorts input chests into
+  storage and delivers requested items. Nothing to set up: the wired modem that sees chests
+  becomes the node's storage network (closed for rednet, so it never mixes with the main
+  network); its other modem talks to the controller.
+- **logistics-controller**, on a computer of its own: merges every node into one catalog,
+  routes requests to the node that can deliver, and runs the levels (limits and alarms).
+- **logistics** (installed with either): the `logistics` command for every computer.
 
-**Run a farm until stock is refilled:** give an item a refill target (Overview tab, `f`), for
+**Start small:** a single node works alone. Run `logistics` on it and everything works there
+(catalog, requests, levels, map). When you add a controller later, the node finds it and
+reports to it, and `logistics levels import <node>` on the controller moves the node's limits
+over. Many small nodes count faster than one big one (every chest read costs a game tick).
+
+Run `logistics` (from any computer once there is a controller):
+
+- **Overview:** counts against limits.
+- **Catalog:** every item; `g` gets some, `w` watches it (a limit), `W` watches everything.
+- **Alarms:** redstone outputs per item, plus the alarm sound.
+- **Alerts:** recent changes.
+- **Storage:** every chest with its node and role (see below).
+- **Nodes:** each node, how many chests and items it has, and when it last reported.
+
+Alarms:
+
+- **Lamps:** on the controller, or on Redstone Relays on its wired network. Feed a Create
+  Redstone Link to light lamps wirelessly.
+- **Speaker:** plays a note, any Minecraft sound, or a `.dfpwm` recording (an "ALERT!" voice
+  clip works). Set it with `logistics sound ...`.
+- **Board:** `logistics board <monitor or Display Link>`, on any computer. A big monitor (about
+  5x3 blocks) shows the **wall**: the controller on the left, every node stacked on the right
+  with its chests coloured by how full they are, items flying along the rows as they move,
+  and low items, alerts and recent moves under the controller. Nodes that can reach GPS
+  hosts are grouped by height. Smaller monitors and Display Links show the list of levels
+  (`logistics board <name> list` forces it).
+
+**Run a farm until it is refilled:** give an item a refill target (Overview tab, `f`), for
 example "low below 200, refill to 1000". An alarm output for that item then stays on until
 the target is reached, so it can drive the farm directly. To drive a farm next to *another*
-computer, put that computer on the stock computer's access list and add a reaction there:
-`stock react add iron computer back`. Reactions follow the real stock state, so a missed
-alert (an unloaded chunk) never leaves the farm running.
+computer, add a reaction there: `logistics react add iron computer back`. Reactions follow the
+real levels, so a missed alert (an unloaded chunk) never leaves the farm running.
 
-A stock computer is open by default: anyone can look and every computer gets its alerts; only
-its admins (and domain admins) can change it. Narrow that in the Access tab if you like. It
-works without a domain too.
+**Chest roles.** Every chest has a role, set in the **Storage** tab (or
+`logistics storage role <chest> <role>`):
+
+- **storage** (the default for chests, barrels, drawers, vaults and crates): counted, and where
+  items are sorted into and taken from.
+- **input**: a dump chest, emptied into storage automatically (next to the same item first).
+- **output**: where requested items arrive: `g` in the Catalog tab, or
+  `logistics request iron 64 [output]` from any computer.
+- **ignore** (the default for everything else: furnaces, machines, trash cans): never counted
+  or touched, so sorting never fills a machine by accident.
+- **port**: how items cross between nodes (see below).
+- **machine**: a crafting machine's block (see Crafting); never counted or sorted into.
+- **recycle**: the input of a recycling setup (Create crushing wheels, a mill...): scrap from
+  failed crafts goes here instead of into storage.
+
+Give chests labels with `l`. To find out which chest is which, press `f` and drop any item into
+it (sorting pauses meanwhile). A chest whose modem was re-placed gets a new name; its old entry
+shows as **missing**, and `d` forgets it. Two nodes may both have a `minecraft:chest_0`: name
+it as `node/chest` then.
+
+**Ports: items between nodes.** Run one wired cable, the main cable, from the controller past
+every node. Next to each node, put a chest with two modems: one on the node's storage cable,
+one on the main cable, both switched on (red). Give it the **port** role (`t` in the Storage
+tab). The controller pairs it by itself: the node drops one item in, and the controller sees
+which chest on its cable changed (the Storage tab shows "pairing", then "paired"). From then
+on a request for an output on node B takes what B lacks from the node that has the most:
+node A fills its port, the controller moves the items to B's port over the main cable, and B
+puts them into the output. Anything left in a port goes back into storage on the next
+round.
+
+**Depots.** Give an output chest a position and it becomes a depot: `p` in the Storage tab,
+or `logistics storage pos <chest> here` from a pocket computer standing next to it (GPS), or
+`x y z`. `logistics request coal 16 here` then delivers to the nearest depot that has enough,
+and `logistics depots` lists them by distance. Programs do the same with `logistics_api`,
+e.g. a mining turtle that refuels on its way:
+
+```lua
+local logistics_api = import("logistics_api")
+local result, err = logistics_api.request("minecraft:coal", 16, { here = true })
+-- result.pos is where the depot is, result.moved how many are waiting there
+```
+
+**Crafting.** `pkg install logistics-crafting` on a node next to its machines (a Create mixer's
+basin, a press's depot, a deployer's chest...), and give those blocks the **machine** role.
+Then teach a recipe by doing it once: `logistics craft teach create:brass_ingot`, put the
+ingredients into the machines yourself, and press Enter once the result is there. The node
+saves what went where and how long it took (adjust with `logistics craft show/step/set`, or
+write a recipe by hand with `logistics craft new`). For Create's sequenced assembly, list the
+scrap item (`logistics craft set <item> scrap create:...`): a run that ends in scrap empties
+the machines and starts over, up to the recipe's retries. The scrap goes to a **recycle**
+chest when the node has one (scrap already in storage follows within half a minute); point the
+recycler's output at an input chest and what it recovers is sorted back into storage, ready
+for the next run.
+
+Jobs run side by side as long as they use different machines; two recipes for the same
+basin take turns. Built three mixers? Make them a group, `logistics craft group mixers basin_1
+basin_2 basin_3`, and point the recipe at it (`logistics craft set create:brass_ingot machine
+basin_1 @mixers`): every run takes a free mixer, so three batches go at once. A station of
+several blocks (a depot and its output chest) is written `depot_1,out_1`, and the recipe uses
+`@presses:1` and `@presses:2`. A supply step can name a slot, e.g. a furnace's fuel slot.
+
+Watched items keep themselves stocked: when one drops below its limit and a node has a recipe,
+that node crafts it up to the refill target. Ingredients come from the node's own storage
+first; missing ones are brought from other nodes through the ports, straight into the machine.
+The crafter talks to its node on the same computer, so watching the machines adds no network
+traffic. `logistics craft` (or the Crafting tab) shows what can be crafted and the jobs;
+`logistics craft brass 16` starts one by hand.
+
+`logistics map` (or `m` in the Storage tab) shows a node as a map: inputs and outputs on the
+left, storage on the right with fill bars, and items flying along the lines as they are sorted
+or requested; Tab shows the next node. Advanced computers get colours and mouse clicks; basic
+ones a plain text map. Select a chest (arrows and Enter, or a click) to label it, change its
+role or get items into an output.
+
+**Who may do what.** Open to everyone, like every module, until a domain admin runs
+`domain setup logistics`: then `logistics-users` may look and request (everyone by default)
+and `logistics-admins` may change levels, alarms and chest roles. To keep one node to some
+players (Alice's magic storage), `logistics node private <node>` creates the role
+`logistics-node-<node>`; take `everyone` off it and add its members, and nobody else sees that
+node's items.
+
+**Coming from storage-monitor:** `pkg install logistics-node` on the old stock computer
+replaces it. On its first start it takes over the chest roles and labels and keeps the old
+limits and alarms running in lone mode. On other computers, `pkg install logistics` (and
+`pkg remove storage-monitor`); settings like `blockos.stock.board` move to
+`blockos.logistics.*` by themselves.
 
 ## Music
 

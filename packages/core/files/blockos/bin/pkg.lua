@@ -186,6 +186,23 @@ local function show_available(source)
   end)
 end
 
+-- In a domain, packages with roles stay open until a domain admin sets them up: say how.
+local function hint_role_setup(packages)
+  local found, domain = pcall(import, "domain")
+  if not (found and domain.is_joined()) then
+    return
+  end
+  local installed = pkg.installed()
+  for _, bundle in ipairs(packages) do
+    local manifest = bundle.manifest
+    local is_new = not (installed[manifest.name] and installed[manifest.name].roles)
+    if manifest.roles and #manifest.roles > 0 and is_new then
+      ui.print(manifest.name .. " is open to everyone until a domain admin runs", "dim")
+      ui.print("'domain setup " .. manifest.name .. "' (after the reboot).", "dim")
+    end
+  end
+end
+
 local function install(source, names, force)
   local index, err = source.index()
   if not index then
@@ -202,6 +219,7 @@ local function install(source, names, force)
     ui.print(packages, "error")
     return
   end
+  hint_role_setup(packages)
   apply_and_reboot(packages, { force = force })
 end
 

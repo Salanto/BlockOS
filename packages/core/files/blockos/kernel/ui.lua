@@ -593,9 +593,18 @@ end
 function ui.tabs(y, labels, selected)
   local width = ui.size()
   ui.fill(1, y, width, 1, "panel")
+  local full_width = 0
+  for index, label in ipairs(labels) do
+    full_width = full_width + #(" " .. index .. " " .. label .. " ")
+  end
+  -- Too many tabs for the screen: the others shrink to their number.
+  local is_compact = full_width > width
   local x = 1
   for index, label in ipairs(labels) do
     local text = " " .. index .. " " .. label .. " "
+    if is_compact and index ~= selected then
+      text = " " .. index .. " "
+    end
     if x + #text - 1 > width then
       break
     end
@@ -697,7 +706,7 @@ end
 
 --- Ask for one or more values in a centred panel. An empty first answer cancels.
 -- @tparam string title
--- @tparam {table...} fields { label = "Name: ", mask = "*"? }
+-- @tparam {table...} fields { label = "Name: ", mask = "*"?, default = "text"? }
 -- @treturn {string...}|nil The answers, or nil when cancelled.
 function ui.form(title, fields)
   ui.clear()
@@ -706,7 +715,7 @@ function ui.form(title, fields)
   local answers = {}
   for index, field in ipairs(fields) do
     local ok, answer = pcall(ui.field_prompt, x, y + index - 1, width, field.label,
-      { mask = field.mask })
+      { mask = field.mask, default = field.default })
     if not ok or (index == 1 and answer == "") then
       ui.clear()
       return nil

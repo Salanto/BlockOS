@@ -122,4 +122,21 @@ return function(t)
     t.eq(result.token, "user-1")
     t.eq(result.computer, "computer-1")
   end)
+
+  t.it("a retried request runs once: slow answers and repeats never double it", function()
+    local rpc = t.fresh_import()("rpc")
+    local runs = 0
+    local handlers = {
+      move = function()
+        runs = runs + 1
+        sleep(0.3) -- longer than the caller's timeout: the caller sends it again
+        return runs
+      end,
+    }
+    local result = with_server(rpc, handlers, function()
+      return rpc.call(ME, PROTOCOL, "move", nil, { timeout = 0.2, retries = 2 })
+    end)
+    t.eq(result, 1, "the retry got the first run's answer")
+    t.eq(runs, 1, "the handler ran once")
+  end)
 end

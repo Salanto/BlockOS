@@ -109,11 +109,11 @@ local function run(ctx)
 
   -- Hosting under the domain name lets computers find us with rednet.lookup.
   if rednet.isOpen() then
-    rednet.host("blockos.domain", dir:name())
+    rednet.host(import("domain").PROTOCOL, dir:name())
   end
   log.info("serving domain %s", dir:name())
   parallel.waitForAny(
-    function() rpc.serve("blockos.domain", dc_handlers.new(dir, storage)) end,
+    function() rpc.serve(import("domain").PROTOCOL, dc_handlers.new(dir, storage)) end,
     housekeeping
   )
 end

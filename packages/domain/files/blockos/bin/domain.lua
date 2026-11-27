@@ -398,7 +398,7 @@ elseif command == "computer" and (args[2] == "list" or args[2] == "remove") then
 elseif command == "computer" then
   computer_role_command(args[2], args)
 elseif command == "update" then
-  os.queueEvent("blockos_update_now")
+  os.queueEvent(import("computer_config").UPDATE_NOW_EVENT)
   ui.print("Checking this computer's roles and updates; it reboots if anything changes.", "ok")
 elseif command == "dns" then
   dns_command(args[2], args[3], args[4], args[5])

@@ -1,0 +1,310 @@
+-- logistics-node service: reads this node's storage network every round, sorts input
+-- chests into storage, and reports to the controller.
+--
+-- Setup asks nothing: on the first start the storage modem is the wired modem that
+-- sees inventories (it is closed for rednet, see net.close_side), and an old
+-- storage-monitor config is taken over (chest roles and labels here, levels kept for
+-- lone mode).
+--
+-- Lone mode: until a controller is found, the node runs a hub over itself, so its own
+-- terminal can use `logistics` (catalog, requests, levels, map). Once a controller has
+-- been found the node stays its node, and its levels can be moved over with
+-- `logistics levels import <node>` on the controller. When the controller cannot be
+-- found three times in a row (or after `logistics node alone`), the node is alone
+-- again. A controller on this same computer gets the reports directly.
+
+-- Rounds between looking for a controller while none is known (lookups cost ~2 s),
+-- and between checks that it has not moved to another computer.
+local DISCOVER_ROUNDS = 6
+local RECHECK_ROUNDS = 30
+-- Lookups in a row that find no controller before the node is alone again.
+local LOST_LOOKUPS = 3
+-- Rounds between GPS fixes (the wall board groups nodes by height; ~5 min).
+local GPS_ROUNDS = 30
+
+local function file(name)
+  return import("paths").top(import("logistics_client")[name])
+end
+
+-- Rename a file out of the way, replacing an older copy with that name.
+local function set_aside(path, suffix)
+  if fs.exists(path .. suffix) then
+    fs.delete(path .. suffix)
+  end
+  fs.move(path, path .. suffix)
+end
+
+-- First start: take over an old storage-monitor config, find the storage modem.
+local function first_setup(fsx, logistics, logistics_node, log)
+  local node_config, levels
+  local old_path = file("OLD_FILE")
+  local old = fs.exists(old_path) and fsx.read_table(old_path)
+  if old then
+    node_config, levels = logistics.split_old_config(old)
+    fsx.write_table(file("LEVELS_FILE"), levels)
+    set_aside(old_path, ".migrated")
+    log.info("took over the storage-monitor config (levels kept for lone mode)")
+  else
+    node_config = logistics.normalise_node({})
+  end
+  local sides = logistics_node.detect_sides()
+  node_config.storage_side = sides.storage_side
+  node_config.is_shared = sides.is_shared
+  if sides.storage_side and not sides.is_shared then
+    import("net").close_side(sides.storage_side)
+    log.info("storage modem: %s (closed for rednet)", sides.storage_side)
+  elseif sides.storage_side then
+    log.warn("the storage modem on %s is the only modem: it carries rednet too",
+      sides.storage_side)
+  end
+  if sides.is_ambiguous then
+    log.warn("several modems see chests; picked %s (change: logistics node side)",
+      sides.storage_side)
+  end
+  fsx.write_table(file("NODE_FILE"), node_config)
+  return node_config
+end
+
+local function run(ctx)
+  local fsx = import("fsx")
+  local rpc = import("rpc")
+  local logistics = import("logistics")
+  local logistics_client = import("logistics_client")
+  local logistics_handlers = import("logistics_handlers")
+  local logistics_hub = import("logistics_hub")
+  local logistics_node = import("logistics_node")
+  local logistics_scope = import("logistics_scope")
+  local logistics_sources = import("logistics_sources")
+  local log = ctx.log
+
+  local node_path = file("NODE_FILE")
+  local config = fs.exists(node_path) and fsx.read_table(node_path)
+    or first_setup(fsx, logistics, logistics_node, log)
+  config = logistics.normalise_node(config)
+
+  -- Sources only see the storage network (and blocks against the computer).
+  local scope = logistics_scope.new(config.storage_side)
+  local sources = logistics_sources.load()
+  for _, source in ipairs(sources) do
+    if source.peripheral ~= nil then
+      source.peripheral = scope
+    end
+  end
+
+  local function save()
+    if pcall(fsx.write_table, node_path, config) then
+      return true
+    end
+    return nil, "could not save the node config (is the disk full?)"
+  end
+  local node = logistics_node.new({ config = config, save = save, sources = sources, log = log })
+  blockos.logistics_node = node
+
+  local function hostname()
+    return blockos.net and blockos.net.hostname() or ("#" .. os.getComputerID())
+  end
+
+  -- Lone mode -------------------------------------------------------------
+
+  local levels_path = file("LEVELS_FILE")
+  local hub = nil
+
+  local function start_hub()
+    if blockos.logistics_controller then
+      return -- a controller runs on this computer: it is the hub
+    end
+    local levels = fs.exists(levels_path) and fsx.read_table(levels_path) or {}
+    hub = logistics_hub.new({
+      config = levels,
+      save = function()
+        if pcall(fsx.write_table, levels_path, levels) then
+          return true
+        end
+        return nil, "could not save the levels (is the disk full?)"
+      end,
+      hostname = hostname(),
+      title = "Logistics " .. hostname(),
+    })
+    logistics_hub.env.log = log.warn
+    blockos.logistics_hub = {
+      hub = hub,
+      handlers = logistics_handlers.new(hub),
+      config = hub.config,
+      describe = hostname() .. " (no controller)",
+    }
+  end
+
+  local function stop_hub()
+    if hub then
+      hub.stop()
+      if blockos.logistics_hub and blockos.logistics_hub.hub == hub then
+        blockos.logistics_hub = nil
+      end
+      hub = nil
+    end
+  end
+
+  -- The levels this node kept in lone mode, handed over once to the controller.
+  local function export_levels()
+    if not fs.exists(levels_path) then
+      return nil, "this node has no levels to hand over"
+    end
+    local levels = fsx.read_table(levels_path)
+    set_aside(levels_path, ".imported")
+    if blockos.notices then
+      blockos.notices.logistics_levels = nil
+    end
+    return levels
+  end
+
+  -- The controller -------------------------------------------------------
+
+  local controller_id = nil
+  local rounds_since_lookup = DISCOVER_ROUNDS
+
+  local function on_controller_found(id, label)
+    controller_id = id
+    node.controller_id = id -- logistics-crafting asks it for missing ingredients
+    if config.controller == nil then
+      config.controller = label
+      save()
+      stop_hub()
+      log.info("controller found: %s; this node now reports to it", tostring(label))
+      if fs.exists(levels_path) and blockos.notices then
+        blockos.notices.logistics_levels = "This node's alarms can move to the controller: "
+          .. "run 'logistics levels import " .. hostname() .. "' there"
+      end
+    end
+  end
+
+  local missed_lookups = 0
+
+  -- Alone again (the controller is gone for good, or `logistics node alone`).
+  function node.go_alone()
+    controller_id, node.controller_id = nil, nil
+    config.controller = nil
+    save()
+    missed_lookups = 0
+    start_hub()
+    log.info("no controller: this node runs alone again")
+  end
+
+  local function look_for_controller()
+    if blockos.logistics_controller then
+      -- A controller on this computer: no lookup, no rednet.
+      if hub or config.controller ~= "local" then
+        stop_hub()
+        config.controller = "local"
+        save()
+      end
+      return
+    end
+    rounds_since_lookup = rounds_since_lookup + 1
+    if rounds_since_lookup < (controller_id and RECHECK_ROUNDS or DISCOVER_ROUNDS) then
+      return
+    end
+    rounds_since_lookup = 0
+    local id, label = logistics_client.find_server(nil, true)
+    if id and id ~= os.getComputerID() then
+      missed_lookups = 0
+      on_controller_found(id, label)
+    elseif config.controller ~= nil and not hub then
+      missed_lookups = missed_lookups + 1
+      if missed_lookups >= LOST_LOOKUPS then
+        node.go_alone()
+      end
+    end
+  end
+
+  -- No storage modem at the first start (the cable came later): keep looking, and
+  -- start over with the scoped view once one shows up.
+  local rounds_since_detect = 0
+  local function redetect()
+    if config.storage_side then
+      return
+    end
+    rounds_since_detect = rounds_since_detect + 1
+    if rounds_since_detect < DISCOVER_ROUNDS then
+      return
+    end
+    rounds_since_detect = 0
+    local sides = logistics_node.detect_sides()
+    if sides.storage_side then
+      config.storage_side, config.is_shared = sides.storage_side, sides.is_shared
+      if not sides.is_shared then
+        import("net").close_side(sides.storage_side)
+      end
+      save()
+      error("found the storage modem on " .. sides.storage_side .. "; starting over", 0)
+    end
+  end
+
+  -- Where this node stands, when GPS hosts are in range (nil otherwise).
+  local position = nil
+  local rounds_since_gps = GPS_ROUNDS
+  local function locate()
+    rounds_since_gps = rounds_since_gps + 1
+    if rounds_since_gps < GPS_ROUNDS then
+      return
+    end
+    rounds_since_gps = 0
+    local ok, x, y, z = pcall(gps.locate, 2)
+    if ok and x then
+      position = { x = math.floor(x), y = math.floor(y), z = math.floor(z) }
+    end
+  end
+
+  local function send_report()
+    local report = node.report()
+    report.node = hostname()
+    report.pos = position
+    if blockos.logistics_controller then
+      blockos.logistics_controller.update(report.node, report, node.proxy())
+    elseif controller_id then
+      local event, err = logistics_client.report_event(report)
+      if event then
+        rednet.send(controller_id, event, logistics_client.NODE_PROTOCOL)
+      else
+        log.warn("report not sent: %s", tostring(err))
+      end
+    elseif hub then
+      hub.update(report.node, report, node.proxy())
+    end
+  end
+
+  if config.controller == nil then
+    start_hub()
+  end
+
+  -- Be findable for `logistics levels import` and the controller's requests.
+  if rednet.isOpen() then
+    pcall(rednet.host, logistics_client.NODE_PROTOCOL, hostname())
+  end
+
+  local ok, err = pcall(parallel.waitForAny,
+    function() rpc.serve(logistics_client.NODE_PROTOCOL, node.handlers(export_levels)) end,
+    function()
+      while true do
+        node.round()
+        locate()
+        look_for_controller()
+        redetect()
+        send_report()
+        sleep(config.poll_seconds)
+      end
+    end
+  )
+  stop_hub()
+  blockos.logistics_node = nil
+  if not ok then
+    error(err, 0)
+  end
+end
+
+return {
+  name = "logistics-node",
+  description = "Reads and sorts this node's storage and reports to the controller",
+  after = { "net", "domain-client" },
+  restart = "on-failure",
+  run = run,
+}

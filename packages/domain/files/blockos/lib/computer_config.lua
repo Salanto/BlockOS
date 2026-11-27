@@ -9,6 +9,10 @@ local config = import("config")
 
 local computer_config = {}
 
+--- Queue this event to check roles and updates now and apply them even when someone is
+-- logged in (`domain update`, remote admin).
+computer_config.UPDATE_NOW_EVENT = "blockos_update_now"
+
 config.define("blockos.domain.auto_update", {
   description = "Install and update packages by themselves (from the computer's roles).",
   default = true,

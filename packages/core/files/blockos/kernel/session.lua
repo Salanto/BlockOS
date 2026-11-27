@@ -3,9 +3,15 @@
 -- There is one code path for every device. On advanced devices the user gets a
 -- nested multishell, so every tab they open belongs to the session and is
 -- closed on logout. Basic devices get a plain shell.
+--
+-- Login hooks (session.set_login_hook) add to a user's session: the domain package
+-- fetches the user's roaming profile, whose apps open in tabs (advanced devices) or
+-- are listed on the welcome screen (basic ones), and whose settings apply until
+-- logout.
 -- @module session
 
 local auth = import("auth")
+local config = import("config")
 local device = import("device")
 local log = import("log")
 local setup = import("setup")
@@ -15,9 +21,91 @@ local session = {}
 
 --- Queue this event to end the current session.
 session.LOGOUT_EVENT = "blockos_logout"
+--- Queued (with a source and its data) when a service adds a notice, e.g. a stock
+-- alert or a message, so a program on screen can react.
+session.NOTICE_EVENT = "blockos_notice"
 
 local SHELL_PROGRAM = "/rom/programs/shell.lua"
 local MULTISHELL_PROGRAM = "/rom/programs/advanced/multishell.lua"
+-- Opens the user's apps in tabs, then becomes the shell (see multishell_with_apps).
+local APPS_PROGRAM = "bin/session-apps.lua"
+
+local login_hooks = {} -- [name] = hook
+
+--- Add something to every session: hook(user) -> { apps?, settings? } or nil.
+-- Called after login; apps from all hooks are opened, settings apply until logout.
+-- @tparam string name Setting it again replaces the hook (a restarted service).
+-- @tparam[opt] function hook nil removes it
+function session.set_login_hook(name, hook)
+  login_hooks[name] = hook
+end
+
+--- What the login hooks add for a user (a failing hook is logged and skipped).
+-- @tparam table user
+-- @treturn table { apps = {...}, settings = {...} }
+function session.profile_for(user)
+  local profile = { apps = {}, settings = {} }
+  local names = {}
+  for name in pairs(login_hooks) do
+    names[#names + 1] = name
+  end
+  table.sort(names)
+  for _, name in ipairs(names) do
+    local ok, result = pcall(login_hooks[name], user)
+    if not ok then
+      log.warn("session", "login hook failed: %s", tostring(result))
+    elseif type(result) == "table" then
+      for _, app in ipairs(result.apps or {}) do
+        profile.apps[#profile.apps + 1] = app
+      end
+      for key, value in pairs(result.settings or {}) do
+        profile.settings[key] = value
+      end
+    end
+  end
+  return profile
+end
+
+--- The rom's multishell, changed so its first shell runs a command: it always starts
+-- a plain shell, so this is the one way to open more tabs at the start.
+-- @tparam string source multishell.lua
+-- @treturn string|nil The changed source, or nil if the rom's file looks different.
+function session.patch_multishell(source)
+  -- Some roms (CraftOS-PC's) already hand their arguments to the first shell.
+  if source:find("[\"']/?rom/programs/shell%.lua[\"']%s*,%s*%.%.%.%s*%)") then
+    return source
+  end
+  local patched, count = source:gsub(
+    "(launchProcess%(%s*true%s*,.-[\"']/?rom/programs/shell%.lua[\"'])%s*%)", "%1, ...)", 1)
+  if count ~= 1 then
+    return nil
+  end
+  return patched
+end
+
+-- Run multishell with the apps opened in tabs; false if that is not possible (the
+-- caller then runs the plain multishell).
+local function multishell_with_apps(shell, apps)
+  local file = fs.open(MULTISHELL_PROGRAM, "r")
+  if not file then
+    return false
+  end
+  local source = session.patch_multishell(file.readAll())
+  file.close()
+  if not source then
+    return false
+  end
+  local env = setmetatable({ shell = shell }, { __index = _G })
+  env.require, env.package = dofile("/rom/modules/main/cc/require.lua").make(env,
+    "/rom/programs/advanced")
+  local program = load(source, "@" .. MULTISHELL_PROGRAM, "t", env)
+  if not program then
+    return false
+  end
+  local apps_program = fs.combine(import("paths").root(), APPS_PROGRAM)
+  program("/" .. apps_program, table.unpack(apps))
+  return true
+end
 
 local function describe_device()
   local id = "#" .. os.getComputerID()
@@ -112,13 +200,15 @@ end
 
 --- The default user shell for this device.
 -- @tparam table shell The rom shell API.
--- @treturn function Runs the shell until it exits.
+-- @treturn function function(apps) runs the shell until it exits.
 function session.default_shell(shell)
-  return function()
+  return function(apps)
     -- Decided by the device type only: the rom's own multishell can be turned
     -- off in settings, but the program is always there on advanced devices.
     if device.is_advanced() then
-      shell.run(MULTISHELL_PROGRAM)
+      if not (apps and #apps > 0 and multishell_with_apps(shell, apps)) then
+        shell.run(MULTISHELL_PROGRAM)
+      end
     else
       shell.run(SHELL_PROGRAM)
     end
@@ -142,15 +232,21 @@ function session.run_user(user, user_shell)
   if blockos then
     blockos.user = user
   end
+  local profile = session.profile_for(user)
+  config.set_session(profile.settings)
   ui.clear()
   ui.use("title")
   write("Welcome, " .. user.name .. ". ")
   ui.print("Type 'logout' to log out.", "dim")
+  if #profile.apps > 0 and not device.is_advanced() then
+    ui.print("Your apps: " .. table.concat(profile.apps, ", "), "dim")
+  end
   for _, notice in pairs(blockos and blockos.notices or {}) do
     ui.status(notice, "warn")
   end
 
-  parallel.waitForAny(user_shell, wait_for_logout)
+  parallel.waitForAny(function() user_shell(profile.apps) end, wait_for_logout)
+  config.set_session(nil)
 
   -- Every coroutine of the session (shell, tabs, programs) has now been dropped.
   term.redirect(terminal_before)

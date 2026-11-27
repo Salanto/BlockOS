@@ -27,6 +27,7 @@ return function(t)
       hostname = "pc1", admin_name = "admin", admin_password = "secret",
     }))
     domain.computer = { sender = 7, computer_token = joined.computer_token }
+    domain.import = import
     return domain
   end
 
@@ -374,5 +375,92 @@ return function(t)
     t.ok(domain.handlers.computer_role_del(admin, { name = "media" }))
     local after = domain.handlers.computer_config(domain.computer, {})
     t.eq(#after.packages, 0, "taken off the computer")
+  end)
+
+  t.it("each user keeps a roaming profile of apps and settings", function()
+    local domain = new_domain()
+    domain.dir:add_user("bob", "pw")
+    local bob = as_user(domain, login(domain, "bob", "pw"))
+    local admin = as_user(domain, login(domain, "admin", "secret"))
+    local empty = domain.handlers.profile_get(bob, {})
+    t.eq(#empty.apps, 0)
+    t.ok(domain.handlers.profile_set(bob, { apps = { "logistics", "music" },
+      settings = { ["blockos.logistics.server"] = "kitchen" } }))
+    t.eq(domain.handlers.profile_get(bob, {}).apps[2], "music")
+    t.eq(#domain.handlers.profile_get(admin, {}).apps, 0, "every user has their own")
+    t.ok(domain.handlers.profile_set(bob, { apps = { "logistics" } }), "settings stay")
+    t.eq(domain.handlers.profile_get(bob, {}).settings["blockos.logistics.server"], "kitchen")
+    t.ok(not domain.handlers.profile_set(bob, { settings = { ["shell.x"] = true } }),
+      "only blockos.* settings")
+    t.ok(not domain.handlers.profile_set(bob, { apps = { "bad name!" } }))
+    local many = {}
+    for index = 1, domain.directory.MAX_PROFILE_APPS + 1 do
+      many[index] = "app" .. index
+    end
+    t.ok(not domain.handlers.profile_set(bob, { apps = many }), "at most a few apps")
+    t.ok(not domain.handlers.profile_get({ sender = 7 }, {}), "needs a login")
+    t.ok(domain.dir:remove_user("bob"))
+    t.eq(domain.dir.data.profiles.bob, nil, "removed with the user")
+  end)
+
+  t.it("mail goes to users and groups and is read on any computer", function()
+    local domain = new_domain()
+    domain.dir:add_user("bob", "pw")
+    domain.dir:add_user("carol", "pw")
+    domain.dir:add_group("miners")
+    domain.dir:add_member("miners", "bob")
+    domain.dir:add_member("miners", "carol")
+    local admin = as_user(domain, login(domain, "admin", "secret"))
+    local bob = as_user(domain, login(domain, "bob", "pw"))
+    local carol = as_user(domain, login(domain, "carol", "pw"))
+    t.eq(domain.handlers.mail_send(admin, { to = "bob", text = "hi bob" }).sent, 1)
+    t.eq(domain.handlers.mail_send(admin, { to = "miners", text = "dig" }).sent, 2)
+    t.eq(domain.handlers.mail_send(domain.computer, { to = "bob", text = "iron low" }).sent, 1,
+      "joined computers send notices")
+    t.ok(not domain.handlers.mail_send(admin, { to = "nobody", text = "x" }))
+    t.ok(not domain.handlers.mail_send(admin, { to = "bob", text = "" }))
+    t.ok(not domain.handlers.mail_send({ sender = 3 }, { to = "bob", text = "x" }), "anonymous")
+
+    local box = domain.handlers.mail_list(bob, {})
+    t.eq(#box, 3)
+    t.eq(box[1].from, "pc1", "newest first, signed by the computer")
+    t.eq(box[2].to, "miners")
+    t.eq(domain.handlers.mail_unread(bob, {}).unread, 3)
+    t.eq(domain.handlers.profile_get(bob, {}).unread, 3, "one call at login: profile and mail")
+    t.eq(#domain.handlers.mail_list(carol, {}), 1, "each user has their own box")
+    t.ok(domain.handlers.mail_read(bob, { id = box[1].id }))
+    t.eq(domain.handlers.mail_unread(bob, {}).unread, 2)
+    t.ok(domain.handlers.mail_delete(bob, { id = box[3].id }))
+    t.eq(#domain.handlers.mail_list(bob, {}), 2)
+    t.ok(not domain.handlers.mail_delete(carol, { id = box[1].id }), "not carol's message")
+
+    for index = 1, domain.directory.MAX_MAIL + 5 do
+      domain.handlers.mail_send(admin, { to = "carol", text = "spam " .. index })
+    end
+    local full = domain.handlers.mail_list(carol, {})
+    t.eq(#full, domain.directory.MAX_MAIL, "the oldest go first")
+    t.eq(full[1].text, "spam " .. (domain.directory.MAX_MAIL + 5))
+    t.ok(domain.dir:remove_user("carol"))
+    t.eq(domain.dir.data.mail.carol, nil)
+  end)
+
+  t.it("new mail is announced where the recipient is logged in", function()
+    local domain = new_domain()
+    local sent = {}
+    domain.import("dc_handlers").env.send = function(id, message, protocol)
+      sent[#sent + 1] = { id = id, message = message, protocol = protocol }
+    end
+    domain.dir:add_user("bob", "pw")
+    domain.dir:add_user("carol", "pw")
+    local admin = as_user(domain, login(domain, "admin", "secret"))
+    login(domain, "bob", "pw") -- bob sits at computer 7 (pc1)
+    domain.handlers.mail_send(admin, { to = "bob", text = "lunch?" })
+    t.eq(#sent, 1)
+    t.eq(sent[1].id, 7)
+    t.eq(sent[1].protocol, "blockos.mail")
+    t.eq(sent[1].message.data.from, "admin")
+    t.eq(sent[1].message.data.unread, 1)
+    domain.handlers.mail_send(admin, { to = "carol", text = "hi" })
+    t.eq(#sent, 1, "carol is not logged in anywhere: nothing to announce")
   end)
 end

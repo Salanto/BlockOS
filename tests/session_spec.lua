@@ -153,4 +153,78 @@ return function(t)
     t.eq(user.source, "local")
     t.eq(missing, nil, "an unknown user is never logged in")
   end)
+
+  t.it("login hooks add apps and roaming settings; a failing hook is skipped", function()
+    local import = t.fresh_import()
+    local session = import("session")
+    local config = import("config")
+    session.set_login_hook("a", function(user)
+      return { apps = { "logistics" }, settings = { ["blockos.test.roams"] = user.name } }
+    end)
+    session.set_login_hook("b", function() error("controller down") end)
+    session.set_login_hook("c", function() return { apps = { "music" } } end)
+    local profile = session.profile_for({ name = "bob" })
+    t.eq(table.concat(profile.apps, ","), "logistics,music")
+    t.eq(profile.settings["blockos.test.roams"], "bob")
+    session.set_login_hook("c", nil)
+    t.eq(#session.profile_for({ name = "bob" }).apps, 1, "a hook can be removed")
+
+    config.define("blockos.test.roams", { description = "test", type = "string", roams = true })
+    config.define("blockos.test.local", { description = "test", type = "string" })
+    t.ok(config.roams("blockos.test.roams"))
+    t.ok(not config.roams("blockos.test.local"))
+    config.set_session({ ["blockos.test.roams"] = "bob", ["blockos.test.local"] = "x" })
+    t.eq(config.get("blockos.test.roams"), "bob", "a roaming value applies for the session")
+    t.eq(config.get_system("blockos.test.roams"), nil, "services never see it")
+    t.eq(config.get("blockos.test.local"), nil, "other keys never come from a profile")
+    config.set_session(nil)
+    t.eq(config.get("blockos.test.roams"), nil, "gone after logout")
+    settings.undefine("blockos.test.roams")
+    settings.undefine("blockos.test.local")
+  end)
+
+  t.it("the rom's multishell can start the session's apps in its first tab", function()
+    local session = t.fresh_import()("session")
+    local file = fs.open("/rom/programs/advanced/multishell.lua", "r")
+    local source = file.readAll()
+    file.close()
+    local patched = session.patch_multishell(source)
+    local start = source:find("launchProcess%(%s*true")
+    t.ok(patched, "the rom's multishell starts its first shell as expected: "
+      .. tostring(start and source:sub(start, start + 120)))
+    t.ok(patched and patched:find('shell.lua", ...)', 1, true))
+    t.ok(load(patched, "=multishell"), "still valid Lua")
+    t.eq(session.patch_multishell("print('something else')"), nil)
+    -- CC:Tweaked 1.115's own multishell (CraftOS-PC's rom differs).
+    local tweaked = table.concat({
+      "launchProcess(true, {",
+      '    ["shell"] = shell,',
+      '}, "/rom/programs/shell.lua")',
+    }, "\n")
+    local changed = session.patch_multishell(tweaked)
+    t.ok(changed and changed:find('shell.lua", ...)', 1, true), tostring(changed))
+  end)
+
+  t.it("the mail sound comes from a setting and plays on a speaker", function()
+    local import = t.fresh_import()
+    local domain = import("domain")
+    t.eq(domain.mail_sound("note:chime").kind, "note")
+    t.eq(domain.mail_sound("file:/sounds/mail.dfpwm").value, "/sounds/mail.dfpwm")
+    t.eq(domain.mail_sound("sound:minecraft:entity.villager.yes").value,
+      "minecraft:entity.villager.yes")
+    t.eq(domain.mail_sound("off"), nil)
+    t.ok(domain.mail_event({ to = "bob", from = "alice", unread = 1 }))
+    t.ok(not domain.mail_event({ to = "bob" }), "checked against the schema before sending")
+    local sound = import("sound")
+    local notes = {}
+    sound.env.peripheral = t.fake_peripherals({
+      speaker_0 = { types = { "speaker" }, methods = {
+        playNote = function(_, _, pitch) notes[#notes + 1] = pitch end,
+      } },
+    })
+    t.ok(sound.play(domain.mail_sound("note:chime"), { 18, 14 }))
+    t.eq(table.concat(notes, ","), "18,14", "ding dong")
+    sound.env.peripheral = t.fake_peripherals({})
+    t.ok(not sound.play({ kind = "note", value = "bell" }), "no speaker, no sound")
+  end)
 end

@@ -17,6 +17,10 @@
 --   group_add                     domain-admins, or a module's admins creating
 --                                 <module>-... roles managed by themselves
 --   computer_config               a joined computer: what it should have installed and set
+--   profile_get, profile_set      the logged-in user's own roaming profile
+--   mail_send                     a logged-in user, or a joined computer (notices)
+--   mail_list, mail_read,         the logged-in user's own mailbox
+--   mail_delete, mail_unread
 --   list_users, list_groups,      any logged-in domain user (read only)
 --   list_computers, list_services,
 --   list_computer_roles,
@@ -28,6 +32,7 @@
 -- @module dc_handlers
 
 local directory = import("directory")
+local domain = import("domain") -- shared protocol declarations (mail)
 local rpc = import("rpc")
 
 -- Argument schemas of the operations (see wire.validate).
@@ -68,6 +73,12 @@ local ARGS = {
     settings = { type = "table", optional = true },
   },
   computer_assign = { hostname = NAME, roles = "table" },
+  mail_send = { to = NAME, text = { type = "string", max = 300 } },
+  mail_id = { id = "number" },
+  profile_set = {
+    apps = { type = "table", optional = true },
+    settings = { type = "table", optional = true },
+  },
 }
 
 local dc_handlers = {}
@@ -84,6 +95,11 @@ dc_handlers.DISK_FULL = "the domain controller's disk is full; changes are refus
 --   save_sessions() optional: persist user sessions
 -- @tparam[opt] table clock { now = seconds function, today = day function }
 -- @treturn table { [op] = function(request_ctx, args) }
+--- How events leave the controller (tests replace it).
+dc_handlers.env = {
+  send = function(id, message, protocol) rednet.send(id, message, protocol) end,
+}
+
 function dc_handlers.new(dir, storage, clock)
   clock = clock or {}
   local now = clock.now or function() return math.floor(os.epoch("utc") / 1000) end
@@ -181,7 +197,7 @@ function dc_handlers.new(dir, storage, clock)
     if not hostname then
       return nil, err
     end
-    local session, login_error = dir:login(args.name, args.password, now())
+    local session, login_error = dir:login(args.name, args.password, now(), ctx.sender)
     if session then
       save_sessions()
     end
@@ -446,6 +462,91 @@ function dc_handlers.new(dir, storage, clock)
     return manager_change(ctx, args.group, function()
       return dir:set_everyone(args.group, args.everyone)
     end)
+  end)
+
+  -- Mail ---------------------------------------------------------------------
+
+  -- From a user, or from a joined computer (system notices, signed by its hostname).
+  handlers.mail_send = with_args(ARGS.mail_send, function(ctx, args)
+    local from
+    if ctx.token then
+      local user, err = require_user(ctx)
+      if not user then
+        return nil, err
+      end
+      from = user.name
+    else
+      local hostname, err = require_computer(ctx)
+      if not hostname then
+        return nil, err
+      end
+      from = hostname
+    end
+    local time = now()
+    local recipients = nil
+    local result, err = change(function()
+      local sent, names_or_error = dir:send_mail(from, args.to, args.text, time)
+      if not sent then
+        return nil, names_or_error
+      end
+      recipients = names_or_error
+      return { sent = sent }
+    end)
+    -- "You've got mail": straight to wherever each recipient is logged in.
+    for _, name in ipairs(result and recipients or {}) do
+      local event = domain.mail_event({ to = name, from = from,
+        unread = dir:unread_mail(name) })
+      for _, id in ipairs(event and dir:computers_of(name, now()) or {}) do
+        dc_handlers.env.send(id, event, domain.MAIL_PROTOCOL)
+      end
+    end
+    return result, err
+  end)
+
+  local function own_mail(fn)
+    return function(ctx, args)
+      local user, err = require_user(ctx)
+      if not user then
+        return nil, err
+      end
+      return fn(user.name, args or {})
+    end
+  end
+
+  handlers.mail_list = own_mail(function(name)
+    return dir:list_mail(name)
+  end)
+
+  handlers.mail_unread = own_mail(function(name)
+    return { unread = dir:unread_mail(name) }
+  end)
+
+  handlers.mail_read = with_args(ARGS.mail_id, own_mail(function(name, args)
+    return change(function() return dir:change_mail(name, args.id, false) end)
+  end))
+
+  handlers.mail_delete = with_args(ARGS.mail_id, own_mail(function(name, args)
+    return change(function() return dir:change_mail(name, args.id, true) end)
+  end))
+
+  -- Roaming profiles: each user reads and changes only their own.
+  function handlers.profile_get(ctx)
+    local user, err = require_user(ctx)
+    if not user then
+      return nil, err
+    end
+    -- Unread mail rides along, so a login needs one call to the controller.
+    local profile = dir:get_profile(user.name)
+    profile.unread = dir:unread_mail(user.name)
+    return profile
+  end
+
+  handlers.profile_set = with_args(ARGS.profile_set, function(ctx, args)
+    local user, err = require_user(ctx)
+    if not user then
+      return nil, err
+    end
+    return change(function() return dir:set_profile(user.name, args) end)
   end)
 
   -- Users may change their own password; admins may change anyone's.

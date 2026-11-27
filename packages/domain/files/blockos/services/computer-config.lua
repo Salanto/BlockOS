@@ -6,7 +6,7 @@
 -- when nobody is logged in; when someone is, a notice says an update is ready and it is
 -- applied after they log out. A forced update applies at once.
 
-local UPDATE_NOW_EVENT = "blockos_update_now"
+local UPDATE_NOW_EVENT = import("computer_config").UPDATE_NOW_EVENT
 local FIRST_CHECK_SECONDS = 20
 local PENDING_POLL_SECONDS = 10
 

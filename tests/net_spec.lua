@@ -92,4 +92,22 @@ return function(t)
     t.eq(event.data.from, "alice@#" .. os.getComputerID())
     t.eq(#event.data.text, messages.MAX_LENGTH)
   end)
+
+  t.it("closed modem sides are remembered and can be opened again", function()
+    local net = fresh_net()
+    local before = settings.get("blockos.net.closed_sides")
+    net.close_side("left")
+    net.close_side("back")
+    t.ok(net.is_closed_side("left"))
+    t.ok(net.is_closed_side("back"))
+    t.ok(not net.is_closed_side("right"))
+    net.close_side("left", true)
+    t.ok(not net.is_closed_side("left"), "allowed again")
+    t.ok(net.is_closed_side("back"))
+    if before == nil then
+      settings.unset("blockos.net.closed_sides")
+    else
+      settings.set("blockos.net.closed_sides", before)
+    end
+  end)
 end
