@@ -118,9 +118,11 @@ local function draw_map(look, view, x, y, width, height)
   local status, status_role = turtle_view.status_text(look, view.layer)
   ui.text_at(x, y, ui.fit(status, width), status_role)
   ui.text_at(x, y + 1, ui.fit(turtle_view.near_text(look), width), "dim")
-  for index, row in ipairs(turtle_view.rows(look, width, height - 2, view.layer)) do
+  local is_colour = blockos.device.is_advanced() -- real block colours; symbols on basic
+  for index, row in ipairs(turtle_view.rows(look, width, height - 2, view.layer, is_colour)) do
     for column = 1, #row.text do
-      ui.text_at(x + column - 1, y + 1 + index, row.text:sub(column, column), row.roles[column])
+      ui.text_at(x + column - 1, y + 1 + index, row.text:sub(column, column), row.roles[column],
+        row.backgrounds[column] or nil)
     end
   end
 end

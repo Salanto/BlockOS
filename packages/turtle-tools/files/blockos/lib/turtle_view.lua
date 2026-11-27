@@ -39,6 +39,65 @@ local PATTERNS = {
   { "plant", "flower" }, { "plant", "vine" },
 }
 
+--- Block colours on colour screens: the first pattern matching the short name wins.
+-- Values are ui map roles (map_<colour>); ores are drawn as a speck of their colour.
+local COLOURS = {
+  { "lava", "red" }, { "magma", "red" }, { "water", "blue" },
+  { "grass_block", "green" }, { "moss", "green" }, { "leaves", "green" },
+  { "vine", "green" }, { "sapling", "green" }, { "cactus", "green" }, { "kelp", "green" },
+  { "lily", "green" }, { "fern", "green" }, { "^grass$", "green" }, { "^tall_grass", "green" },
+  { "slime", "lime" }, { "melon", "lime" }, { "emerald", "lime" },
+  { "coal", "black" }, { "obsidian", "purple" }, { "amethyst", "purple" },
+  { "diamond", "light_blue" }, { "ice", "light_blue" }, { "glass", "light_blue" },
+  { "prismarine", "cyan" }, { "warped", "cyan" },
+  { "lapis", "blue" }, { "redstone", "red" }, { "netherrack", "red" },
+  { "nether_brick", "red" }, { "crimson", "red" }, { "red_", "red" },
+  { "gold", "yellow" }, { "brass", "yellow" }, { "sand", "yellow" }, { "hay", "yellow" },
+  { "glowstone", "yellow" }, { "sponge", "yellow" }, { "birch", "yellow" },
+  { "end_stone", "yellow" },
+  { "copper", "orange" }, { "terracotta", "orange" }, { "pumpkin", "orange" },
+  { "acacia", "orange" }, { "iron", "pink" }, { "cherry", "pink" },
+  { "dirt", "brown" }, { "podzol", "brown" }, { "mud", "brown" }, { "farmland", "brown" },
+  { "log", "brown" }, { "wood", "brown" }, { "planks", "brown" }, { "chest", "brown" },
+  { "barrel", "brown" }, { "crafting_table", "brown" }, { "composter", "brown" },
+  { "soul", "brown" },
+  { "deepslate", "grey" }, { "basalt", "grey" }, { "blackstone", "grey" },
+  { "bedrock", "grey" }, { "tuff", "grey" }, { "gravel", "grey" },
+  { "snow", "white" }, { "quartz", "white" }, { "diorite", "white" }, { "calcite", "white" },
+  { "bone", "white" }, { "wool", "white" },
+  { "purpur", "magenta" }, { "shulker", "purple" },
+}
+
+--- The map colour role of a block ("map_light_grey" for anything not listed).
+-- @tparam string name
+-- @treturn string
+function turtle_view.colour(name)
+  local short = (name or ""):gsub("^[^:]*:", "")
+  for _, entry in ipairs(COLOURS) do
+    if short:find(entry[1]) then
+      return "map_" .. entry[2]
+    end
+  end
+  return "map_light_grey"
+end
+
+-- How a block looks on a colour screen: { char, role, background }. Ores are a speck of
+-- their colour in the rock they sit in.
+local function colour_cell(name, kind)
+  local colour = turtle_view.colour(name)
+  local short = (name or ""):gsub("^[^:]*:", "")
+  if short:find("_ore$") then
+    local rock = (short:find("deepslate") and "map_grey")
+      or (short:find("nether") and "map_red") or "map_light_grey"
+    return { char = "*", role = colour, background = rock }
+  elseif kind == "liquid" or kind == "lava" then
+    return { char = "~", role = "map_white", background = colour }
+  elseif kind == "container" or kind == "machine" then
+    return { char = turtle_view.GLYPHS[kind].char, role = "map_white", background = colour }
+  end
+  return { char = " ", role = "text", background = colour }
+end
+
 --- What kind of block a registry name is.
 -- @tparam string name e.g. "minecraft:oak_log"
 -- @treturn string a key of GLYPHS
@@ -83,8 +142,10 @@ end
 -- @tparam number width
 -- @tparam number height
 -- @tparam[opt] number layer Height shown, relative to the turtle (default 0).
--- @treturn {table...} rows, each { text = string, roles = { role per character } }
-function turtle_view.rows(look, width, height, layer)
+-- @tparam[opt] boolean is_colour Real block colours (advanced screens); else symbols.
+-- @treturn {table...} rows, each { text = string, roles = { role per character },
+--   backgrounds = { background role or false per character } }
+function turtle_view.rows(look, width, height, layer, is_colour)
   layer = layer or 0
   local heading = look.heading
   local forward = DIRECTIONS[heading or 0]
@@ -110,23 +171,30 @@ function turtle_view.rows(look, width, height, layer)
 
   local rows = {}
   for row = 1, height do
-    local chars, roles = {}, {}
+    local chars, roles, backgrounds = {}, {}, {}
     for column = 1, width do
       local ahead, side = center_y - row, column - center_x
       local glyph
       if ahead == 0 and side == 0 and layer == 0 then
         glyph = turtle_view.GLYPHS[heading and "turtle" or "turtle_lost"]
       else
-        local kind = turtle_view.kind(block_at(ahead, side, layer))
-        local below = turtle_view.kind(block_at(ahead, side, layer - 1))
-        if kind == "unknown" and below ~= "unknown" then
-          kind = "floor" -- nothing here, but something to stand on
+        local name = block_at(ahead, side, layer)
+        local kind = turtle_view.kind(name)
+        local below_name = block_at(ahead, side, layer - 1)
+        if kind == "unknown" and turtle_view.kind(below_name) ~= "unknown" then
+          -- Nothing here, but something to stand on: a dot (in the floor's colour).
+          glyph = is_colour and { char = ".", role = turtle_view.colour(below_name) }
+            or turtle_view.GLYPHS.floor
+        elseif is_colour and kind ~= "unknown" then
+          glyph = colour_cell(name, kind)
+        else
+          glyph = turtle_view.GLYPHS[kind]
         end
-        glyph = turtle_view.GLYPHS[kind]
       end
       chars[column], roles[column] = glyph.char, glyph.role
+      backgrounds[column] = glyph.background or false
     end
-    rows[row] = { text = table.concat(chars), roles = roles }
+    rows[row] = { text = table.concat(chars), roles = roles, backgrounds = backgrounds }
   end
   return rows
 end

@@ -136,6 +136,42 @@ return function(t)
     t.ok(turtle_view.status_text({ has_scanner = false, near = {} }, 0):find("no Geo Scanner"))
   end)
 
+  t.it("advanced screens get real block colours, basic ones keep the symbols", function()
+    local import = t.fresh_import()
+    local turtle_view = import("turtle_view")
+    t.eq(turtle_view.colour("minecraft:grass_block"), "map_green")
+    t.eq(turtle_view.colour("minecraft:oak_planks"), "map_brown")
+    t.eq(turtle_view.colour("minecraft:sand"), "map_yellow")
+    t.eq(turtle_view.colour("minecraft:deepslate"), "map_grey")
+    t.eq(turtle_view.colour("minecraft:stone"), "map_light_grey")
+    local look = {
+      heading = 0, -- north: ahead is -z
+      has_scanner = true,
+      near = {},
+      scan = {
+        palette = { "minecraft:grass_block", "minecraft:iron_ore", "minecraft:water",
+          "minecraft:sand" },
+        cells = {
+          { 0, 0, -1, 1 }, -- grass ahead
+          { 1, 0, 0, 2 }, -- iron ore to the right
+          { -1, 0, 0, 3 }, -- water to the left
+          { 0, -1, 1, 4 }, -- sand under the block behind
+        },
+      },
+    }
+    local rows = turtle_view.rows(look, 3, 3, 0, true)
+    t.eq(rows[1].backgrounds[2], "map_green", "grass ahead is a green cell")
+    t.eq(rows[2].text, "~\24*")
+    t.eq(rows[2].backgrounds[1], "map_blue")
+    t.eq(rows[2].roles[3], "map_pink", "an iron speck")
+    t.eq(rows[2].backgrounds[3], "map_light_grey", "in stone")
+    t.eq(rows[3].text:sub(2, 2), ".")
+    t.eq(rows[3].roles[2], "map_yellow", "floor dots take the floor's colour")
+    local plain = turtle_view.rows(look, 3, 3, 0, false)
+    t.eq(plain[1].text, " # ", "basic screens: symbols")
+    t.eq(plain[1].backgrounds[2], false)
+  end)
+
   t.it("look is part of the remote protocol and needs a driver", function()
     local import = t.fresh_import()
     import("rpc").set_user_validator(function(token)
