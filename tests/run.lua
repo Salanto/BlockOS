@@ -69,11 +69,22 @@ end
 -- The `t` helper passed to every spec
 ------------------------------------------------------------------------------
 
+-- Real time in seconds (os.clock is CPU time, which misses waiting).
+local function now()
+  return os.epoch("utc") / 1000
+end
+
 local t = {}
 
 t.repo = repo_dir
 t.sandbox = SANDBOX
 t.computer_type = expected_type
+
+--- Note how long the current test took so far (shown in the report), for tracing
+-- slow steps: t.lap("build").
+function t.lap(label)
+  report(string.format("        %s at %.1fs", label, now() - t.started))
+end
 
 --- Fail unless `value` is truthy.
 function t.ok(value, message)
@@ -253,11 +264,6 @@ function t.fake_chest(slots)
 end
 
 --- Register a test.
--- Real time in seconds (os.clock is CPU time, which misses waiting).
-local function now()
-  return os.epoch("utc") / 1000
-end
-
 -- Tests slower than this show their time, so slow runs can be traced.
 local SLOW_SECONDS = 1
 
@@ -270,6 +276,7 @@ function t.it(name, fn)
   t.reset_sandbox()
   _G.blockos = nil
   local started = now()
+  t.started = started
   progress("  ...   " .. name)
   local ok, err = pcall(fn)
   if ok then

@@ -34,9 +34,12 @@ return function(t)
   t.it("installs from the disk image, then upgrades and keeps the accounts", function()
     local out1, out2 = t.sandbox .. "/dist1", t.sandbox .. "/dist2"
     build("0.1.0", out1)
+    t.lap("built 0.1.0")
     build("0.2.0", out2)
+    t.lap("built 0.2.0")
 
     t.ok(run_disk_installer(out1 .. "/disk", "install"), "install failed")
+    t.lap("installed")
     local import = t.fresh_import()
     local pkg, auth, paths = import("pkg"), import("auth"), import("paths")
     t.eq(pkg.installed_version(), "0.1.0")
@@ -46,11 +49,13 @@ return function(t)
 
     auth.add_user("guest", "pw", false)
     t.ok(run_disk_installer(out2 .. "/disk", "upgrade"), "upgrade failed")
+    t.lap("upgraded")
     t.eq(pkg.installed_version(), "0.2.0")
     t.ok(auth.check("guest", "pw"), "accounts lost in the upgrade")
     t.ok(fs.exists(paths.previous() .. "/boot.lua"), "previous version not kept")
 
     t.ok(run_disk_installer(out2 .. "/disk", "rollback"), "rollback failed")
+    t.lap("rolled back")
     t.eq(pkg.installed_version(), "0.1.0")
   end)
 
