@@ -59,12 +59,14 @@ may log in, which packages a computer may pull, and who may use services and con
 | AD | BlockOS |
 |---|---|
 | Domain / domain controller | `dcpromo` (package `domain-controller`) creates a domain such as `home`; the controller serves protocol `blockos.domain`. It is **exclusive**: no other optional packages on it unless `--force`. |
-| Users and groups | Stored on the controller. Flat groups; built in: `domain-admins` and `domain-users` (everyone). |
+| Users and groups | Stored on the controller. Flat groups; built in: `domain-admins` and `domain-users` (everyone). A group may be open to `everyone` (every domain user, now and later) and may be `managed_by` another group, whose members can change it without a domain admin. |
+| Module roles | Packages declare roles in their manifest. Not joined: the module is open (standalone). Joined: still open until a domain admin runs the guided `domain setup <package>`, which creates the roles (defaults: admins = the installing admin, users = everyone); from then on access comes from the roles (`roles.allows`). A module's `<module>-admins` role manages its other roles and may create more (`<module>-...`, e.g. one per storage node). The mode is read from the directory (`group_get`), so every computer agrees. |
 | Computer accounts | `domain join` needs any domain user's login (friends only: joining is not guarded). The computer gets a long-lived **computer token** (on disk on both sides; revoked by removing the account). It authorises status reports, user logins, registering its own service records and system-to-system calls (`rpc.require_computer`). `domain leave` needs no password when a domain user is logged in. |
 | Logging in | The password goes once, in plain text, to the controller, which returns a **session token** (24 hours of real time, saved on the controller so it survives restarts). Services check the token with the controller on **every** request (`rpc.require_user`): no cached logins, so logout and group changes apply at once. When a program finds its login expired it asks for the password once and retries (`rpc.call` option `relogin`; never in services). Farm computers, displays and turtles can log a local user in at boot (`blockos autologin <user>`). |
 | Local accounts | Always available as `.\name`, e.g. when the controller is down. A bare name means a domain user once joined. Domain admins are admins on every joined computer. |
 | AD-integrated DNS | The controller holds host records (`<host>.<domain>`, updated by each computer itself) and service records (e.g. `pkg -> storage`). Services register records pointing at their own computer at start (`domain.register_service`); domain-admins can add any record. |
 | Users and Computers tool | `dsa` (full-screen) and `domain` (command line). |
+| Group policy (computer roles) | Named computer roles in the directory (`computer_roles`: packages + `blockos.*` settings), assigned to computers in `dsa`/`domain computer assign`. Each joined computer's `computer-config` service fetches its merged config (`computer_config`, computer token) after boot, every `blockos.domain.update_interval` s (30 min) and on `blockos_update_now` (`domain update`, later remote admin), applies settings, installs missing packages and updates changed ones (only those) from the pkg server or GitHub; it reboots when nobody is logged in, otherwise a notice says the update applies after logout. `blockos.domain.auto_update = false` turns automatic installs off. Packages are never removed by roles. |
 
 Login providers: `auth.register_provider(name, provider)`; core has `local`, the `domain`
 package adds `domain`. Left out on purpose: organisational units, group policy, trusts,
@@ -89,6 +91,11 @@ Things to keep in mind:
   password prompts and admin chores, give common actions a short path, and don't add
   permission tiers or safety rules that only matter against strangers. Keep only safeguards
   against *accidents* (bad updates, full disks, missed events).
+
+- **Standalone first, managed in a domain:** every module works on its own and open, with no
+  domain needed. In a domain it switches to managed mode only after a guided setup by a domain
+  admin, and its roles start open to everyone. Joining never locks anyone out; complexity
+  (e.g. one person's storage node kept private) is opt-in. See Module roles above.
 
 - **Build our own:** this is a hobby project to build a proper network stack ourselves. Do not
   pull in or copy existing community OSes, networking libraries, or crypto/DNS packages; write
@@ -215,7 +222,9 @@ minutes marks the service `failed`. `condition` returning false marks it `n/a`.
 |--------------------|----------------------------------------------------------------|
 | `blockos`          | rednet's built-in `rednet.host` / `rednet.lookup` hostname records |
 | `blockos.announce` | event `announce` `{ hostname, kind, version, services, info, hello? }`, broadcast at boot and every 5 min, **only by computers not in a domain**; a `hello` gets a direct reply |
-| `blockos.domain`   | rpc. join, leave, login, validate, logout, validate_computer, host_update, resolve, list_hosts, service_find/add/del/register/unregister, list_users/groups/computers/services, user_add/del/passwd/enable, group_add/del/addmember/rmmember, computer_remove, dc_status. The controller also hosts this protocol under the domain name, so `rednet.lookup("blockos.domain", "home")` finds it. |
+| `blockos.domain`   | rpc. join, leave, login, validate, logout, validate_computer, host_update, resolve, list_hosts, service_find/add/del/register/unregister, list_users/groups/computers/services, user_add/del/passwd/enable, group_add/del/addmember/rmmember/set_everyone/set_manager, group_get (any joined computer: role info for modules), computer_role_set/del, computer_assign, list_computer_roles, computer_config (the calling computer's merged roles), computer_remove, dc_status. The controller also hosts this protocol under the domain name, so `rednet.lookup("blockos.domain", "home")` finds it. |
+| `blockos.manage`   | rpc, served by the `manage` service on every joined computer; domain-admins only. status (version, uptime, user, services, disk, packages, turtle fuel/position, notices), reboot, update (applies roles and updates now, even if someone is logged in), service `{ name, action }`, log `{ lines }`, shell_open `{ width, height }`. |
+| `blockos.manage.shell` | events of a remote shell session (`remote_shell.lua`, `rsh <computer>`): target -> viewer `frame` `{ session, lines = { { y, text, fg, bg } }, x, y, blink }` (changed lines only) and `closed`; viewer -> target `input` `{ session, event }` (keys, chars, paste, mouse, terminate), `ping`, `close`. The session runs a real shell (BlockOS path, as the admin who opened it) in a hidden window; local keyboard input never reaches it; it closes after 60 s without ping. |
 | `blockos.pkg`      | rpc. index (filtered by the caller's groups), fetch `{ name }` (raw .pkg), publish `{ raw }` (domain-admins). |
 | `blockos.stock`    | rpc. status, alerts (viewers, admins or listed computers); catalog, watches (viewers, admins); outputs, watch, unwatch, watch_all, settings, test_sound, access, set_access (admins). Found via the domain service record `stock` / `stock-<name>`. |
 | `blockos.remote`   | rpc, served by the `turtle-remote` service on joined turtles. info, act `{ action, slot? }` (domain users; only the actions listed in `turtle_remote.ACTIONS`, plus select). Never retried by the driver, so a lost answer cannot move a turtle twice. |
@@ -264,7 +273,9 @@ Peer liveness uses the local receive time, never the sender's clock.
   `blockos.pkg` (the server hosts it, for computers without a domain). Otherwise GitHub;
   `--github` / `--tag` force it.
 - Manifest flags: `optional` (not in the base install), `exclusive` (must run alone),
-  `media_only` (path prefixes kept in the package for building disks but not installed).
+  `media_only` (path prefixes kept in the package for building disks but not installed),
+  `roles` (directory roles for managed mode: `{ { name, default = "everyone" | "installer" |
+  "nobody", description } }`, kept in `packages.db` for `roles.lua`).
 - **Storage housekeeping:** `blockos status` shows where disk space goes; `blockos cleanup`
   deletes the previous version (no rollback afterwards) and the old log. Boot finishes or
   removes interrupted `.tmp` writes in `/etc/blockos`. The domain controller saves only
@@ -276,6 +287,11 @@ Peer liveness uses the local receive time, never the sender's clock.
   The build shrinks packaged Lua files (comment-only lines emptied, indentation dropped) without
   changing line numbers, so keep writing fully commented source. `[[ ]]` long strings are not
   allowed in package files (the shrinker would break them).
+- **Package versions:** each package's version is the release it last changed in. The release
+  build downloads the latest release's `index.lua` and compares each package's content sum
+  (`pkg.content_sum`: files and manifest, not the version); unchanged packages keep their
+  version, changed ones get the tag. `pkg update` lists and downloads only packages whose
+  version differs (`pkg.changes`). The tag names the release as a whole (`index.version`).
 - Releases: push a tag `vX.Y.Z` (or `vX.Y.Z-rcN` for a prerelease). CI tests, builds
   (`tools/build.sh`) and publishes `index.lua`, `*.pkg`, `install.lua`, `lz.lua`, `blockos-disk.zip`
   and `blockos-addon-<name>.zip` per optional package. Online installs use

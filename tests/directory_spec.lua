@@ -273,4 +273,106 @@ return function(t)
     t.ok(domain.handlers.leave(ctx, {}))
     t.ok(not domain.dir:computer_by_token(domain.computer.computer_token))
   end)
+
+  -- Managed mode ---------------------------------------------------------------
+
+  t.it("an everyone group includes every user, also ones added later", function()
+    local domain = new_domain()
+    local admin = as_user(domain, login(domain, "admin", "secret"))
+    t.ok(domain.handlers.group_add(admin, { name = "turtle-drivers", everyone = true }))
+    domain.dir:add_user("carol", "pw")
+    t.ok(domain.dir:is_member("turtle-drivers", "carol"), "added after the group")
+    local carol = login(domain, "carol", "pw")
+    local found = false
+    for _, group in ipairs(carol.groups) do
+      found = found or group == "turtle-drivers"
+    end
+    t.ok(found, "logins carry everyone groups")
+    t.ok(domain.handlers.group_set_everyone(admin, { group = "turtle-drivers", everyone = false }))
+    t.ok(not domain.dir:is_member("turtle-drivers", "carol"))
+  end)
+
+  t.it("a module's admins manage its roles without a domain admin", function()
+    local domain = new_domain()
+    domain.dir:add_user("alice", "pw")
+    domain.dir:add_user("bob", "pw")
+    local admin = as_user(domain, login(domain, "admin", "secret"))
+    t.ok(domain.handlers.group_add(admin,
+      { name = "logistics-admins", managed_by = "logistics-admins" }))
+    t.ok(domain.handlers.group_addmember(admin, { group = "logistics-admins", user = "alice" }))
+    t.ok(domain.handlers.group_add(admin,
+      { name = "logistics-users", everyone = true, managed_by = "logistics-admins" }))
+
+    local alice = as_user(domain, login(domain, "alice", "pw"))
+    local bob = as_user(domain, login(domain, "bob", "pw"))
+    t.ok(domain.handlers.group_set_everyone(alice, { group = "logistics-users", everyone = false }))
+    t.ok(domain.handlers.group_addmember(alice, { group = "logistics-users", user = "bob" }))
+    t.ok(not domain.handlers.group_addmember(bob, { group = "logistics-users", user = "bob" }),
+      "bob is not a logistics admin")
+    t.ok(not domain.handlers.group_addmember(alice, { group = "domain-admins", user = "alice" }),
+      "module admins can't touch other groups")
+
+    t.ok(domain.handlers.group_add(alice,
+      { name = "logistics-node-ars", managed_by = "logistics-admins" }), "a role per node")
+    t.ok(not domain.handlers.group_add(alice,
+      { name = "pkg-secret", managed_by = "logistics-admins" }),
+      "only roles of their own module")
+    t.ok(not domain.handlers.group_add(alice, { name = "logistics-x" }), "must be managed by them")
+    t.ok(not domain.handlers.group_set_manager(alice, { group = "logistics-users" }),
+      "only domain admins change who manages a group")
+  end)
+
+  t.it("modules read role info with the computer's own token", function()
+    local domain = new_domain()
+    local admin = as_user(domain, login(domain, "admin", "secret"))
+    domain.handlers.group_add(admin, { name = "turtle-drivers", everyone = true })
+    local info = domain.handlers.group_get(domain.computer, { name = "turtle-drivers" })
+    t.eq(info.everyone, true)
+    local missing, err = domain.handlers.group_get(domain.computer, { name = "logistics-users" })
+    t.ok(not missing)
+    t.eq(err, "no such group", "a module that is not set up")
+    t.ok(not domain.handlers.group_get({ sender = 3 }, { name = "turtle-drivers" }),
+      "unjoined computers may not ask")
+  end)
+
+  -- Computer roles -------------------------------------------------------------
+
+  t.it("computer roles merge into what a computer should have", function()
+    local domain = new_domain()
+    local admin = as_user(domain, login(domain, "admin", "secret"))
+    t.ok(domain.handlers.computer_role_set(admin, { name = "logistics-node",
+      packages = { "logistics-node", "logistics" } }))
+    t.ok(domain.handlers.computer_role_set(admin, { name = "farm-display", packages = { "music" },
+      settings = { ["blockos.autologin"] = "farmer", ["blockos.logistics.board"] = "monitor_0" } }))
+    t.ok(domain.handlers.computer_assign(admin,
+      { hostname = "pc1", roles = { "logistics-node", "farm-display" } }))
+
+    local config = domain.handlers.computer_config(domain.computer, {})
+    t.eq(table.concat(config.packages, ","), "logistics,logistics-node,music")
+    t.eq(config.settings["blockos.autologin"], "farmer")
+    t.ok(not domain.handlers.computer_config({ sender = 3 }, {}), "only joined computers ask")
+
+    local roles = domain.handlers.list_computer_roles(admin, {})
+    t.eq(roles[1].name, "farm-display")
+    t.eq(roles[1].computers[1], "pc1")
+    t.eq(domain.handlers.list_hosts()[1].roles[2], "farm-display")
+  end)
+
+  t.it("computer roles are checked and only admins change them", function()
+    local domain = new_domain()
+    domain.dir:add_user("bob", "pw")
+    local admin = as_user(domain, login(domain, "admin", "secret"))
+    local bob = as_user(domain, login(domain, "bob", "pw"))
+    t.ok(not domain.handlers.computer_role_set(bob, { name = "x", packages = {} }),
+      "bob is no admin")
+    t.ok(not domain.handlers.computer_role_set(admin,
+      { name = "bad", packages = {}, settings = { ["shell.allow_disk_startup"] = false } }),
+      "only blockos.* settings")
+    t.ok(not domain.handlers.computer_assign(admin, { hostname = "pc1", roles = { "missing" } }))
+    t.ok(domain.handlers.computer_role_set(admin, { name = "media", packages = { "music" } }))
+    t.ok(domain.handlers.computer_assign(admin, { hostname = "pc1", roles = { "media" } }))
+    t.ok(domain.handlers.computer_role_del(admin, { name = "media" }))
+    local after = domain.handlers.computer_config(domain.computer, {})
+    t.eq(#after.packages, 0, "taken off the computer")
+  end)
 end

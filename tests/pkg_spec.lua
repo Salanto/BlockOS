@@ -206,4 +206,41 @@ return function(t)
     t.ok(not fs.exists(paths.root() .. "/installer"), "installer copy installed")
     t.ok(core.files["blockos/installer/disk.lua"], "the package itself keeps the file")
   end)
+
+  t.it("a package's content sum ignores its version but not its files", function()
+    local pkg = t.fresh_import()("pkg")
+    local files = {
+      ["blockos/bin/music.lua"] = "print(1)",
+      ["blockos/lib/music.lua"] = "return {}",
+    }
+    local a = pkg.content_sum({ name = "music", version = "0.3.0", optional = true }, files)
+    local b = pkg.content_sum({ name = "music", version = "0.5.0", optional = true }, files)
+    t.eq(a, b, "only the version differs")
+    files["blockos/bin/music.lua"] = "print(2)"
+    t.ok(pkg.content_sum({ name = "music", version = "0.5.0", optional = true }, files) ~= a,
+      "a changed file changes the sum")
+    local plain = pkg.content_sum({ name = "music", optional = false }, { ["x"] = "1" })
+    local optional = pkg.content_sum({ name = "music", optional = true }, { ["x"] = "1" })
+    t.ok(plain ~= optional, "manifest fields count")
+  end)
+
+  t.it("an update only lists packages whose version changed", function()
+    local pkg = t.fresh_import()("pkg")
+    local index = { version = "0.5.0", packages = {
+      core = { version = "0.5.0" }, net = { version = "0.4.0" }, music = { version = "0.3.0" },
+      domain = { version = "0.5.0" },
+    } }
+    local installed = {
+      core = { version = "0.4.0" },
+      net = { version = "0.4.0" },
+      music = { version = "0.3.0" },
+    }
+    local changes = pkg.changes(index, { "core", "domain", "music", "net" }, installed)
+    t.eq(#changes, 2)
+    t.eq(changes[1].name, "core")
+    t.eq(changes[1].from, "0.4.0")
+    t.eq(changes[1].to, "0.5.0")
+    t.eq(changes[2].name, "domain")
+    t.eq(changes[2].from, nil, "new packages have no old version")
+  end)
 end

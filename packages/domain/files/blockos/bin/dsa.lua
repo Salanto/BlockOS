@@ -1,10 +1,11 @@
 -- dsa: Directory Service Admin, a full-screen tool for the domain (after AD's
 -- "Users and Computers"). Keyboard first; mouse clicks work on advanced devices.
 --
---   1-4 / Tab   switch tab        Up/Down/PgUp/PgDn   move
+--   1-5 / Tab   switch tab        Up/Down/PgUp/PgDn   move
 --   r           refresh           q                   quit
 --   Tab actions are shown on the bottom row.
--- Everyone in the domain can look; changes need a domain admin.
+-- Everyone in the domain can look; changes need a domain admin, or for a module's roles
+-- a member of the module's admin role (e.g. logistics-admins).
 local ui = blockos.ui
 local domain = import("domain")
 
@@ -27,18 +28,33 @@ local tabs = {
     title = "Groups",
     load = "list_groups",
     describe = function(group)
-      return string.format("%-18s %s", group.name, table.concat(group.members, ","))
+      local members = group.everyone and "everyone" or table.concat(group.members, ",")
+      local manager = group.managed_by and (" (by " .. group.managed_by .. ")") or ""
+      return string.format("%-20s %s%s", group.name, members, manager)
     end,
-    hints = { { "a", "Add" }, { "d", "Delete" }, { "m", "Add member" }, { "x", "Remove" } },
+    hints = { { "a", "Add" }, { "d", "Delete" }, { "m", "Member+" }, { "x", "Member-" },
+      { "e", "Everyone" } },
   },
   {
     title = "Computers",
     load = "list_computers",
     describe = function(host)
       local seen = domain.describe_seen(host)
-      return string.format("%-16s #%-5s %-8s %s", host.hostname, tostring(host.id), host.kind, seen)
+      local has_roles = #(host.roles or {}) > 0
+      local roles = has_roles and ("  [" .. table.concat(host.roles, ",") .. "]") or ""
+      return string.format("%-16s %-8s %s%s", host.hostname, host.kind, seen, roles)
     end,
-    hints = { { "d", "Remove" } },
+    hints = { { "c", "Shell" }, { "i", "Info" }, { "o", "Roles" }, { "u", "Update" },
+      { "b", "Reboot" }, { "s", "Service" }, { "l", "Log" }, { "d", "Remove" } },
+  },
+  {
+    title = "Roles",
+    load = "list_computer_roles",
+    describe = function(role)
+      local used = #role.computers > 0 and (" (" .. #role.computers .. " pc)") or ""
+      return string.format("%-16s %s%s", role.name, table.concat(role.packages, ","), used)
+    end,
+    hints = { { "a", "Add" }, { "p", "Packages" }, { "s", "Setting" }, { "d", "Delete" } },
   },
   {
     title = "DNS",
@@ -190,9 +206,166 @@ actions[2] = {
       run("group_rmmember", { group = group.name, user = answers[1] }, "Member removed.")
     end
   end,
+  -- Everyone in the domain, now and later, or only the listed members.
+  e = function(group)
+    if group then
+      local everyone = not group.everyone
+      run("group_set_everyone", { group = group.name, everyone = everyone },
+        group.name .. (everyone and " now includes everyone." or " now lists its members."))
+    end
+  end,
 }
 
+local function split_words(text)
+  local words = {}
+  for word in tostring(text or ""):gmatch("[^,%s]+") do
+    words[#words + 1] = word
+  end
+  return words
+end
+
+-- Remote admin: ask the computer itself (protocol blockos.manage, domain admins only).
+local function manage_call(host, op, call_args)
+  local rpc = import("rpc")
+  return rpc.call(host.id, "blockos.manage", op, call_args, { relogin = true, retries = 0 })
+end
+
+local function wait_key(text)
+  ui.print("")
+  ui.print(text or "Press any key to go back.", "dim")
+  os.pullEvent("key")
+end
+
+local function show_info(host)
+  local status, err = manage_call(host, "status")
+  if not status then
+    return set_message(host.hostname .. ": " .. tostring(err), "error")
+  end
+  ui.clear()
+  term.setCursorPos(1, 1)
+  ui.title(status.hostname .. " (" .. status.kind .. ")")
+  ui.field("Version", status.version, nil, 10)
+  ui.field("Up", math.floor(status.uptime / 60) .. " min", nil, 10)
+  ui.field("User", status.user or "nobody logged in", nil, 10)
+  if status.disk and status.disk.capacity then
+    local used = 100 - math.floor(100 * status.disk.free / math.max(1, status.disk.capacity))
+    local disk_role = used > 90 and "error" or nil
+    ui.field("Disk", used .. "% used, " .. status.disk.free .. " bytes free", disk_role, 10)
+  end
+  if status.fuel then
+    ui.field("Fuel", tostring(status.fuel), nil, 10)
+  end
+  if status.position then
+    local pos = status.position
+    ui.field("Position", pos.x .. " " .. pos.y .. " " .. pos.z, nil, 10)
+  end
+  ui.field("Services", #status.services .. " (" .. status.failed .. " failed)",
+    status.failed > 0 and "error" or "ok", 10)
+  for _, service in ipairs(status.services) do
+    if service.state == "failed" or service.state == "crashed" then
+      ui.status(service.name .. ": " .. tostring(service.last_error), "error")
+    end
+  end
+  for _, notice in ipairs(status.notices or {}) do
+    ui.status(notice, "warn")
+  end
+  wait_key()
+end
+
+local function show_log(host)
+  local lines, err = manage_call(host, "log", { lines = 15 })
+  if not lines then
+    return set_message(host.hostname .. ": " .. tostring(err), "error")
+  end
+  ui.clear()
+  term.setCursorPos(1, 1)
+  ui.title("Log of " .. host.hostname)
+  for _, line in ipairs(lines) do
+    ui.print(line, line:find(" ERROR ") and "error" or (line:find(" WARN ") and "warn" or "text"))
+  end
+  wait_key()
+end
+
+local function control_service(host)
+  local status, err = manage_call(host, "status")
+  if not status then
+    return set_message(host.hostname .. ": " .. tostring(err), "error")
+  end
+  local names = {}
+  for index, service in ipairs(status.services) do
+    names[index] = service.name .. "  [" .. tostring(service.state) .. "]"
+  end
+  names[#names + 1] = "Cancel"
+  local choice = ui.menu({ title = "Service on " .. host.hostname, items = names })
+  local service = status.services[choice]
+  if not service then
+    return
+  end
+  local verbs = { "restart", "start", "stop", "cancel" }
+  local items = { "Restart", "Start", "Stop", "Cancel" }
+  local verb = verbs[ui.menu({ title = service.name, items = items })]
+  if verb == "cancel" then
+    return
+  end
+  local result, call_error = manage_call(host, "service", { name = service.name, action = verb })
+  if result then
+    set_message(service.name .. " on " .. host.hostname .. ": " .. tostring(result.state), "ok")
+  else
+    set_message(tostring(call_error), "error")
+  end
+end
+
 actions[3] = {
+  c = function(host)
+    if host then
+      shell.run("rsh", host.hostname)
+      refresh()
+    end
+  end,
+  i = function(host)
+    if host then
+      show_info(host)
+    end
+  end,
+  l = function(host)
+    if host then
+      show_log(host)
+    end
+  end,
+  s = function(host)
+    if host then
+      control_service(host)
+    end
+  end,
+  u = function(host)
+    if not host then
+      return
+    end
+    local ok, err = manage_call(host, "update")
+    local done = host.hostname .. " is checking its roles and updates now."
+    set_message(ok and done or tostring(err), ok and "ok" or "error")
+  end,
+  b = function(host)
+    if host and ui.confirm("Reboot " .. host.hostname .. "?") then
+      local ok, err = manage_call(host, "reboot")
+      local done = host.hostname .. " is rebooting."
+      set_message(ok and done or tostring(err), ok and "ok" or "error")
+    end
+  end,
+  -- Give a computer its computer roles; it installs and sets what they say by itself.
+  o = function(host)
+    if not host then
+      return
+    end
+    local current = table.concat(host.roles or {}, " ")
+    local answers = ui.form("Computer roles of " .. host.hostname,
+      { { label = "Roles (" .. (current ~= "" and current or "none") .. "): " } })
+    if answers then
+      local roles = answers[1] == "-" and {} or split_words(answers[1])
+      run("computer_assign", { hostname = host.hostname, roles = roles },
+        host.hostname .. " will apply its roles within 30 minutes (or update it now).")
+    end
+  end,
   d = function(host)
     if host and ui.confirm("Remove computer " .. host.hostname .. " from the domain?") then
       run("computer_remove", { hostname = host.hostname }, host.hostname .. " removed.")
@@ -200,7 +373,63 @@ actions[3] = {
   end,
 }
 
+-- Computer roles: what computers with the role should have installed and set.
 actions[4] = {
+  a = function()
+    local answers = ui.form("Add computer role", {
+      { label = "Name: " },
+      { label = "Packages: " },
+    })
+    if answers then
+      run("computer_role_set", { name = answers[1], packages = split_words(answers[2]) },
+        "Computer role " .. answers[1] .. " added.")
+    end
+  end,
+  p = function(role)
+    if not role then
+      return
+    end
+    local answers = ui.form("Packages of " .. role.name,
+      { { label = "Packages (" .. table.concat(role.packages, " ") .. "): " } })
+    if answers then
+      run("computer_role_set", { name = role.name, packages = split_words(answers[1]),
+        settings = role.settings }, "Packages changed.")
+    end
+  end,
+  s = function(role)
+    if not role then
+      return
+    end
+    local answers = ui.form("Setting for " .. role.name, {
+      { label = "Key (blockos.*): " },
+      { label = "Value (empty removes): " },
+    })
+    if answers then
+      local settings = {}
+      for key, value in pairs(role.settings or {}) do
+        settings[key] = value
+      end
+      local value = answers[2]
+      if value == "" then
+        value = nil
+      elseif value == "true" or value == "false" then
+        value = value == "true"
+      elseif tonumber(value) then
+        value = tonumber(value)
+      end
+      settings[answers[1]] = value
+      run("computer_role_set", { name = role.name, packages = role.packages, settings = settings },
+        "Setting changed.")
+    end
+  end,
+  d = function(role)
+    if role and ui.confirm("Delete computer role " .. role.name .. "?") then
+      run("computer_role_del", { name = role.name }, "Computer role " .. role.name .. " deleted.")
+    end
+  end,
+}
+
+actions[5] = {
   a = function()
     local answers = ui.form("Add service record", {
       { label = "Service type (e.g. pkg): " },

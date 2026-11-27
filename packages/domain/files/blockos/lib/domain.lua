@@ -100,6 +100,34 @@ function domain.call(op, args)
   return call(op, args, { relogin = true })
 end
 
+--- Call a controller operation with a specific user token (e.g. a domain admin who
+-- logged in only for a guided setup, without becoming the session's user).
+-- @tparam string token
+-- @tparam string op
+-- @param[opt] args
+function domain.call_as(token, op, args)
+  return call(op, args, { token = token })
+end
+
+--- What this computer should have installed and set (its computer roles merged). Uses the
+-- computer's own token, so services can ask; never asks for a password.
+-- @treturn[1] table { roles, packages, settings }
+-- @treturn[2] nil
+-- @treturn[2] string error message
+function domain.computer_config()
+  return call("computer_config")
+end
+
+--- What modules need to know about a role: whether it exists and if it is open to
+-- everyone. Works with the computer's own token, so services can ask too.
+-- @tparam string name
+-- @treturn[1] table { name, everyone, managed_by }
+-- @treturn[2] nil
+-- @treturn[2] string error message ("no such group" when the module is not set up)
+function domain.group_get(name)
+  return call("group_get", { name = name })
+end
+
 --- Join a domain. Needs the name and password of any domain user.
 -- @tparam string domain_name
 -- @tparam string hostname This computer's hostname.

@@ -58,6 +58,26 @@ as optional packages, installed from a release (`pkg install <name>`) or from an
    when the controller is down.
 4. Manage users, groups, computers and service records with `dsa` (full screen) or `domain`.
 
+**Managed mode.** Every package works on its own and open. In a domain, packages that have roles
+(for example turtle-remote's `turtle-drivers`) stay open until a domain admin runs
+`domain setup <package>`; the login screen reminds you. The setup creates the roles with friendly
+defaults (everyone may use it, you administer it). Narrow them later in `dsa` (Groups tab: `e`
+switches "everyone" on or off) or with `domain group`. A module's admins (e.g. `logistics-admins`)
+manage its roles themselves, without a domain admin. `domain setup` lists what is set up.
+
+**Computer roles (install and update from one place).** In `dsa` (Roles tab) define what a kind
+of computer needs, e.g. `farm-display` = `music logistics` plus the setting
+`blockos.autologin farmer`, then give computers their roles (Computers tab, `o`). Every joined
+computer installs what its roles list and keeps all its packages up to date from your package
+server by itself: within 30 minutes, at boot, or right away with `domain update` on it. Updates
+apply when nobody is logged in; otherwise you get a notice and it happens after you log out.
+
+**Remote admin.** Domain admins manage any joined computer from `dsa` (Computers tab): `i` shows
+its health (version, services, disk, turtle fuel and position), `u` updates it now, `b` reboots
+it, `s` starts or stops a service, `l` reads its log, and `c` opens a **remote shell**: its
+screen on yours, your keys on it, like ssh. `rsh <computer>` does the same from any shell. Hold
+Ctrl+T to leave; F12 sends Ctrl+T to the remote computer.
+
 ## A package server
 
 On a computer with disk drives (attach as many as you like with wired modems):

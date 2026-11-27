@@ -1,4 +1,4 @@
--- The version is replaced by the release tag at build time (tools/build.lua).
+-- The version is set at build time: the release this package last changed in (tools/build.lua).
 return {
   name = "domain",
   version = "0.0.0-dev",

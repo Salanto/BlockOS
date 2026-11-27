@@ -2,8 +2,13 @@
 --
 --   build <version> <output dir> [repo dir]
 --
+-- Versions: each package keeps the version of the release it last changed in. If
+-- <repo>/tools/previous-index.lua exists (tools/build.sh downloads the latest release's
+-- index.lua there), a package whose content checksum (pkg.content_sum) matches keeps its
+-- previous version; every other package gets <version>.
+--
 -- Output:
---   <out>/index.lua          package list with versions, sizes and checksums
+--   <out>/index.lua          package list with versions, sizes, checksums and content sums
 --   <out>/<name>.pkg         one file per package
 --   <out>/install.lua        the online installer
 --   <out>/lz.lua             the decompressor the installers load first
@@ -34,10 +39,22 @@ local pkg = import("pkg")
 
 local function load_manifest(package_dir)
   local chunk = assert(loadfile(fs.combine(package_dir, "package.lua"), nil, {}))
-  local manifest = chunk()
-  manifest.version = version
-  return manifest
+  return chunk()
 end
+
+-- The previous release's index, if tools/build.sh could download it.
+local function load_previous_index()
+  local path = fs.combine(repo_dir, "tools/previous-index.lua")
+  local text = fs.exists(path) and fsx.read_raw(path)
+  local index = text and textutils.unserialise(text)
+  if type(index) ~= "table" or type(index.packages) ~= "table" then
+    print("No previous release index: every package gets " .. version)
+    return { packages = {} }
+  end
+  print("Comparing with release " .. tostring(index.version))
+  return index
+end
+local previous = load_previous_index()
 
 -- Shrink a Lua file so the base install fits on a floppy, without changing line
 -- numbers: comment-only lines become empty and indentation is dropped, so an
@@ -84,17 +101,23 @@ local function build_package(name)
   if bundle.manifest.name ~= name then
     error("package " .. name .. " has manifest name " .. tostring(bundle.manifest.name), 0)
   end
-  return bundle, pkg.encode(bundle)
+  -- "Last changed in": unchanged content keeps the previous release's version.
+  local content = pkg.content_sum(bundle.manifest, bundle.files)
+  local before = previous.packages[name]
+  local is_unchanged = before and before.content == content and before.version
+  bundle.manifest.version = is_unchanged and before.version or version
+  return bundle, pkg.encode(bundle), content, not is_unchanged
 end
 
 local index = { version = version, packages = {} }
 local raw_packages = {}
 
 for _, name in ipairs(fs.list(fs.combine(repo_dir, "packages"))) do
-  local bundle, raw = build_package(name)
+  local bundle, raw, content, is_changed = build_package(name)
   raw_packages[name] = raw
   index.packages[name] = {
     version = bundle.manifest.version,
+    content = content,
     depends = bundle.manifest.depends,
     optional = bundle.manifest.optional or nil,
     exclusive = bundle.manifest.exclusive or nil,
@@ -102,7 +125,8 @@ for _, name in ipairs(fs.list(fs.combine(repo_dir, "packages"))) do
     sum = pkg.checksum(raw),
   }
   fsx.write_raw(fs.combine(out_dir, name .. ".pkg"), raw)
-  print(string.format("%-6s %6d bytes", name, #raw))
+  print(string.format("%-22s %-10s %6d bytes  %s", name, bundle.manifest.version, #raw,
+    is_changed and "changed" or "unchanged"))
 end
 
 local index_text = textutils.serialise(index)

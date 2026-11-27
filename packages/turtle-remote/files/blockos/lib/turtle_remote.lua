@@ -3,7 +3,8 @@
 --
 -- Kept apart from the service so tests can call the handlers with a stub
 -- turtle. Every request needs a logged-in domain user, checked with the
--- domain controller each time (rpc.require_user): no cached logins.
+-- domain controller each time (rpc.require_user): no cached logins. Once a domain
+-- admin ran `domain setup turtle-remote`, the user also needs the turtle-drivers role.
 --
 -- Operations:
 --   info                        { label, fuel, fuel_limit, selected, slots }
@@ -15,6 +16,7 @@ local rpc = import("rpc")
 local turtle_remote = {}
 
 turtle_remote.PROTOCOL = "blockos.remote"
+turtle_remote.ROLE = "turtle-drivers"
 turtle_remote.INVENTORY_SLOTS = 16
 
 --- Argument schemas (see wire.validate).
@@ -79,15 +81,35 @@ local function run_action(turtle_api, args)
   return turtle_api[function_name]()
 end
 
+-- Logged in, and (in managed mode) holding the turtle-drivers role.
+local function default_allows(ctx)
+  return import("roles").allows(ctx, turtle_remote.ROLE)
+end
+
 --- Build the handler table.
 -- @tparam table turtle_api The turtle API (tests pass a stub).
 -- @tparam[opt] table log A logger (info), to note who drove the turtle.
+-- @tparam[opt] function allows function(ctx) -> true or nil, err; default: roles.allows
+--   with turtle-drivers (tests pass their own)
 -- @treturn table { [op] = function(request_ctx, args) }
-function turtle_remote.handlers(turtle_api, log)
+function turtle_remote.handlers(turtle_api, log, allows)
   local handlers = {}
+  allows = allows or default_allows
+
+  local function require_driver(ctx)
+    local user, err = rpc.require_user(ctx)
+    if not user then
+      return nil, err
+    end
+    local ok, role_err = allows(ctx)
+    if not ok then
+      return nil, role_err
+    end
+    return user
+  end
 
   function handlers.info(ctx)
-    local user, err = rpc.require_user(ctx)
+    local user, err = require_driver(ctx)
     if not user then
       return nil, err
     end
@@ -97,7 +119,7 @@ function turtle_remote.handlers(turtle_api, log)
   -- The last driver is logged once per change of driver, not per keypress.
   local last_driver = nil
   handlers.act = rpc.with_args(turtle_remote.ARGS.act, function(ctx, args)
-    local user, err = rpc.require_user(ctx)
+    local user, err = require_driver(ctx)
     if not user then
       return nil, err
     end
