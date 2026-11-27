@@ -2,7 +2,8 @@
 return {
   name = "logistics-controller",
   version = "0.0.0-dev",
+  kind = "application",
   description = "The logistics controller: merges the nodes, routes requests, runs levels",
-  depends = { logistics = ">=0.1.0-0" },
+  depends = { ["logistics-hub"] = ">=0.1.0-0" },
   optional = true,
 }

@@ -82,6 +82,9 @@ end
 local function collect_files(package_dir)
   local files_dir = fs.combine(package_dir, "files")
   local files = {}
+  if not fs.isDir(files_dir) then
+    return files
+  end
   for _, relative in ipairs(fsx.walk(files_dir)) do
     local content = fsx.read_raw(fs.combine(files_dir, relative))
     if relative:match("%.lua$") then
@@ -100,6 +103,10 @@ local function build_package(name)
   }
   if bundle.manifest.name ~= name then
     error("package " .. name .. " has manifest name " .. tostring(bundle.manifest.name), 0)
+  end
+  local ok, kind_error = pkg.check_kind(bundle.manifest, bundle.files)
+  if not ok then
+    error(kind_error, 0)
   end
   -- "Last changed in": unchanged content keeps the previous release's version.
   local content = pkg.content_sum(bundle.manifest, bundle.files)
@@ -121,6 +128,7 @@ for _, name in ipairs(fs.list(fs.combine(repo_dir, "packages"))) do
     depends = bundle.manifest.depends,
     optional = bundle.manifest.optional or nil,
     exclusive = bundle.manifest.exclusive or nil,
+    kind = bundle.manifest.kind,
     size = #raw,
     sum = pkg.checksum(raw),
   }

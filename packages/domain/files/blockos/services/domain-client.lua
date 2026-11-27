@@ -92,7 +92,7 @@ local function run(ctx)
   local pending = import("roles").pending()
   if #pending > 0 and blockos.notices then
     blockos.notices.roles = table.concat(pending, ", ") ..
-      " not set up for the domain yet: a domain admin can run 'domain setup'"
+      " not set up for the domain yet: a domain admin can run 'domain setup' (domain-tools)"
   end
 
   -- New mail while someone is logged in: the controller tells this computer at once.

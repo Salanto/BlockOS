@@ -141,6 +141,63 @@ end
 -- @tparam table manifest
 -- @tparam table files [path] = content
 -- @treturn number
+--- What each kind of package may ship. Packages are split by what a computer needs:
+--   base         core and net (the base install): anything
+--   protocol     a protocol's names, schemas and client library: libraries only
+--   library      shared code for several applications: libraries only
+--   application  what runs on a computer: at least one service (+ libraries, commands)
+--   tools        commands and screens people use: at least one command, no services
+--   bundle       nothing but dependencies (e.g. everything for a player's computer)
+pkg.KINDS = {
+  base = { lib = true, bin = true, services = true, other = true },
+  protocol = { lib = true },
+  library = { lib = true },
+  application = { lib = true, bin = true, services = true, needs = "services" },
+  tools = { lib = true, bin = true, needs = "bin" },
+  bundle = { needs = "depends" },
+}
+
+-- Which part of the tree a file belongs to: lib, bin, services or other.
+local function part_of(path)
+  local part = path:match("^blockos/([%w_]+)/")
+  if part == "lib" or part == "kernel" then
+    return "lib"
+  elseif part == "bin" or part == "services" then
+    return part
+  end
+  return "other"
+end
+
+--- Check that a package ships what its kind allows.
+-- @tparam table manifest
+-- @tparam table files [path] = content
+-- @treturn[1] true
+-- @treturn[2] nil
+-- @treturn[2] string error message
+function pkg.check_kind(manifest, files)
+  local rules = pkg.KINDS[manifest.kind]
+  if not rules then
+    return nil, manifest.name .. ": kind must be one of base, protocol, library, application, "
+      .. "tools or bundle"
+  end
+  local has = {}
+  for path in pairs(files) do
+    local part = part_of(path)
+    if not rules[part] then
+      return nil, string.format("%s is a %s package and may not ship %s", manifest.name,
+        manifest.kind, path)
+    end
+    has[part] = true
+  end
+  if rules.needs == "depends" and next(manifest.depends or {}) == nil then
+    return nil, manifest.name .. " is a bundle without dependencies"
+  elseif rules.needs and rules.needs ~= "depends" and not has[rules.needs] then
+    return nil, string.format("%s is a %s package but has no %s", manifest.name, manifest.kind,
+      rules.needs)
+  end
+  return true
+end
+
 function pkg.content_sum(manifest, files)
   local copy = {}
   for key, value in pairs(manifest) do
@@ -544,6 +601,7 @@ local function plan_tree(new_packages, current, root, removed)
       optional = manifest.optional,
       exclusive = manifest.exclusive,
       roles = manifest.roles, -- directory roles for managed mode (see the domain's roles.lua)
+      kind = manifest.kind,
       files = files,
     }
     manifests[manifest.name] = manifest

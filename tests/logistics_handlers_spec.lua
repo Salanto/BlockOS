@@ -245,7 +245,7 @@ return function(t)
       { "wait", 0.3 }, { "char", "q" },
     }
     t.with_input(function()
-      shell.run(fs.combine(t.repo, "packages/logistics/files/blockos/bin/logistics.lua"))
+      shell.run(fs.combine(t.repo, "packages/logistics-tools/files/blockos/bin/logistics.lua"))
     end, input)
     local watch = hub.config.watches["minecraft:iron_ingot"]
     t.ok(watch, "iron was not watched")

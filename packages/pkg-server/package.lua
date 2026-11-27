@@ -2,7 +2,8 @@
 return {
   name = "pkg-server",
   version = "0.0.0-dev",
-  description = "Package server: stores packages on disk drives and serves them",
-  depends = { domain = ">=0.1.0-0" },
+  kind = "application",
+  description = "Package server: stores packages on this computer and disk drives, serves them",
+  depends = { net = ">=0.1.0-0" },
   optional = true,
 }

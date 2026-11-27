@@ -2,8 +2,9 @@
 return {
   name = "domain-controller",
   version = "0.0.0-dev",
+  kind = "application",
   description = "Domain controller: users, groups, computers, names and services",
-  depends = { domain = ">=0.1.0-0" },
+  depends = { ["domain-protocol"] = ">=0.1.0-0" },
   optional = true,
   -- Every login and name lookup goes through the controller, so it runs alone.
   exclusive = true,

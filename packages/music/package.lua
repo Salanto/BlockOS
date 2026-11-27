@@ -2,6 +2,7 @@
 return {
   name = "music",
   version = "0.0.0-dev",
+  kind = "tools",
   description = "Music player: plays .dfpwm files or links on attached speakers",
   depends = { core = ">=0.1.0-0" },
   optional = true,
