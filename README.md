@@ -107,7 +107,8 @@ blockos.logistics.server kitchen` makes every terminal you log into use that con
 only while you are logged in and never change the computer's own settings.
 
 **Mail.** Install `mail-server` on a computer with disk drives (the domain controller's computer
-is fine, it is allowed next to it). Mailboxes live on the floppies, never on the computer, and
+is fine, it is allowed next to it). `pkg install` waits until a floppy is in a drive; it needs
+one of its own (a BlockOS install disk doesn't count). Mailboxes live on the floppies, never on the computer, and
 move to the next disk when one is full. Players install `mail-tools` and `mail-client`. `mail`
 opens the mail app: folders (Inbox, Sent) on the left, the messages at the top, the selected one
 below (on pocket computers one screen after the other); `n` writes, `r` answers, `d` deletes.
