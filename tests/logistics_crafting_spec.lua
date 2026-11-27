@@ -222,9 +222,14 @@ return function(t)
       end,
     }
     hub.update("smeltery", {
-      totals = { [BRASS] = { count = 4, label = "Brass" } },
+      totals = {
+        [BRASS] = { count = 4, label = "Brass" },
+        [COPPER] = { count = 99, label = "Copper" },
+        [ZINC] = { count = 99, label = "Zinc" },
+      },
       blocks = {},
-      crafting = { recipes = { BRASS }, jobs = jobs or {} },
+      crafting = { recipes = { BRASS }, jobs = jobs or {},
+        needs = { [BRASS] = { [COPPER] = 1, [ZINC] = 1 } } },
     }, proxy)
     return hub, asked, function(seconds) now = now + seconds end, import
   end
@@ -257,5 +262,54 @@ return function(t)
     t.eq(handlers.jobs(ctx, {})[1].made, 3)
     t.eq(handlers.catalog(ctx, {})[1].can_craft, true)
     t.ok(not handlers.craft(ctx, { item = "diamond", count = 1 }))
+  end)
+
+  t.it("keep stocked waits for ingredients and backs off after a failed job", function()
+    local hub, asked, advance = crafting_hub({ { item = BRASS, count = 46, made = 0,
+      state = "failed", note = "missing zinc" } })
+    t.eq(#asked, 1, "a failed job does not stop the first ask")
+    advance(61)
+    hub.check_levels()
+    t.eq(#asked, 1, "after a failure it waits longer than a minute")
+    advance(300)
+    hub.check_levels()
+    t.eq(#asked, 2)
+    hub.nodes.smeltery.report.totals[ZINC].count = 0
+    advance(301)
+    hub.check_levels()
+    t.eq(#asked, 2, "no zinc anywhere: not asked")
+  end)
+
+  t.it("a node's crafting never takes ingredients from a private node", function()
+    local import = t.fresh_import()
+    local roles = import("roles")
+    roles.env.is_joined = function() return true end
+    roles.env.group_get = function(name)
+      if name == "logistics-node-vault" then
+        return { name = name }
+      end
+      return nil, "no such group"
+    end
+    import("logistics_alarms").env.broadcast = function() end
+    local carried = {}
+    local hub = import("logistics_hub").new({
+      config = {},
+      save = function() return true end,
+      transfer = function(from, _, item, count)
+        carried[#carried + 1] = from.name
+        return { moved = count }
+      end,
+    })
+    local function node(name, zinc)
+      hub.update(name, { totals = { [ZINC] = { count = zinc, label = "Zinc" } }, blocks = {} },
+        {})
+    end
+    node("vault", 50)
+    node("shared", 5)
+    node("smeltery", 0)
+    local handlers = import("logistics_handlers").new(hub)
+    t.ok(handlers.supply({ sender = 4, local_admin = true },
+      { node = "smeltery", item = ZINC, count = 1, target = "basin" }))
+    t.eq(carried[1], "shared", "the vault has more, but it is private")
   end)
 end

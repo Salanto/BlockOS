@@ -57,7 +57,20 @@ function config.set_session(values)
   session_values = values or {}
 end
 
---- Read a setting.
+--- Read this computer's own value of a setting, never the logged-in user's roaming
+-- one. Services use this: they serve the computer, whoever is logged in.
+-- @tparam string key
+-- @param[opt] fallback
+function config.get_system(key, fallback)
+  local value = settings.get(key)
+  if value == nil then
+    return fallback
+  end
+  return value
+end
+
+--- Read a setting (for programs the user runs: a roaming value from their profile
+-- wins while they are logged in).
 -- @tparam string key
 -- @param[opt] fallback Returned when the setting has no value and no default.
 function config.get(key, fallback)

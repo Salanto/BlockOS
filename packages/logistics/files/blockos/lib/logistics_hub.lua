@@ -27,6 +27,8 @@ logistics_hub.MAX_MOVES = 50
 logistics_hub.STALE_ROUNDS = 3
 --- Seconds before a low item is asked to be crafted again (when no job shows up).
 logistics_hub.CRAFT_RETRY_SECONDS = 60
+--- Seconds before an item whose last job failed is asked again.
+logistics_hub.CRAFT_BACKOFF_SECONDS = 300
 
 -- How many of an item a node has: its last report, minus moves made since that the
 -- report does not include yet (they wait in entry.pending until a report with their
@@ -108,6 +110,31 @@ function logistics_hub.new(options)
     end
     table.sort(names)
     return names
+  end
+
+  -- Nodes that answer: routing (requests, crossings, crafting, finding a chest) skips
+  -- stale ones, whose last counts still go into the levels (the items exist, just out
+  -- of reach while the node's chunk is unloaded).
+  local function live_names(visible)
+    local names = {}
+    for _, name in ipairs(hub.node_names(visible)) do
+      if not is_stale(hub.nodes[name]) then
+        names[#names + 1] = name
+      end
+    end
+    return names
+  end
+
+  --- A node that reports under a new name from the same computer was renamed: move
+  -- its entry instead of counting its items twice.
+  function hub.rename_node(old, new)
+    if hub.nodes[old] and not hub.nodes[new] then
+      hub.nodes[new] = hub.nodes[old]
+      hub.nodes[new].name = new
+      hub.nodes[old] = nil
+      return true
+    end
+    return false
   end
 
   --- Item totals over the nodes `visible` allows (default: all).
@@ -238,7 +265,7 @@ function logistics_hub.new(options)
 
   --- The node that can craft an item, if any.
   function hub.crafter_for(item, visible)
-    for _, name in ipairs(hub.node_names(visible)) do
+    for _, name in ipairs(live_names(visible)) do
       local crafting = hub.nodes[name].report.crafting
       for _, craftable in ipairs(crafting and crafting.recipes or {}) do
         if craftable == item then
@@ -306,15 +333,43 @@ function logistics_hub.new(options)
     return result
   end
 
+  -- Did the node's last job for this item fail? (Then wait longer before asking.)
+  local function failed_last(name, item)
+    local crafting = hub.nodes[name].report.crafting
+    for _, job in ipairs(crafting and crafting.jobs or {}) do
+      if job.item == item then
+        return job.state == "failed"
+      end
+    end
+    return false
+  end
+
+  -- Are the ingredients of one run in storage somewhere? (Nodes report what each
+  -- recipe needs.)
+  local function has_ingredients(name, item)
+    local crafting = hub.nodes[name].report.crafting
+    local needs = crafting and crafting.needs and crafting.needs[item]
+    local totals = hub.totals()
+    for ingredient, count in pairs(needs or {}) do
+      if ((totals[ingredient] or {}).count or 0) < count then
+        return false
+      end
+    end
+    return true
+  end
+
   -- Keep stocked: a low watched item that a node can craft is crafted up to its refill
-  -- target (or just above the limit), unless a job for it is already open.
+  -- target (or just above the limit), unless a job for it is already open, the
+  -- ingredients are missing, or the last job failed a short while ago.
   local function request_crafts(states)
     local now = logistics_hub.env.clock()
     for item, state in pairs(states) do
       local name = state.is_low and hub.crafter_for(item)
       local asked = hub.craft_asked[item]
-      local is_due = not asked or now - asked >= logistics_hub.CRAFT_RETRY_SECONDS
-      if name and is_due and not has_open_job(name, item) then
+      local wait = (name and failed_last(name, item)) and logistics_hub.CRAFT_BACKOFF_SECONDS
+        or logistics_hub.CRAFT_RETRY_SECONDS
+      local is_due = not asked or now - asked >= wait
+      if name and is_due and not has_open_job(name, item) and has_ingredients(name, item) then
         local watch = config.watches[item]
         local wanted = logistics.recovery_level(watch) - state.count
         hub.craft_asked[item] = now
@@ -424,7 +479,7 @@ function logistics_hub.new(options)
   local function pick_node(item, visible)
     local best, best_count = nil, 0
     local holding = nil
-    for _, name in ipairs(hub.node_names(visible)) do
+    for _, name in ipairs(live_names(visible)) do
       local count = count_on(hub.nodes[name], item)
       if count > 0 then
         holding = holding or name
@@ -440,6 +495,9 @@ function logistics_hub.new(options)
       return nil, "node " .. holding .. " has it but no output chest: give one the "
         .. "'output' role in the Storage tab"
     end
+    if (hub.totals(visible)[item] or {}).count then
+      return nil, "only nodes that are not answering have it (unloaded chunk?)"
+    end
     return nil, "none in storage"
   end
 
@@ -449,7 +507,7 @@ function logistics_hub.new(options)
   -- @treturn {table...} { node, handle, label, pos, distance? }
   function hub.depots(near, visible)
     local depots = {}
-    for _, name in ipairs(hub.node_names(visible)) do
+    for _, name in ipairs(live_names(visible)) do
       for _, block in ipairs(hub.nodes[name].report.blocks or {}) do
         if block.role == "output" and block.pos and not block.is_missing then
           depots[#depots + 1] = {
@@ -508,7 +566,7 @@ function logistics_hub.new(options)
   -- The node with the most of an item, other than `except`.
   local function richest(item, visible, except)
     local best, best_count = nil, 0
-    for _, name in ipairs(hub.node_names(visible)) do
+    for _, name in ipairs(live_names(visible)) do
       local count = stored_on(name, item)
       if name ~= except and count > best_count then
         best, best_count = name, count
@@ -532,7 +590,7 @@ function logistics_hub.new(options)
     end
     local name, err = pick_node(item, visible)
     if not name and options.transfer and richest(item, visible) then
-      for _, candidate in ipairs(hub.node_names(visible)) do
+      for _, candidate in ipairs(live_names(visible)) do
         if has_output(candidate) then
           return candidate
         end
@@ -566,6 +624,9 @@ function logistics_hub.new(options)
     local entry = hub.nodes[name]
     if not entry then
       return nil, "no node called " .. tostring(name)
+    end
+    if is_stale(entry) then
+      return nil, "node " .. name .. " is not answering (unloaded chunk?)"
     end
     local transfer = options.transfer
     local handle = output and output.handle
@@ -654,7 +715,7 @@ function logistics_hub.new(options)
 
   --- Find a chest, step 1: every visible node pauses sorting and remembers its blocks.
   function hub.find_start(visible)
-    for _, name in ipairs(hub.node_names(visible)) do
+    for _, name in ipairs(live_names(visible)) do
       local ok, err = hub.nodes[name].proxy.find_start()
       if not ok then
         logistics_hub.env.log("find on %s: %s", name, tostring(err))
@@ -666,7 +727,7 @@ function logistics_hub.new(options)
   --- Find a chest, step 2: the blocks whose contents changed, on any visible node.
   function hub.find_finish(visible)
     local changed = {}
-    for _, name in ipairs(hub.node_names(visible)) do
+    for _, name in ipairs(live_names(visible)) do
       for _, block in ipairs(hub.nodes[name].proxy.find_finish() or {}) do
         changed[#changed + 1] = { node = name, handle = block.handle, label = block.label }
       end
@@ -676,7 +737,9 @@ function logistics_hub.new(options)
 
   --- Bring an ingredient from other nodes into a machine of `node` (asked by its
   -- crafter when its own storage lacks it). Needs ports.
-  function hub.supply(node, item, count, target)
+  -- @tparam[opt] function visible Which nodes may give (not other players' private
+  --   nodes).
+  function hub.supply(node, item, count, target, visible)
     local entry = hub.nodes[node]
     if not entry then
       return nil, "no node called " .. tostring(node)
@@ -684,9 +747,9 @@ function logistics_hub.new(options)
     if not options.transfer then
       return nil, "items cannot cross between nodes here"
     end
-    local source = richest(item, nil, node)
+    local source = richest(item, visible, node)
     if not source then
-      return nil, "no other node has " .. item
+      return nil, "no other node (that may share) has " .. item
     end
     local result, err = options.transfer(hub.nodes[source], entry, item, count, target)
     if result then

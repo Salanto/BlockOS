@@ -363,7 +363,16 @@ function logistics_handlers.new(hub)
         return nil, err
       end
     end
-    return hub.supply(args.node, args.item, math.floor(args.count), args.target)
+    -- Private nodes (their role exists) never give to another node's crafting: one
+    -- player's recipe must not empty another's storage.
+    local roles = roles_module()
+    local function may_give(node)
+      if not (roles and roles.env.is_joined()) then
+        return true
+      end
+      return roles.info(logistics.NODE_ROLE_PREFIX .. node) == nil
+    end
+    return hub.supply(args.node, args.item, math.floor(args.count), args.target, may_give)
   end)
 
   --- Output chests with a position, nearest first when `near` is given.

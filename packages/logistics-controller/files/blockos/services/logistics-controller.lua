@@ -173,6 +173,16 @@ local function run(ctx)
       return
     end
     local name = event.data.node
+    if not hub.nodes[name] then
+      -- The same computer under a new name: a rename, not a second node.
+      for old, known in pairs(hub.nodes) do
+        if known.proxy.id == sender and hub.rename_node(old, name) then
+          ports.rename_node(old, name)
+          log.info("node %s is now called %s", old, name)
+          break
+        end
+      end
+    end
     local entry = hub.nodes[name]
     if entry and entry.proxy.id ~= sender then
       log.info("node %s now reports from computer #%d", name, sender)

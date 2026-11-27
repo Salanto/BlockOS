@@ -277,4 +277,28 @@ return function(t)
       report(1, 80, 2)
       t.eq(hub.totals().iron.count, 80, "after a node restart its counts are fresh")
     end)
+
+  t.it("stale nodes keep their counts but get no requests; a rename moves the node", function()
+    local import = t.fresh_import()
+    import("logistics_alarms").env.broadcast = function() end
+    local hub_module = import("logistics_hub")
+    local now = 0
+    hub_module.env.clock = function() return now end
+    local hub = hub_module.new({ config = {}, save = function() return true end })
+    local asked = 0
+    local proxy = { request = function(_, count)
+      asked = asked + 1
+      return { moved = count, output = "out" }
+    end }
+    hub.update("cellar", { totals = { iron = { count = 5, label = "Iron" } },
+      blocks = { { handle = "out", role = "output" } }, poll_seconds = 10 }, proxy)
+    now = 40
+    t.eq(hub.totals().iron.count, 5, "the items still count for the levels")
+    local _, err = hub.request("iron", 1)
+    t.ok(err:find("not answering"), err)
+    t.eq(asked, 0, "no request went to the unloaded node")
+    t.ok(hub.rename_node("cellar", "basement"))
+    t.eq(hub.nodes.cellar, nil)
+    t.eq(hub.totals().iron.nodes.basement, 5, "counted once, under the new name")
+  end)
 end

@@ -78,10 +78,11 @@ function logistics_crafter.new(options)
 
   --- What the controller learns from each report.
   function crafter.summary()
-    local list = {}
+    local list, needs = {}, {}
     for item, recipe in pairs(recipes) do
       if recipe.is_ready then
         list[#list + 1] = item
+        needs[item] = logistics_recipes.ingredients(recipe)
       end
     end
     table.sort(list)
@@ -93,7 +94,8 @@ function logistics_crafter.new(options)
     for _, job in ipairs(crafter.history) do
       jobs[#jobs + 1] = job
     end
-    return { recipes = list, jobs = jobs }
+    -- needs: what one run takes, so the controller only asks when it can be made.
+    return { recipes = list, needs = needs, jobs = jobs }
   end
 
   ---------------------------------------------------------------------------

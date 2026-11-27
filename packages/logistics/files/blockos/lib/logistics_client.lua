@@ -102,11 +102,14 @@ end
 --- Find the controller.
 -- @tparam[opt] string name Which one, when there are several (default: the
 --   blockos.logistics.server setting).
+-- @tparam[opt] boolean is_service true for services: they use this computer's
+--   setting, never the logged-in user's roaming one.
 -- @treturn[1] number Computer ID.
 -- @treturn[1] string What to call it.
 -- @treturn[2] nil
-function logistics_client.find_server(name)
-  name = name or config.get("blockos.logistics.server")
+function logistics_client.find_server(name, is_service)
+  local read = is_service and config.get_system or config.get
+  name = name or read("blockos.logistics.server")
   if name == "" then
     name = nil
   end
@@ -128,7 +131,8 @@ end
 --- Connect to the hub.
 -- @tparam[opt] string name Which controller, when there are several.
 -- @tparam[opt] table options { interactive = true } for programs: an expired
---   login then asks for the password once instead of failing.
+--   login then asks for the password once instead of failing; { is_service = true }
+--   for services (see find_server).
 -- @treturn[1] table connection { is_local, describe, call(op, args) }
 -- @treturn[2] nil
 -- @treturn[2] string error message
@@ -137,7 +141,7 @@ function logistics_client.connect(name, options)
   if hub and (name == nil or name == hub.config.name) then
     return logistics_client.local_connection(hub.handlers, hub.describe)
   end
-  local server_id, label = logistics_client.find_server(name)
+  local server_id, label = logistics_client.find_server(name, options and options.is_service)
   if not server_id then
     return nil, "no logistics controller found (install logistics-controller on a computer)"
   end

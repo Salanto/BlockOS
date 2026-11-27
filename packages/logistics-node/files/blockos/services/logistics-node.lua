@@ -175,7 +175,7 @@ local function run(ctx)
       return
     end
     rounds_since_lookup = 0
-    local id, label = logistics_client.find_server()
+    local id, label = logistics_client.find_server(nil, true)
     if id and id ~= os.getComputerID() then
       on_controller_found(id, label)
     end

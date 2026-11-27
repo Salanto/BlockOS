@@ -267,8 +267,8 @@ local function run(ctx)
     if not has_board and not has_reactions then
       return
     end
-    local server = config.get("blockos.logistics.server")
-    local connection, connect_error = logistics_client.connect(server)
+    local server = config.get_system("blockos.logistics.server")
+    local connection, connect_error = logistics_client.connect(server, { is_service = true })
     if not connection then
       on_status_failed(connect_error)
       return

@@ -187,6 +187,22 @@ function logistics_ports.new(config, save)
     return result, err
   end
 
+  --- A node was renamed: keep its pairings.
+  function ports.rename_node(old, new)
+    local changed = false
+    for paired, main in pairs(config.ports) do
+      local node, handle = paired:match("^(.-)/(.*)$")
+      if node == old then
+        config.ports[paired] = nil
+        config.ports[key(new, handle)] = main
+        changed = true
+      end
+    end
+    if changed then
+      save()
+    end
+  end
+
   --- Forget a pairing that turned out wrong; it is paired again on the next report.
   function ports.unpair(node, handle)
     config.ports[key(node, handle)] = nil
