@@ -17,7 +17,7 @@
 -- and between checks that it has not moved to another computer.
 local DISCOVER_ROUNDS = 6
 local RECHECK_ROUNDS = 30
--- Lookups in a row that find no controller before the node is alone again.
+-- Lookups in a row that find no controller before a remote node is alone again.
 local LOST_LOOKUPS = 3
 -- Rounds between GPS fixes (the wall board groups nodes by height; ~5 min).
 local GPS_ROUNDS = 30
@@ -98,19 +98,21 @@ local function run(ctx)
     return nil, "could not save the node config (is the disk full?)"
   end
   local node = logistics_node.new({ config = config, save = save, sources = sources, log = log })
-  blockos.logistics_node = node
+  -- Programs and logistics-crafting find this node here (withdrawn when it stops).
+  ctx.provide("logistics.node", node)
+  local services = import("services")
 
   local function hostname()
-    return blockos.net and blockos.net.hostname() or ("#" .. os.getComputerID())
+    return import("net").self_name()
   end
 
   -- Lone mode -------------------------------------------------------------
 
   local levels_path = file("LEVELS_FILE")
-  local hub = nil
+  local hub, hub_entry = nil, nil
 
   local function start_hub()
-    if blockos.logistics_controller then
+    if services.get("logistics.controller") then
       return -- a controller runs on this computer: it is the hub
     end
     local levels = fs.exists(levels_path) and fsx.read_table(levels_path) or {}
@@ -124,22 +126,22 @@ local function run(ctx)
       end,
       hostname = hostname(),
       title = "Logistics " .. hostname(),
+      log = log.warn,
     })
-    logistics_hub.env.log = log.warn
-    blockos.logistics_hub = {
+    hub_entry = {
       hub = hub,
       handlers = logistics_handlers.new(hub),
       config = hub.config,
       describe = hostname() .. " (no controller)",
     }
+    ctx.provide("logistics.hub", hub_entry)
   end
 
   local function stop_hub()
     if hub then
       hub.stop()
-      if blockos.logistics_hub and blockos.logistics_hub.hub == hub then
-        blockos.logistics_hub = nil
-      end
+      ctx.withdraw("logistics.hub", hub_entry)
+      hub_entry = nil
       hub = nil
     end
   end
@@ -151,67 +153,96 @@ local function run(ctx)
     end
     local levels = fsx.read_table(levels_path)
     set_aside(levels_path, ".imported")
-    if blockos.notices then
-      blockos.notices.logistics_levels = nil
-    end
+    import("notices").clear("logistics_levels")
     return levels
   end
 
-  -- The controller -------------------------------------------------------
+  -- The controller: one explicit mode ------------------------------------
+  --
+  --   here    a hub on this computer gets the reports directly: the controller, when
+  --           the logistics-controller package runs here, else this node's own hub
+  --           (serving only this terminal, so a single node works alone; also while
+  --           it looks for a controller it knew before)
+  --   remote  reports go to the controller on another computer (controller_id)
+  -- enter() is the only place that changes the mode; it sets the hub, the controller id
+  -- and the report target together.
 
+  local mode = nil
   local controller_id = nil
   local rounds_since_lookup = DISCOVER_ROUNDS
-
-  local function on_controller_found(id, label)
-    controller_id = id
-    node.controller_id = id -- logistics-crafting asks it for missing ingredients
-    if config.controller == nil then
-      config.controller = label
-      save()
-      stop_hub()
-      log.info("controller found: %s; this node now reports to it", tostring(label))
-      if fs.exists(levels_path) and blockos.notices then
-        blockos.notices.logistics_levels = "This node's alarms can move to the controller: "
-          .. "run 'logistics levels import " .. hostname() .. "' there"
-      end
-    end
-  end
-
   local missed_lookups = 0
 
-  -- Alone again (the controller is gone for good, or `logistics node alone`).
+  local function enter(new_mode, id, label)
+    local local_controller = services.get("logistics.controller")
+    if new_mode == "here" then
+      controller_id = nil
+      if local_controller then
+        stop_hub()
+        -- logistics-crafting asks for missing ingredients by rpc to this computer.
+        node.controller_id = os.getComputerID()
+      else
+        start_hub()
+        node.controller_id = nil
+      end
+    else
+      stop_hub()
+      controller_id, node.controller_id = id, id
+    end
+    local remembered = (new_mode == "remote" and label)
+      or (local_controller and "local") or config.controller
+    if remembered ~= config.controller then
+      config.controller = remembered
+      save()
+    end
+    local has_controller = new_mode == "remote" or local_controller ~= nil
+    if has_controller and fs.exists(levels_path) then
+      import("notices").set("logistics_levels", "This node's alarms can move to the "
+        .. "controller: run 'logistics levels import " .. hostname() .. "' there")
+    end
+    if mode ~= new_mode then
+      log.info("logistics mode: %s -> %s%s", tostring(mode), new_mode,
+        label and (" (" .. tostring(label) .. ")") or "")
+    end
+    mode = new_mode
+    missed_lookups = 0
+  end
+  node.mode = function() return mode end
+
+  --- Alone again (the controller is gone for good, or `logistics node alone`).
   function node.go_alone()
-    controller_id, node.controller_id = nil, nil
     config.controller = nil
     save()
-    missed_lookups = 0
-    start_hub()
-    log.info("no controller: this node runs alone again")
+    enter("here")
   end
 
   local function look_for_controller()
-    if blockos.logistics_controller then
-      -- A controller on this computer: no lookup, no rednet.
-      if hub or config.controller ~= "local" then
-        stop_hub()
-        config.controller = "local"
-        save()
+    -- A controller started or stopped on this computer: the hub here changes owner.
+    local has_local = services.get("logistics.controller") ~= nil
+    local owns_hub = hub ~= nil
+    if mode == "here" and has_local == owns_hub then
+      enter("here")
+    end
+    if has_local then
+      if mode ~= "here" then
+        enter("here")
       end
       return
     end
     rounds_since_lookup = rounds_since_lookup + 1
-    if rounds_since_lookup < (controller_id and RECHECK_ROUNDS or DISCOVER_ROUNDS) then
+    if rounds_since_lookup < (mode == "remote" and RECHECK_ROUNDS or DISCOVER_ROUNDS) then
       return
     end
     rounds_since_lookup = 0
     local id, label = logistics_client.find_server(nil, true)
     if id and id ~= os.getComputerID() then
+      if mode ~= "remote" or id ~= controller_id then
+        enter("remote", id, label)
+      end
       missed_lookups = 0
-      on_controller_found(id, label)
-    elseif config.controller ~= nil and not hub then
+    elseif mode == "remote" then
       missed_lookups = missed_lookups + 1
       if missed_lookups >= LOST_LOOKUPS then
-        node.go_alone()
+        enter("here")
       end
     end
   end
@@ -248,19 +279,17 @@ local function run(ctx)
       return
     end
     rounds_since_gps = 0
-    local ok, x, y, z = pcall(gps.locate, 2)
-    if ok and x then
-      position = { x = math.floor(x), y = math.floor(y), z = math.floor(z) }
-    end
+    position = import("net").position() or position
   end
 
   local function send_report()
     local report = node.report()
     report.node = hostname()
     report.pos = position
-    if blockos.logistics_controller then
-      blockos.logistics_controller.update(report.node, report, node.proxy())
-    elseif controller_id then
+    local local_controller = services.get("logistics.controller")
+    if mode == "here" and local_controller then
+      local_controller.update(report.node, report, node.proxy())
+    elseif mode == "remote" then
       local event, err = logistics_client.report_event(report)
       if event then
         rednet.send(controller_id, event, logistics_client.NODE_PROTOCOL)
@@ -272,9 +301,9 @@ local function run(ctx)
     end
   end
 
-  if config.controller == nil then
-    start_hub()
-  end
+  -- Start with the hub here; a controller elsewhere is looked up on the first round.
+  enter("here")
+  node.levels_exporter = export_levels
 
   -- Be findable for `logistics levels import` and the controller's requests.
   if rednet.isOpen() then
@@ -282,7 +311,7 @@ local function run(ctx)
   end
 
   local ok, err = pcall(parallel.waitForAny,
-    function() rpc.serve(logistics_client.NODE_PROTOCOL, node.handlers(export_levels)) end,
+    function() rpc.serve(logistics_client.NODE_PROTOCOL, node.handlers()) end,
     function()
       while true do
         node.round()
@@ -295,7 +324,6 @@ local function run(ctx)
     end
   )
   stop_hub()
-  blockos.logistics_node = nil
   if not ok then
     error(err, 0)
   end

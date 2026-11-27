@@ -48,9 +48,11 @@ local function run(ctx)
     return { free = fs.getFreeSpace(disk_dir), capacity = capacity }
   end
 
-  -- An atomic save needs room for a full second copy while it runs.
+  -- An atomic save needs room for a full second copy while it runs. The size is the
+  -- file's as last saved (serialising the whole directory just to ask would cost as
+  -- much as saving); the margin covers one change's growth.
   local function has_room()
-    local size = #textutils.serialise(dir.data)
+    local size = fs.exists(path) and fs.getSize(path) or 0
     return fs.getFreeSpace(disk_dir) >= size + SAVE_MARGIN_BYTES
   end
 

@@ -4,11 +4,12 @@
 -- Checks shortly after boot, every blockos.domain.update_interval seconds, and right away
 -- on the event "blockos_update_now" (sent by remote admin from dsa). Changes are applied
 -- when nobody is logged in; when someone is, a notice says an update is ready and it is
--- applied after they log out. A forced update applies at once.
+-- applied when the session ends (session.LOGGED_OUT_EVENT). A forced update applies at
+-- once. States: idle (nothing waiting) or pending (fetched, waiting for the logout);
+-- applying ends in a reboot.
 
 local UPDATE_NOW_EVENT = import("computer_config").UPDATE_NOW_EVENT
 local FIRST_CHECK_SECONDS = 20
-local PENDING_POLL_SECONDS = 10
 
 local function run(ctx)
   local domain = import("domain")
@@ -30,9 +31,7 @@ local function run(ctx)
     if not ok then
       log.error("update failed: %s", tostring(err))
       pending = nil
-      if blockos.notices then
-        blockos.notices.update = nil
-      end
+      import("notices").clear("update")
       return
     end
     log.info("update applied, rebooting")
@@ -66,29 +65,19 @@ local function run(ctx)
       return
     end
     pending = result
-    if blockos.notices then
-      blockos.notices.update = #result.changes ..
-        " package update(s) ready: applied when you log out"
-    end
+    import("notices").set("update", #result.changes ..
+      " package update(s) ready: applied when you log out")
   end
 
+  local logged_out = import("session").LOGGED_OUT_EVENT
   local timer = os.startTimer(FIRST_CHECK_SECONDS)
-  local poll = nil
   while true do
-    local event, id = os.pullEvent()
+    local event, id = import("events").pull()
     if event == "timer" and id == timer then
       check(false)
       timer = os.startTimer(ctx.config.get("blockos.domain.update_interval", 1800))
-      if pending and not poll then
-        poll = os.startTimer(PENDING_POLL_SECONDS)
-      end
-    elseif event == "timer" and id == poll then
-      poll = nil
-      if pending and not blockos.user then
-        apply(pending)
-      elseif pending then
-        poll = os.startTimer(PENDING_POLL_SECONDS)
-      end
+    elseif event == logged_out and pending then
+      apply(pending)
     elseif event == UPDATE_NOW_EVENT then
       check(true)
     end

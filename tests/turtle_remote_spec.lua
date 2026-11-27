@@ -38,7 +38,8 @@ return function(t)
     import("rpc").set_user_validator(function(token) return USERS[token] end)
     local turtle_api = stub_turtle()
     allows = allows or function() return true end
-    return import("turtle_remote").handlers(turtle_api, nil, allows), turtle_api
+    local joined = function() return true end
+    return import("turtle_remote").handlers(turtle_api, nil, allows, joined), turtle_api
   end
 
   local ALICE = { sender = 3, token = "alice-token" }
@@ -87,5 +88,14 @@ return function(t)
     t.ok(not ok)
     t.eq(err, "permission denied")
     t.eq(#turtle_api.calls, 0)
+  end)
+
+  t.it("without a domain anyone may drive (standalone first)", function()
+    local import = t.fresh_import()
+    local turtle_api = stub_turtle()
+    local handlers = import("turtle_remote").handlers(turtle_api, nil, nil,
+      function() return false end)
+    t.ok(handlers.act({ sender = 3 }, { action = "forward" }), "no login needed")
+    t.ok(handlers.info({ sender = 3 }))
   end)
 end

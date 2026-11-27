@@ -34,9 +34,33 @@ local function finish(self, task, ok, err)
   end
 end
 
+-- The task running right now (nil outside the scheduler, e.g. the user's session).
+local running_task = nil
+
+--- Name of the task (service) running right now, or nil. Code that must not act as
+-- the logged-in user (rpc's default token) checks it.
+local function current()
+  return running_task
+end
+
+--- Run code as a program, not as the service around it (a remote shell's session
+-- runs the admin's programs inside the manage service).
+-- @tparam function fn
+-- @return What fn returns.
+local function outside(fn, ...)
+  local previous = running_task
+  running_task = nil
+  local results = table.pack(fn(...))
+  running_task = previous
+  return table.unpack(results, 1, results.n)
+end
+
 -- Resume a task with an event and record what it waits for next.
 local function resume(self, task, ...)
+  local previous = running_task
+  running_task = task.name
   local ok, filter_or_error = coroutine.resume(task.coroutine, ...)
+  running_task = previous
   if not ok then
     finish(self, task, false, filter_or_error)
   elseif coroutine.status(task.coroutine) == "dead" then
@@ -115,4 +139,4 @@ function Scheduler:run()
   end
 end
 
-return { new = new }
+return { new = new, current = current, outside = outside }

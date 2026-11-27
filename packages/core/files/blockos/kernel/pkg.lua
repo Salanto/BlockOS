@@ -1,4 +1,5 @@
---- Package manager: versions, package files, sources, crash-safe install.
+--- Package manager: the installed database, choosing packages, crash-safe install
+-- (versions: pkg_version; the .pkg format: pkg_codec; sources: pkg_sources).
 --
 -- A .pkg file is a serialised table, compressed with lz (see lz.lua):
 --
@@ -17,221 +18,18 @@
 -- @module pkg
 
 local fsx = import("fsx")
-local lz = import("lz")
 local paths = import("paths")
 
 local pkg = {}
 
-pkg.RELEASES_URL = "https://github.com/Salanto/BlockOS/releases"
-
 local SPACE_MARGIN_BYTES = 4096
-local CHECKSUM_CHUNK = 4096
 
-------------------------------------------------------------------------------
--- Versions
-------------------------------------------------------------------------------
-
--- "v1.2.3-rc1" -> { 1, 2, 3 }, "rc1"
-local function parse_version(version)
-  local text = tostring(version):gsub("^v", "")
-  local numbers_part, prerelease = text:match("^([%d%.]+)%-?(.*)$")
-  if not numbers_part then
-    return nil
+-- Versions, the package format and the sources are their own modules; pkg offers their
+-- functions too, so callers use pkg alone.
+for _, part in ipairs({ "pkg_version", "pkg_codec", "pkg_sources" }) do
+  for name, value in pairs(import(part)) do
+    pkg[name] = value
   end
-  local numbers = {}
-  for number in numbers_part:gmatch("%d+") do
-    numbers[#numbers + 1] = tonumber(number)
-  end
-  return numbers, prerelease
-end
-
---- Compare two versions. A release sorts after its prereleases (0.1.0 > 0.1.0-rc1).
--- @tparam string a
--- @tparam string b
--- @treturn number -1, 0 or 1
-function pkg.compare_versions(a, b)
-  local numbers_a, pre_a = parse_version(a)
-  local numbers_b, pre_b = parse_version(b)
-  if not numbers_a or not numbers_b then
-    if a == b then
-      return 0
-    end
-    return tostring(a) < tostring(b) and -1 or 1
-  end
-
-  for i = 1, math.max(#numbers_a, #numbers_b) do
-    local x = numbers_a[i] or 0
-    local y = numbers_b[i] or 0
-    if x ~= y then
-      return x < y and -1 or 1
-    end
-  end
-
-  if pre_a == pre_b then
-    return 0
-  elseif pre_a == "" then
-    return 1
-  elseif pre_b == "" then
-    return -1
-  end
-  return pre_a < pre_b and -1 or 1
-end
-
---- Check a version against a range.
--- @tparam string version
--- @tparam string range "*", "0.1.0", ">=0.1", ">0.1", "<=1.0", "<1.0" or "=0.2".
--- @treturn boolean
-function pkg.satisfies(version, range)
-  if range == nil or range == "*" or range == "" then
-    return true
-  end
-  local operator, wanted = tostring(range):match("^%s*([<>=]*)%s*(.-)%s*$")
-  local order = pkg.compare_versions(version, wanted)
-  if operator == ">=" then
-    return order >= 0
-  elseif operator == ">" then
-    return order > 0
-  elseif operator == "<=" then
-    return order <= 0
-  elseif operator == "<" then
-    return order < 0
-  end
-  return order == 0
-end
-
-------------------------------------------------------------------------------
--- Package files
-------------------------------------------------------------------------------
-
---- Adler-32 checksum (detects corrupt downloads; not a security measure).
--- @tparam string data
--- @treturn number
-function pkg.checksum(data)
-  local a, b = 1, 0
-  for chunk_start = 1, #data, CHECKSUM_CHUNK do
-    local chunk_end = math.min(chunk_start + CHECKSUM_CHUNK - 1, #data)
-    local bytes = { data:byte(chunk_start, chunk_end) }
-    for i = 1, #bytes do
-      a = (a + bytes[i]) % 65521
-      b = (b + a) % 65521
-    end
-  end
-  return b * 65536 + a
-end
-
--- A value as text with table keys in a fixed order, so equal content gives equal text.
-local function canonical(value)
-  if type(value) ~= "table" then
-    return type(value) .. ":" .. tostring(value)
-  end
-  local keys = {}
-  for key in pairs(value) do
-    keys[#keys + 1] = key
-  end
-  table.sort(keys, function(a, b) return tostring(a) < tostring(b) end)
-  local parts = {}
-  for _, key in ipairs(keys) do
-    parts[#parts + 1] = tostring(key) .. "=" .. canonical(value[key])
-  end
-  return "{" .. table.concat(parts, ",") .. "}"
-end
-
---- A checksum of what a package contains, ignoring its version: the release build
--- keeps a package's old version while this stays the same ("last changed in").
--- @tparam table manifest
--- @tparam table files [path] = content
--- @treturn number
-function pkg.content_sum(manifest, files)
-  local copy = {}
-  for key, value in pairs(manifest) do
-    if key ~= "version" then
-      copy[key] = value
-    end
-  end
-  local file_paths = {}
-  for path in pairs(files) do
-    file_paths[#file_paths + 1] = path
-  end
-  table.sort(file_paths)
-  local parts = { canonical(copy) }
-  for _, path in ipairs(file_paths) do
-    parts[#parts + 1] = path .. "\0" .. files[path]
-  end
-  return pkg.checksum(table.concat(parts, "\1"))
-end
-
---- Which of these packages an update would change: new ones and ones whose version
--- in the source differs from the installed one.
--- @tparam table index A source index.
--- @tparam {string...} names Packages to consider (e.g. from pkg.select).
--- @tparam[opt] table installed Default: pkg.installed().
--- @treturn {table...} { name, from (nil when new), to }, sorted by name
-function pkg.changes(index, names, installed)
-  installed = installed or pkg.installed()
-  local list = {}
-  for _, name in ipairs(names) do
-    local entry = index.packages[name]
-    local have = installed[name] and installed[name].version
-    if entry and have ~= entry.version then
-      list[#list + 1] = { name = name, from = have, to = entry.version }
-    end
-  end
-  table.sort(list, function(a, b) return a.name < b.name end)
-  return list
-end
-
---- Serialise a package table and compress it.
--- @tparam table bundle { manifest, files }
--- @treturn string
-function pkg.encode(bundle)
-  return lz.compress(textutils.serialise(bundle, { compact = true }))
-end
-
---- Parse and validate a .pkg file (compressed with lz, or plain).
--- @tparam string raw
--- @treturn[1] table The package.
--- @treturn[2] nil
--- @treturn[2] string error message
-function pkg.decode(raw)
-  local text, unpack_error = lz.unpack(raw)
-  if not text then
-    return nil, "damaged package: " .. unpack_error
-  end
-  local bundle = textutils.unserialise(text)
-  if type(bundle) ~= "table"
-    or type(bundle.manifest) ~= "table"
-    or type(bundle.files) ~= "table" then
-    return nil, "not a BlockOS package"
-  end
-
-  local manifest = bundle.manifest
-  if type(manifest.name) ~= "string" or type(manifest.version) ~= "string" then
-    return nil, "package manifest needs a name and version"
-  end
-  for path, content in pairs(bundle.files) do
-    local is_valid = type(path) == "string" and type(content) == "string"
-      and not path:find("%.%.")
-    if not is_valid then
-      return nil, "bad file entry in " .. manifest.name
-    end
-  end
-  return bundle
-end
-
---- Check a downloaded .pkg against its index entry.
--- @tparam string raw
--- @tparam table entry { size, sum } from index.lua.
--- @treturn[1] true
--- @treturn[2] nil
--- @treturn[2] string error message
-function pkg.verify(raw, entry)
-  if entry.size and #raw ~= entry.size then
-    return nil, string.format("size mismatch (%d, expected %d)", #raw, entry.size)
-  end
-  if entry.sum and pkg.checksum(raw) ~= entry.sum then
-    return nil, "checksum mismatch"
-  end
-  return true
 end
 
 ------------------------------------------------------------------------------
@@ -284,93 +82,24 @@ function pkg.check_depends(set)
   return true
 end
 
-------------------------------------------------------------------------------
--- Sources
---
--- A source has describe(), index() and fetch(name). index() and fetch() return
--- nil, err on failure. Layouts:
---   HTTP (release assets): <base>/index.lua and <base>/<name>.pkg
---   Disk:                  <dir>/index.lua  and <dir>/packages/<name>.pkg
-------------------------------------------------------------------------------
-
---- A source reading from an install disk (or any directory).
--- @tparam string dir
--- @treturn table
-function pkg.disk_source(dir)
-  local source = {}
-
-  function source.describe()
-    return "disk " .. dir
-  end
-
-  function source.index()
-    local index = fsx.read_table(fs.combine(dir, "index.lua"))
-    if not index then
-      return nil, "no index.lua on " .. dir
+--- Which of these packages an update would change: new ones and ones whose version
+-- in the source differs from the installed one.
+-- @tparam table index A source index.
+-- @tparam {string...} names Packages to consider (e.g. from pkg.select).
+-- @tparam[opt] table installed Default: pkg.installed().
+-- @treturn {table...} { name, from (nil when new), to }, sorted by name
+function pkg.changes(index, names, installed)
+  installed = installed or pkg.installed()
+  local list = {}
+  for _, name in ipairs(names) do
+    local entry = index.packages[name]
+    local have = installed[name] and installed[name].version
+    if entry and have ~= entry.version then
+      list[#list + 1] = { name = name, from = have, to = entry.version }
     end
-    return index
   end
-
-  function source.fetch(name)
-    local raw = fsx.read_raw(fs.combine(dir, "packages/" .. name .. ".pkg"))
-    if not raw then
-      return nil, "missing " .. name .. ".pkg on " .. dir
-    end
-    return raw
-  end
-
-  return source
-end
-
-local function http_get(url)
-  if not http then
-    return nil, "the HTTP API is disabled on this server"
-  end
-  local response, err = http.get(url, nil, true)
-  if not response then
-    return nil, string.format("download failed: %s (%s)", tostring(err), url)
-  end
-  local body = response.readAll()
-  response.close()
-  return body
-end
-
---- A source reading GitHub release assets.
---
--- Uses the plain download URLs, not api.github.com, whose 60 requests per hour
--- limit is shared by every computer on the server.
--- @tparam[opt] string tag e.g. "v0.1.0-rc1"; nil for the latest release.
--- @treturn table
-function pkg.github_source(tag)
-  local base
-  if tag then
-    base = pkg.RELEASES_URL .. "/download/" .. tag
-  else
-    base = pkg.RELEASES_URL .. "/latest/download"
-  end
-  local source = {}
-
-  function source.describe()
-    return tag and ("GitHub release " .. tag) or "the latest GitHub release"
-  end
-
-  function source.index()
-    local raw, err = http_get(base .. "/index.lua")
-    if not raw then
-      return nil, err
-    end
-    local index = textutils.unserialise(raw)
-    if type(index) ~= "table" then
-      return nil, "the release index is unreadable"
-    end
-    return index
-  end
-
-  function source.fetch(name)
-    return http_get(base .. "/" .. name .. ".pkg")
-  end
-
-  return source
+  table.sort(list, function(a, b) return a.name < b.name end)
+  return list
 end
 
 --- Pick the packages to install from an index: every required (non-optional)
@@ -544,6 +273,8 @@ local function plan_tree(new_packages, current, root, removed)
       optional = manifest.optional,
       exclusive = manifest.exclusive,
       roles = manifest.roles, -- directory roles for managed mode (see the domain's roles.lua)
+      kind = manifest.kind,
+      companions = manifest.companions,
       files = files,
     }
     manifests[manifest.name] = manifest
@@ -573,6 +304,15 @@ local function check_exclusive(manifests)
   for name, manifest in pairs(manifests) do
     if manifest.exclusive then
       local allowed = dependency_closure(name, manifests)
+      -- Companions (manifest `companions`) may run next to it, with what they need.
+      for _, companion in ipairs(manifest.companions or {}) do
+        if manifests[companion] then
+          allowed[companion] = true
+          for needed in pairs(dependency_closure(companion, manifests)) do
+            allowed[needed] = true
+          end
+        end
+      end
       for other, other_manifest in pairs(manifests) do
         if other ~= name and other_manifest.optional and not allowed[other] then
           return nil, string.format(

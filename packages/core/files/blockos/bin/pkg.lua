@@ -136,7 +136,10 @@ end
 local function show_installed()
   local rows = {}
   for name, info in pairs(pkg.installed()) do
-    local kind = info.exclusive and "exclusive" or (info.optional and "optional" or "base")
+    local kind = info.kind or (info.optional and "optional" or "base")
+    if info.exclusive then
+      kind = kind .. ", alone"
+    end
     rows[#rows + 1] = { name = name, version = info.version, kind = kind }
   end
   table.sort(rows, function(a, b) return a.name < b.name end)
@@ -165,7 +168,7 @@ local function show_available(source)
     rows[#rows + 1] = {
       name = name,
       version = entry.version,
-      kind = entry.optional and "optional" or "base",
+      kind = entry.kind or (entry.optional and "optional" or "base"),
       status = status,
     }
   end

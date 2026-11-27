@@ -18,8 +18,13 @@ seamlessly by name instead of by raw computer ID:
 - **Mod:** CC:Tweaked **1.115.0**
 - **Modpack:** SkyFactory 5 (Minecraft 1.20.1, Forge)
 - **Language:** Lua, as run by CC:Tweaked's Cobalt VM (Lua 5.2 semantics, with a few 5.3
-  additions such as the `utf8` library). Do not use LuaJIT or Lua 5.4-only features
-  (e.g. `<const>`, `<close>`, integer `//` should not be assumed).
+  additions; see https://tweaked.cc/reference/feature_compat.html). Use freely:
+  `table.pack/unpack/move`, `string.pack/unpack`, `utf8`, `goto` (sparingly), `bit32`,
+  `__pairs`, `load` with an environment. Never use: `//` and the bitwise operators
+  (`&`, `|`, `<<`...), integers (`math.tointeger`, `math.type`, `math.maxinteger`),
+  `collectgarbage`, `os.exit`, `os.execute`, `string.dump`, `__ipairs`, `<const>`/`<close>`,
+  and Lua 5.5 additions such as `table.create` (newer than the CC:Tweaked we are locked
+  to). Features added in recent CC:Tweaked versions may be missing in 1.115.
 - Code runs **inside the game**. For testing outside the game it runs in the **CraftOS-PC**
   emulator (see Testing). CraftOS-PC uses C Lua 5.2 rather than Cobalt and targets an older
   CC:Tweaked (about 1.112), so passing tests are strong evidence, not proof: still check
@@ -164,6 +169,22 @@ tests/run.lua, tests/*_spec.lua  test runner and specs (run inside CraftOS-PC)
 Packages: `core` (kernel, session, package manager, installers) and `net` (modems, hostname,
 peers). Both are required; anything else should be `optional = true`.
 
+Every optional package has a manifest `kind` (checked by `pkg.check_kind` in the build):
+`protocol` (protocol names, schemas, client library: `<family>-protocol`, and where a
+family's directory `roles` are declared), `library` (code several applications share, e.g.
+`logistics-hub`), `application` (services), `tools` (commands and screens: `<family>-tools`)
+and `bundle` (no files, only `depends`, e.g. `logistics`). A computer installs only the part it
+needs: a storage node gets `logistics-node`, not the tools. Families: domain (`domain-protocol`,
+`domain`, `domain-tools`, `domain-controller`), logistics, mail (`mail-server`, `mail-client`,
+`mail-tools`), msg, turtle (`turtle-remote`, `turtle-tools`), pkg-server.
+
+Shared kernel/lib helpers worth knowing before writing another copy: `events` (per-coroutine
+event buffering), `lock`, `diskstore` (data on disk drives, spilling to the next one),
+`notices`, `tab_app` (tabbed screens), `discovery` (service lookup with a 60 s cache),
+`net.self_name`/`net.position`, service providers (`ctx.provide`, `services.await`).
+When the controller is unreachable, roles degrade open: stale role info is kept and roles open
+to everyone stay usable.
+
 ### On the device
 
 ```
@@ -223,13 +244,16 @@ minutes marks the service `failed`. `condition` returning false marks it `n/a`.
 |--------------------|----------------------------------------------------------------|
 | `blockos`          | rednet's built-in `rednet.host` / `rednet.lookup` hostname records |
 | `blockos.announce` | event `announce` `{ hostname, kind, version, services, info, hello? }`, broadcast at boot and every 5 min, **only by computers not in a domain**; a `hello` gets a direct reply |
-| `blockos.domain`   | rpc. join, leave, login, validate, logout, validate_computer, host_update, resolve, list_hosts, service_find/add/del/register/unregister, list_users/groups/computers/services, user_add/del/passwd/enable, group_add/del/addmember/rmmember/set_everyone/set_manager, group_get (any joined computer: role info for modules), computer_role_set/del, computer_assign, list_computer_roles, computer_config (the calling computer's merged roles), computer_remove, profile_get, profile_set `{ apps?, settings? }` (the logged-in user's own roaming profile), mail_send `{ to (user or group), text }` (a user, or a joined computer for notices), mail_list, mail_unread, mail_read `{ id }`, mail_delete `{ id }` (own mailbox; newest 20 kept), dc_status. The controller also hosts this protocol under the domain name, so `rednet.lookup("blockos.domain", "home")` finds it. |
+| `blockos.domain`   | rpc. join, leave, login, validate, logout, validate_computer, host_update, resolve, list_hosts, service_find/add/del/register/unregister, list_users/groups/computers/services, user_add/del/passwd/enable, group_add/del/addmember/rmmember/set_everyone/set_manager, group_get (any joined computer: role info for modules), computer_role_set/del, computer_assign, list_computer_roles, computer_config (the calling computer's merged roles), computer_remove, profile_get, profile_set `{ apps?, settings? }` (the logged-in user's own roaming profile), route `{ to }` (joined computers: a user's or group's members and the computers they are logged in at; used by the mail server), dc_status. The controller also hosts this protocol under the domain name, so `rednet.lookup("blockos.domain", "home")` finds it. |
 | `blockos.manage`   | rpc, served by the `manage` service on every joined computer; domain-admins only. status (version, uptime, user, services, disk, packages, turtle fuel/position, notices), reboot, update (applies roles and updates now, even if someone is logged in), service `{ name, action }`, log `{ lines }`, shell_open `{ width, height }`. |
 | `blockos.manage.shell` | events of a remote shell session (`remote_shell.lua`, `rsh <computer>`): target -> viewer `frame` `{ session, lines = { { y, text, fg, bg } }, x, y, blink }` (changed lines only) and `closed`; viewer -> target `input` `{ session, event }` (keys, chars, paste, mouse, terminate), `ping`, `close`. The session runs a real shell (BlockOS path, as the admin who opened it) in a hidden window; local keyboard input never reaches it; it closes after 60 s without ping. |
-| `blockos.mail`     | event `new_mail` `{ to, from, unread }`, sent by the domain controller to each computer the recipient is logged in at (sessions remember their computer); the domain-client checks it came from its controller, updates the notice, queues the local event `blockos_mail` (from, unread) and plays the user's `blockos.mail.sound` (roaming). |
+| `blockos.mail`     | rpc, served by `mail-server` (domain service record `mail`; mailboxes on disk drives via `diskstore`). send `{ to (user or group), subject?, text }` (a user, or a joined computer for notices), list `{ folder? }` (inbox or sent), unread, read `{ id, folder? }`, delete `{ id, folder? }`; newest 20 per folder. |
+| `blockos.mail.notify` | event `new_mail` `{ to, from, unread }`, sent by the mail server to each computer the recipient is logged in at (found with the controller's `route`); `mail-client` checks it came from the mail server, updates the notice, queues the local event `blockos_mail` (from, unread) and plays the user's `blockos.mail.sound` (roaming). |
+| `blockos.msg`      | event `message` `{ ... }` (max 200 chars), direct or broadcast chat between computers (`msg` receives, `msg-tools` sends). |
+| `blockos.logistics.moves` | event `moves` `{ moves }`, pushed by a hub to computers that called `subscribe_moves` (wall boards; lease 60 s, renewed). |
 | `blockos.pkg`      | rpc. index (filtered by the caller's groups), fetch `{ name }` (raw .pkg), publish `{ raw }` (domain-admins). |
 | `blockos.logistics` | rpc, served by the hub (the controller; a lone node only to its own terminal). status, alerts, catalog (with per-node counts), watches, nodes, storages (with node), moves `{ since? }` (with a `log` id that changes on restart), find_start, find_finish, request `{ item, count, output?, near? }` (near `{ x, y, z }`: the nearest depot, an output with a position, whose node has enough, else the nearest with some), depots `{ near? }`, recipes, jobs, craft `{ item, count }` (logistics-users); supply `{ node, item, count, target }` (a node's crafter: joined computers, open without a domain; carried through the ports into the machine `target`); outputs, watch, unwatch, watch_all, settings, test_sound, set_storage `{ storage, role?, label?, pos?, clear_pos?, forget? }`, forget_node, import_levels `{ node }` (logistics-admins or domain-admins). Open until `domain setup logistics`; a node whose role `logistics-node-<node>` exists is only visible to its members. Items and chests may be named by id, label or part of it; chests also as `node/name`. Found via the domain service record `logistics` / `logistics-<name>`, else rednet name. |
-| `blockos.logistics.node` | controller <-> nodes. Node -> controller event `report` `{ node, totals, blocks, moves, sources, poll_seconds }` every round (full state). Controller -> node rpc (never retried): request `{ item, count, output? }`, set_storage, find_start, find_finish, export_levels, and for ports port_hold `{ seconds? }`, to_port `{ item, count, port }`, from_port `{ port, item, count, output? }`, push_marker `{ port }` (one item into the port, so the controller can pair it with the main-cable inventory that changed), craft `{ item, count }` (when logistics-crafting runs there; reports then carry `crafting = { recipes, jobs }`). In a domain only joined computers may call a node (computer token). |
+| `blockos.logistics.node` | controller <-> nodes. Node -> controller event `report` `{ node, totals, blocks, moves, sources, poll_seconds }` every round (full state). Controller -> node rpc (never retried): request `{ item, count, output? }`, set_storage, find_start, find_finish, export_levels, and for ports port_hold `{ seconds? }`, to_port `{ item, count, port }`, from_port `{ port, item, count, output? }`, push_marker `{ port }` (one item into the port, so the controller can pair it with the main-cable inventory that changed), craft `{ item, count }` (when logistics-crafter runs there; reports then carry `crafting = { recipes, jobs }`). In a domain only joined computers may call a node (computer token). |
 | `blockos.remote`   | rpc, served by the `turtle-remote` service on joined turtles. info, act `{ action, slot? }` (domain users; only the actions listed in `turtle_remote.ACTIONS`, plus select). Never retried by the driver, so a lost answer cannot move a turtle twice. |
 | `blockos.logistics.alert` | event `level_alert` `{ server, item, label, count, limit, is_low }`, broadcast by the hub only when an item goes low or recovers. |
 
@@ -333,7 +357,7 @@ Peer liveness uses the local receive time, never the sender's clock.
   board (`logistics_wall`), depots (outputs with a position, `near` routing, `logistics_api`
   for programs), ports (`logistics_ports` on the controller: role `port`, paired by a marker
   item, crossing = node A to_port, controller pushItems port to port on the wired main cable,
-  node B from_port; pairings in the controller config), crafting (`logistics-crafting` on a
+  node B from_port; pairings in the controller config), crafting (`logistics-crafter` on a
   node: role `machine`, recipes of supply/wait/retrieve steps taught by example or written,
   retries on timeout or listed scrap; the crafter calls its node in-process, the hub asks
   for a craft when a watched item with a recipe is low and carries missing ingredients). Later: crafting, AE2 and courier modules.

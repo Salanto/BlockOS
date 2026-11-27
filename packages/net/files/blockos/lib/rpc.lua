@@ -10,11 +10,11 @@
 -- Handlers return a result, or nil and an error message. A handler that has
 -- nothing to return should return true.
 --
--- Retries are safe: a retry resends the same request id, and the server runs each
--- (sender, id) once. A repeat that arrives while the first copy still runs is
--- dropped (its answer is on the way); a repeat of a finished one gets the same
--- answer again. So a lost answer never makes an operation (e.g. moving items) happen
--- twice.
+-- Retries are safe: a retry resends the same request id. A repeat that arrives while
+-- the first copy still runs is dropped (its answer is on the way). Operations marked
+-- with rpc.once (moving items, sending mail, driving a turtle) also keep their answer
+-- for a while, so a repeat of a finished one gets that answer instead of running
+-- again: a lost answer never makes them happen twice. Reads simply run again.
 -- @module rpc
 
 local wire = import("wire")
@@ -25,11 +25,27 @@ rpc.DEFAULT_TIMEOUT = 3
 rpc.DEFAULT_RETRIES = 1
 rpc.LOGIN_REQUIRED = "login required"
 rpc.PERMISSION_DENIED = "permission denied"
+--- The validator could not ask the domain controller (it is down or unloaded).
+rpc.UNREACHABLE = "the domain controller is unreachable"
+--- The group whose members administer every joined computer (declared once here).
+rpc.DOMAIN_ADMINS = "domain-admins"
 
 local MAX_WORKERS = 16
 -- How long a server remembers a request it ran (for repeats), and how many.
 local REMEMBER_SECONDS = 120
 local MAX_REMEMBERED = 200
+
+-- Handlers marked with rpc.once (weak keys: handler tables can be rebuilt).
+local once_handlers = setmetatable({}, { __mode = "k" })
+
+--- Mark a handler whose operation must never run twice for one request (it moves
+-- items, sends mail, drives a turtle): its answer is kept for repeats.
+-- @tparam function handler
+-- @treturn function The same handler.
+function rpc.once(handler)
+  once_handlers[handler] = true
+  return handler
+end
 
 local request_counter = 0
 
@@ -102,7 +118,12 @@ local function new_request_id()
   return string.format("%d-%d-%d", os.getComputerID(), request_counter, math.random(0, 999999))
 end
 
+-- Programs act as the logged-in user; services never do (they serve the computer,
+-- whoever sits at it), so a service's calls carry only the computer token.
 local function current_user_token()
+  if import("scheduler").current() then
+    return nil
+  end
   return blockos and blockos.user and blockos.user.token
 end
 
@@ -118,19 +139,24 @@ function rpc.is_response(message)
   return wire.parse(message, "response") ~= nil
 end
 
+-- Everything else that arrives meanwhile is kept for the caller's loop (see events):
+-- a service's own timer or an alert must not get lost while it waits for an answer.
 local function wait_for_reply(request_id, protocol, timeout)
+  local events = import("events")
   local timer = os.startTimer(timeout)
   while true do
-    local event, a, b, c = os.pullEvent()
-    if event == "timer" and a == timer then
+    local event = table.pack(os.pullEvent())
+    local name, a, b, c = event[1], event[2], event[3], event[4]
+    if name == "timer" and a == timer then
       return nil
     end
-    local is_reply = event == "rednet_message" and c == protocol
+    local is_reply = name == "rednet_message" and c == protocol
       and rpc.is_response(b) and b.reply_to == request_id
     if is_reply then
       os.cancelTimer(timer)
       return b
     end
+    events.keep(table.unpack(event, 1, event.n))
   end
 end
 
@@ -255,13 +281,35 @@ function rpc.serve(protocol, handlers)
   local workers = {}
   local remembered, remembered_count = {}, 0 -- [sender/id] = { at, response? }
 
+  local function forget(key)
+    if remembered[key] then
+      remembered[key] = nil
+      remembered_count = remembered_count - 1
+    end
+  end
+
+  -- Drop answers older than REMEMBER_SECONDS; over the limit, the oldest finished ones
+  -- go first, but never one a client may still retry (the limit is soft).
   local function forget_old()
     local now = os.clock()
+    local finished = {}
     for key, entry in pairs(remembered) do
-      if now - entry.at > REMEMBER_SECONDS or remembered_count > MAX_REMEMBERED then
-        remembered[key] = nil
-        remembered_count = remembered_count - 1
+      if entry.response and now - entry.at > REMEMBER_SECONDS then
+        forget(key)
+      elseif entry.response then
+        finished[#finished + 1] = { key = key, at = entry.at }
       end
+    end
+    if remembered_count <= MAX_REMEMBERED then
+      return
+    end
+    table.sort(finished, function(a, b) return a.at < b.at end)
+    local retry_window = 2 * rpc.DEFAULT_TIMEOUT * (1 + rpc.DEFAULT_RETRIES)
+    for _, old in ipairs(finished) do
+      if remembered_count <= MAX_REMEMBERED or now - old.at < retry_window then
+        break
+      end
+      forget(old.key)
     end
   end
 
@@ -291,10 +339,16 @@ function rpc.serve(protocol, handlers)
     local entry = { at = os.clock() }
     remembered[key] = entry
     remembered_count = remembered_count + 1
+    local is_once = once_handlers[handlers[request.op]] == true
     local worker = {
       coroutine = coroutine.create(function()
-        entry.response = rpc.handle(handlers, sender, request)
-        transport.send(sender, entry.response, protocol)
+        local response = rpc.handle(handlers, sender, request)
+        if is_once then
+          entry.response, entry.at = response, os.clock()
+        else
+          forget(key) -- a read: a repeat may simply run again
+        end
+        transport.send(sender, response, protocol)
       end),
     }
     if resume(worker) then
@@ -338,8 +392,19 @@ function rpc.require_user(request_ctx, groups)
   if type(request_ctx.token) ~= "string" then
     return nil, rpc.LOGIN_REQUIRED
   end
-  local user = user_validator(request_ctx.token)
+  -- Checked with the controller once per request, however many checks it runs
+  -- (no caching beyond the request: logouts and group changes still apply at once).
+  local user = request_ctx.checked_user
+  if user == nil then
+    local checked, check_error = user_validator(request_ctx.token)
+    user = checked or false
+    request_ctx.checked_user = user
+    request_ctx.check_error = check_error
+  end
   if not user then
+    if request_ctx.check_error == rpc.UNREACHABLE then
+      return nil, rpc.UNREACHABLE
+    end
     return nil, rpc.LOGIN_REQUIRED
   end
   if not groups or #groups == 0 then
@@ -364,6 +429,28 @@ end
 -- @treturn[1] table { hostname }
 -- @treturn[2] nil
 -- @treturn[2] string error message
+--- A joined computer when this computer is in a domain; anyone without one
+-- (standalone is open). The local admin always passes.
+-- @tparam table request_ctx
+-- @tparam[opt] function is_joined function() -> boolean (default: ask the domain)
+-- @treturn[1] true
+-- @treturn[2] nil
+-- @treturn[2] string error message
+function rpc.require_computer_if_joined(request_ctx, is_joined)
+  is_joined = is_joined or function()
+    local found, domain = pcall(import, "domain")
+    return found and domain.is_joined()
+  end
+  if request_ctx.local_admin or not is_joined() then
+    return true
+  end
+  local computer, err = rpc.require_computer(request_ctx)
+  if not computer then
+    return nil, err
+  end
+  return true
+end
+
 function rpc.require_computer(request_ctx)
   if type(request_ctx.computer_token) ~= "string" then
     return nil, "the calling computer is not in a domain"

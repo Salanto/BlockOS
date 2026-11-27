@@ -10,11 +10,16 @@
 --       condition = function()        -- optional; false marks it "n/a" here
 --         return true
 --       end,
---       run = function(ctx) ... end,  -- ctx = { name, log, config }
+--       run = function(ctx) ... end,  -- ctx = { name, log, config, provide, withdraw }
 --     }
 --
 -- Services run in the scheduler, never receive `terminate`, and must not draw
 -- to the terminal: print, write and printError are redirected to the log.
+--
+-- Providers: a service offers an object to programs and other services with
+-- ctx.provide(name, api) (e.g. "logistics.node"); others find it with
+-- services.get(name) or wait for it with services.await(name). Everything a service
+-- provided is withdrawn when it stops or crashes, so nobody keeps using a dead one.
 -- @module services
 
 local config = import("config")
@@ -28,6 +33,63 @@ local CRASH_LIMIT = 5
 local scheduler = nil
 local definitions = {}
 local status = {}
+local provided = {} -- [api name] = { service, api }
+
+--- Queued (with the api name) whenever something is provided.
+services.PROVIDED_EVENT = "blockos_service_provided"
+
+--- Offer an object under a name (services use ctx.provide; tests call this).
+-- @tparam string name e.g. "logistics.node"
+-- @param api
+-- @tparam[opt] string owner The providing service (withdrawn with it).
+function services.provide(name, api, owner)
+  provided[name] = { service = owner, api = api }
+  os.queueEvent(services.PROVIDED_EVENT, name)
+end
+
+--- Withdraw an object, if it is still the one provided under that name.
+-- @tparam string name
+-- @param[opt] api Only withdraw this object (another may have replaced it).
+function services.withdraw(name, api)
+  local entry = provided[name]
+  if entry and (api == nil or entry.api == api) then
+    provided[name] = nil
+  end
+end
+
+local function withdraw_all(owner)
+  for name, entry in pairs(provided) do
+    if entry.service == owner then
+      provided[name] = nil
+    end
+  end
+end
+
+--- What is provided under a name right now.
+-- @tparam string name
+-- @return The object, or nil.
+function services.get(name)
+  local entry = provided[name]
+  return entry and entry.api
+end
+
+--- Wait until something is provided under a name.
+-- @tparam string name
+-- @tparam[opt] number timeout Seconds; nil waits for ever.
+-- @return The object, or nil after the timeout.
+function services.await(name, timeout)
+  local timer = timeout and os.startTimer(timeout)
+  while not services.get(name) do
+    local event, value = os.pullEvent()
+    if event == "timer" and value == timer then
+      return nil
+    end
+  end
+  if timer then
+    os.cancelTimer(timer)
+  end
+  return services.get(name)
+end
 local start_order = {}
 local restart_timers = {}
 
@@ -184,6 +246,7 @@ end
 local function on_service_exit(name, ok, err)
   local service_status = status[name]
   local definition = definitions[name]
+  withdraw_all(name)
 
   if ok then
     log.info("services", "%s exited", name)
@@ -237,7 +300,13 @@ function services.start(name)
   end
 
   service_status.state = "running"
-  local context = { name = name, log = log.logger(name), config = config }
+  local context = {
+    name = name,
+    log = log.logger(name),
+    config = config.system_view(),
+    provide = function(api_name, api) services.provide(api_name, api, name) end,
+    withdraw = services.withdraw,
+  }
   scheduler:spawn(name,
     function() definition.run(context) end,
     function(ok, err) on_service_exit(name, ok, err) end)
@@ -264,6 +333,7 @@ function services.stop(name)
     end
   end
   scheduler:kill(name)
+  withdraw_all(name)
   service_status.state = "stopped"
   log.info("services", "stopped %s", name)
   return true

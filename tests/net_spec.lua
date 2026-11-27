@@ -110,4 +110,27 @@ return function(t)
       settings.set("blockos.net.closed_sides", before)
     end
   end)
+
+  t.it("discovery caches answers for a minute and forgets on request", function()
+    local import = t.fresh_import()
+    local domain = import("domain")
+    local asked = 0
+    domain.is_joined = function() return true end
+    domain.find_service = function(service_type)
+      asked = asked + 1
+      return { id = 42, host = "storage-" .. service_type }
+    end
+    local discovery = import("discovery")
+    local now = 0
+    discovery.env.clock = function() return now end
+    t.eq(discovery.find("pkg", "blockos.pkg"), 42)
+    t.eq(discovery.find("pkg", "blockos.pkg"), 42)
+    t.eq(asked, 1, "the second answer came from the cache")
+    now = 61
+    discovery.find("pkg", "blockos.pkg")
+    t.eq(asked, 2, "after a minute it asks again")
+    discovery.forget("pkg")
+    discovery.find("pkg", "blockos.pkg")
+    t.eq(asked, 3, "forget looks again at once")
+  end)
 end

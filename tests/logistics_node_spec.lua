@@ -160,11 +160,11 @@ return function(t)
     rpc.set_computer_validator(function(token)
       return token == "controller-token" and { hostname = "controller" } or nil
     end)
-    local joined = node.handlers(nil, function() return true end)
+    local joined = node.handlers(function() return true end)
     local args = { item = "iron", count = 1 }
     t.ok(not joined.request({ sender = 4 }, args), "no computer token")
     t.ok(joined.request({ sender = 4, computer_token = "controller-token" }, args))
-    local open = node.handlers(nil, function() return false end)
+    local open = node.handlers(function() return false end)
     t.ok(open.request({ sender = 4 }, args), "standalone: open")
     t.ok(not open.export_levels({ sender = 4 }), "no levels to hand over")
   end)

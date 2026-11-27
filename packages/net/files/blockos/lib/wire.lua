@@ -14,7 +14,9 @@
 --   }
 --
 -- and receivers call wire.parse(message, "event", ANNOUNCE). Unknown fields are
--- ignored; messages with a newer major version are dropped.
+-- ignored. Versions: a minor step (1.1) only adds fields, so everyone reads it; a new
+-- major still reads older majors (rolling upgrades), while older computers drop
+-- messages of a newer major.
 -- @module wire
 
 local wire = {}
@@ -95,7 +97,7 @@ function wire.parse(message, kind, schema)
   if type(message) ~= "table" then
     return nil, "not a BlockOS message"
   end
-  if type(message.v) ~= "number" or math.floor(message.v) ~= wire.VERSION then
+  if type(message.v) ~= "number" or math.floor(message.v) > wire.VERSION or message.v < 1 then
     return nil, "unsupported wire version"
   end
   if message.kind ~= kind or not KINDS[kind] then

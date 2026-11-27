@@ -2,7 +2,7 @@
 -- in the same computer (loopback transport).
 return function(t)
   local ME = os.getComputerID()
-  local DSA = "packages/domain/files/blockos/bin/dsa.lua"
+  local DSA = "packages/domain-tools/files/blockos/bin/dsa.lua"
 
   local function type_line(text)
     return { { "paste", text }, { "key", keys.enter } }

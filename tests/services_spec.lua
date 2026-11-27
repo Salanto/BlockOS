@@ -141,4 +141,49 @@ return function(t)
     local log_text = t.read(paths.log()) or ""
     t.ok(log_text:find("hello from a service", 1, true), "print was not logged")
   end)
+
+  t.it("services provide objects that are withdrawn when they stop", function()
+    local services = t.fresh_import()("services")
+    t.eq(services.get("thing"), nil)
+    local thing = { name = "thing" }
+    services.provide("thing", thing, "maker")
+    t.eq(services.get("thing"), thing)
+    local other = {}
+    services.withdraw("thing", other)
+    t.eq(services.get("thing"), thing, "only the one provided is withdrawn")
+    services.withdraw("thing", thing)
+    t.eq(services.get("thing"), nil)
+    t.eq(services.await("thing", 0.1), nil, "await gives up after its timeout")
+  end)
+
+  t.it("a lock runs exclusive work alone and lets shared work overlap", function()
+    local lock = t.fresh_import()("lock").new()
+    local order = {}
+    parallel.waitForAll(
+      function()
+        lock.exclusive(function()
+          order[#order + 1] = "pair start"
+          sleep(0.2)
+          order[#order + 1] = "pair end"
+        end)
+      end,
+      function()
+        sleep(0.05)
+        lock.shared(function() order[#order + 1] = "cross" end)
+      end
+    )
+    t.eq(table.concat(order, ","), "pair start,pair end,cross", "the crossing waited")
+    t.eq(lock.try_exclusive(function() return "ran" end), "ran")
+    local value, err = nil, nil
+    parallel.waitForAll(
+      function() lock.shared(function() sleep(0.2) end) end,
+      function()
+        sleep(0.05)
+        value, err = lock.try_exclusive(function() return "ran" end)
+      end
+    )
+    t.eq(value, nil)
+    t.eq(err, "busy", "try_exclusive does not wait")
+    t.ok(not lock.is_busy())
+  end)
 end

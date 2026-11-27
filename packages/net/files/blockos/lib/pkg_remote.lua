@@ -68,16 +68,9 @@ function pkg_remote.find_server(name)
     return id, name
   end
 
-  local ok, domain = pcall(import, "domain")
-  if ok and domain.is_joined() then
-    local service = domain.find_service(pkg_remote.SERVICE_TYPE)
-    if service then
-      return service.id, service.host
-    end
-  end
-  local found = rpc.find(pkg_remote.PROTOCOL)
+  local found, label = import("discovery").find(pkg_remote.SERVICE_TYPE, pkg_remote.PROTOCOL)
   if found then
-    return found, "#" .. found
+    return found, label
   end
   return nil, "no package server found: register one with 'domain dns add pkg <host>' "
     .. "or set blockos.pkg.server"

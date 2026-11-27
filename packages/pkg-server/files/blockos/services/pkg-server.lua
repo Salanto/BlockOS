@@ -11,21 +11,16 @@ local function run(ctx)
   end
   ctx.log.info("serving %d packages from %d drives", count, #repo.roots())
 
-  -- Findable without a domain too: `pkg` looks the protocol up with rednet
-  -- when nothing else is configured.
-  if rednet.isOpen() and blockos.net and blockos.net.hostname() then
-    pcall(rednet.host, import("pkg_remote").PROTOCOL, blockos.net.hostname())
+  -- Findable as the domain's "pkg" record, and by rednet name without a domain
+  -- (several package servers may run: each hosts its own hostname).
+  local pkg_remote = import("pkg_remote")
+  local hostname = import("net").self_name()
+  local ok, err = import("discovery").advertise(pkg_remote.SERVICE_TYPE, pkg_remote.PROTOCOL,
+    hostname)
+  if not ok then
+    ctx.log.warn("could not register the pkg service record: %s", tostring(err))
   end
-
-  -- Make this server findable as the domain's "pkg" service.
-  local found, domain = pcall(import, "domain")
-  if found and domain.is_joined() then
-    local ok, err = domain.register_service("pkg", import("pkg_remote").PROTOCOL)
-    if not ok then
-      ctx.log.warn("could not register the pkg service record: %s", tostring(err))
-    end
-  end
-  rpc.serve(import("pkg_remote").PROTOCOL, repo.handlers())
+  rpc.serve(pkg_remote.PROTOCOL, repo.handlers())
 end
 
 return {

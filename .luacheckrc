@@ -10,6 +10,10 @@ globals = { "blockos", "import" }
 -- additions (os.pullEvent, os.epoch, ...) are accepted.
 read_globals = {
   os = { other_fields = true },
+  -- Cobalt's Lua 5.3 additions (https://tweaked.cc/reference/feature_compat.html).
+  string = { fields = { "pack", "unpack", "packsize" }, other_fields = true },
+  table = { fields = { "move" }, other_fields = true },
+  "utf8",
   "colours", "colors", "commands", "disk", "fs", "gps", "help", "http", "keys",
   "multishell", "paintutils", "parallel", "peripheral", "pocket", "printError",
   "read", "rednet", "redstone", "settings", "shell", "sleep", "term", "textutils", "turtle",

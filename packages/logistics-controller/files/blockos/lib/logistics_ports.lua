@@ -86,7 +86,8 @@ end
 -- @treturn table ports
 function logistics_ports.new(config, save)
   config.ports = config.ports or {}
-  local ports = { attempts = {}, is_pairing = false, crossings = 0 }
+  -- Pairing runs alone; crossings share the main cable with each other.
+  local ports = { attempts = {}, lock = import("lock").new() }
 
   -- Chests already paired to a port (never chosen for another).
   local function paired_chests(except)
@@ -141,11 +142,7 @@ function logistics_ports.new(config, save)
   -- @treturn[2] string error message
   function ports.pair(node, handle, proxy)
     ports.attempts[key(node, handle)] = logistics_ports.env.clock()
-    if ports.crossings > 0 then
-      return nil, "items are crossing right now; trying again later"
-    end
-    ports.is_pairing = true
-    local ok, result, err = pcall(function()
+    local ok, result, err = pcall(ports.lock.try_exclusive, function()
       -- The marker's item is known only afterwards: count everything before.
       local skip = paired_chests(key(node, handle))
       local api = logistics_ports.env.peripheral
@@ -180,9 +177,11 @@ function logistics_ports.new(config, save)
       save()
       return changed[1]
     end)
-    ports.is_pairing = false
     if not ok then
       return nil, tostring(result)
+    end
+    if err == "busy" then
+      return nil, "items are crossing right now; trying again later"
     end
     return result, err
   end
@@ -239,19 +238,13 @@ function logistics_ports.new(config, save)
   -- @treturn[2] nil
   -- @treturn[2] string error message
   function ports.transfer(from_entry, to_entry, item, count, output)
-    local waited = 0
-    while ports.is_pairing and waited < logistics_ports.PAIRING_WAIT do
-      sleep(0.5)
-      waited = waited + 0.5
-    end
-    if ports.is_pairing then
-      return nil, "a port is being paired; try again in a moment"
-    end
-    ports.crossings = ports.crossings + 1
-    local ok, result, err = pcall(ports.cross, from_entry, to_entry, item, count, output)
-    ports.crossings = ports.crossings - 1
+    local ok, result, err = pcall(ports.lock.shared, ports.cross, logistics_ports.PAIRING_WAIT,
+      from_entry, to_entry, item, count, output)
     if not ok then
       return nil, tostring(result)
+    end
+    if result == nil and err == "busy" then
+      return nil, "a port is being paired; try again in a moment"
     end
     return result, err
   end

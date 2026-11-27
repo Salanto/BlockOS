@@ -15,6 +15,9 @@ local logistics_sources = {}
 
 local SOURCE_DIR = "lib/storage_sources"
 
+--- How many blocks are read at the same time (see read_all).
+logistics_sources.BATCH = 8
+
 --- Load every source module.
 -- @tparam[opt] string root System tree (default blockos.root).
 -- @tparam[opt] function loader Module loader (default import; tests pass their own).
@@ -60,6 +63,7 @@ function logistics_sources.read_all(sources, role_of)
   local blocks = 0
   local failures = {}
   local inventories = {}
+  local reads = {} -- one function per block to read; run in batches below
   for _, source in ipairs(sources) do
     for _, handle in ipairs(source.detect()) do
       local role = role_of and role_of(handle, source) or "storage"
@@ -68,25 +72,45 @@ function logistics_sources.read_all(sources, role_of)
       local is_transit = role == "input" or role == "output" or role == "port"
         or role == "machine" or role == "recycle"
       if is_transit and type(source.fill) == "function" then
-        local ok, fill = pcall(source.fill, handle)
-        inventory.fill = ok and fill or nil
+        reads[#reads + 1] = function()
+          local ok, fill = pcall(source.fill, handle)
+          inventory.fill = ok and fill or nil
+        end
       elseif role == "storage" then
-        local ok, items, fill = pcall(source.read, handle)
-        if not ok or type(items) ~= "table" then
-          failures[#failures + 1] = {
-            handle = tostring(handle),
-            error = ok and "the source returned no item list" or tostring(items),
-          }
-        else
-          blocks = blocks + 1
-          inventory.items = items
-          inventory.fill = fill
-          for item, found in pairs(items) do
-            local total = totals[item] or { count = 0, label = found.label }
-            total.count = total.count + found.count
-            total.label = total.label or found.label
-            totals[item] = total
-          end
+        reads[#reads + 1] = function()
+          inventory.read_ok, inventory.items, inventory.fill = pcall(source.read, handle)
+        end
+      end
+    end
+  end
+  -- Every inventory call costs a game tick; calls from several coroutines share ticks,
+  -- so blocks are read BATCH at a time instead of one after another.
+  for first = 1, #reads, logistics_sources.BATCH do
+    local last = math.min(#reads, first + logistics_sources.BATCH - 1)
+    local batch = { table.unpack(reads, first, last) }
+    if #batch == 1 then
+      batch[1]()
+    else
+      parallel.waitForAll(table.unpack(batch))
+    end
+  end
+  for _, inventory in ipairs(inventories) do
+    if inventory.role == "storage" then
+      local ok, items = inventory.read_ok, inventory.items
+      inventory.read_ok = nil
+      if not ok or type(items) ~= "table" then
+        failures[#failures + 1] = {
+          handle = tostring(inventory.handle),
+          error = ok and "the source returned no item list" or tostring(items),
+        }
+        inventory.items, inventory.fill = nil, nil
+      else
+        blocks = blocks + 1
+        for item, found in pairs(items) do
+          local total = totals[item] or { count = 0, label = found.label }
+          total.count = total.count + found.count
+          total.label = total.label or found.label
+          totals[item] = total
         end
       end
     end

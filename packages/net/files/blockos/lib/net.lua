@@ -346,6 +346,25 @@ function net.close_side(side, is_open)
   end
 end
 
+--- This computer's name for others: its hostname, else "#<id>".
+-- @treturn string
+function net.self_name()
+  return net.hostname() or ("#" .. os.getComputerID())
+end
+
+--- Where this computer is, by GPS (needs GPS hosts in range of a wireless modem).
+-- @tparam[opt] number timeout Seconds to wait for answers (default 2).
+-- @treturn[1] table { x, y, z } in whole blocks
+-- @treturn[2] nil
+-- @treturn[2] string why not
+function net.position(timeout)
+  local ok, x, y, z = pcall(gps.locate, timeout or 2)
+  if not (ok and x) then
+    return nil, "no GPS fix: are GPS hosts in range of a wireless modem?"
+  end
+  return { x = math.floor(x + 0.5), y = math.floor(y + 0.5), z = math.floor(z + 0.5) }
+end
+
 --- Forget all state (tests).
 function net.reset()
   state = {

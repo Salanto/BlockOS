@@ -105,10 +105,9 @@ return function(t)
 
   t.it("programs request near their own position with logistics_api", function()
     local hub, _, import = new_hub()
-    _G.blockos = {
-      logistics_hub = { hub = hub, handlers = import("logistics_handlers").new(hub),
-        config = hub.config },
-    }
+    _G.blockos = {}
+    import("services").provide("logistics.hub", { hub = hub,
+      handlers = import("logistics_handlers").new(hub), config = hub.config })
     local api = import("logistics_api")
     api.locate = function() return { x = 3, y = 64, z = 0 } end
     local result = assert(api.request("coal", 3, { here = true }))

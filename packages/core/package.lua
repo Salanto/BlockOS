@@ -2,6 +2,7 @@
 return {
   name = "core",
   version = "0.0.0-dev",
+  kind = "base",
   description = "BlockOS kernel, session, package manager and installers",
   depends = {},
   -- Only needed to build install media (the installers read them straight from

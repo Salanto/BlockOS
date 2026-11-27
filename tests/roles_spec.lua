@@ -120,4 +120,36 @@ return function(t)
     t.eq(calls[4], "group_addmember:logistics-users:bob")
     t.eq(#report, 2)
   end)
+
+  t.it("with the controller down, open roles stay open and restricted ones closed", function()
+    local roles = t.fresh_import()("roles")
+    local up, now = true, 0
+    local groups = { ["turtle-drivers"] = { name = "turtle-drivers", everyone = true },
+      ["vault"] = { name = "vault" } }
+    roles.env = {
+      is_joined = function() return true end,
+      group_get = function(name)
+        if not up then
+          return nil, "no answer"
+        end
+        return groups[name]
+      end,
+      require_user = function()
+        if not up then
+          return nil, "the domain controller is unreachable"
+        end
+        return { name = "bob", groups = { "turtle-drivers" } }
+      end,
+      installed = function() return {} end,
+      clock = function() return now end,
+    }
+    local bob = { token = "bob-token" }
+    t.ok(roles.allows(bob, "turtle-drivers"))
+    roles.allows(bob, "vault") -- known before the controller went down
+    up, now = false, 120
+    t.ok(roles.allows(bob, "turtle-drivers"), "everyone: still open")
+    t.ok(roles.allows({}, "turtle-drivers"), "computers too")
+    t.ok(not roles.allows(bob, "vault"), "restricted: closed until the controller is back")
+    t.ok(roles.allows({ local_admin = true }, "vault"), "the local admin always")
+  end)
 end

@@ -13,34 +13,15 @@ local function config_path()
   return import("paths").top(import("logistics_client").CONTROLLER_FILE)
 end
 
--- How the controller acts on a node elsewhere. A retry is safe (rpc runs a request
--- once), so a lost answer neither moves items twice nor fails a move that happened.
+-- How the controller acts on a node elsewhere (built from logistics_client.NODE_OPS).
+-- A retry is safe (rpc runs a request once), so a lost answer neither moves items twice
+-- nor fails a move that happened.
 local function remote_proxy(rpc, id, protocol)
-  local function call(op, args, timeout)
+  local proxy = import("logistics_client").node_proxy(function(op, args, timeout)
     return rpc.call(id, protocol, op, args, { retries = 1, timeout = timeout or 5 })
-  end
-  return {
-    id = id,
-    request = function(item, count, output)
-      return call("request", { item = item, count = count, output = output }, 12)
-    end,
-    set_storage = function(change) return call("set_storage", change) end,
-    find_start = function(search) return call("find_start", { id = search }) end,
-    find_finish = function(search) return call("find_finish", { id = search }) end,
-    export_levels = function() return call("export_levels") end,
-    port_hold = function(seconds, hold)
-      return call("port_hold", { seconds = seconds, hold = hold })
-    end,
-    to_port = function(item, count, port, hold)
-      return call("to_port", { item = item, count = count, port = port, hold = hold }, 12)
-    end,
-    from_port = function(port, item, count, output, hold)
-      return call("from_port", { port = port, item = item, count = count, output = output,
-        hold = hold }, 12)
-    end,
-    push_marker = function(port) return call("push_marker", { port = port }) end,
-    craft = function(item, count) return call("craft", { item = item, count = count }) end,
-  }
+  end)
+  proxy.id = id
+  return proxy
 end
 
 -- Take over a node's lone-mode levels: limits and refill targets. Alarm outputs are
@@ -84,7 +65,7 @@ local function run(ctx)
     save()
   end
 
-  local hostname = blockos.net and blockos.net.hostname() or ("#" .. os.getComputerID())
+  local hostname = import("net").self_name()
   -- Slow work (pairing a port, asking a node to craft) runs in its own loop, not in
   -- the one receiving reports: waiting for an rpc answer there swallows other nodes'
   -- reports.
@@ -117,8 +98,8 @@ local function run(ctx)
     port_status = ports.status,
     hostname = hostname,
     title = "Logistics" .. (config.name and (" " .. config.name) or ""),
+    log = log.warn,
   })
-  logistics_hub.env.log = log.warn
 
   local handlers, require_admin = logistics_handlers.new(hub)
 
@@ -145,28 +126,25 @@ local function run(ctx)
       hub.check_levels()
       return { added = added }
     end)
+  rpc.once(handlers.import_levels) -- the node hands its levels over only once
 
-  blockos.logistics_hub = {
+  ctx.provide("logistics.hub", {
     hub = hub,
     handlers = handlers,
     config = config,
     describe = hostname,
-  }
+  })
   -- A node on this same computer hands its reports over directly (no rednet).
-  blockos.logistics_controller = hub
+  ctx.provide("logistics.controller", hub)
 
   -- Be findable: by rednet name (works without a domain) and, in a domain, as the
   -- "logistics" (or "logistics-<name>") service record.
   local service_type = logistics_client.service_type(config.name)
-  if rednet.isOpen() then
-    pcall(rednet.host, logistics_client.PROTOCOL, service_type)
-  end
-  local found, domain = pcall(import, "domain")
-  if found and domain.is_joined() then
-    local registered, err = domain.register_service(service_type, logistics_client.PROTOCOL)
-    if not registered then
-      log.warn("could not register the %s service record: %s", service_type, tostring(err))
-    end
+  local registered, register_error = import("discovery").advertise(service_type,
+    logistics_client.PROTOCOL)
+  if not registered then
+    log.warn("could not register the %s service record: %s", service_type,
+      tostring(register_error))
   end
 
   local function on_report(sender, message)
@@ -224,8 +202,6 @@ local function run(ctx)
     end
   )
   hub.stop()
-  blockos.logistics_hub = nil
-  blockos.logistics_controller = nil
   if not ok then
     error(err, 0)
   end
