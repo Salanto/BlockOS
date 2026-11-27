@@ -307,7 +307,10 @@ Peer liveness uses the local receive time, never the sender's clock.
   `media_only` (path prefixes kept in the package for building disks but not installed),
   `roles` (directory roles for managed mode: `{ { name, default = "everyone" | "installer" |
   "nobody", description } }`, kept in `packages.db` for `roles.lua`), `replaces` (names of
-  packages it takes over: installing it removes them, files it shares with them stay).
+  packages it takes over: installing it removes them, files it shares with them stay),
+  `requires` (what it needs before setup, from `requirements.CHECKS`: `disk` makes
+  `pkg install` wait for a floppy, `domain` warns; installs by computer roles skip the checks,
+  so the service must wait for them itself).
 - **Storage housekeeping:** `blockos status` shows where disk space goes; `blockos cleanup`
   deletes the previous version (no rollback afterwards) and the old log. Boot finishes or
   removes interrupted `.tmp` writes in `/etc/blockos`. The domain controller saves only

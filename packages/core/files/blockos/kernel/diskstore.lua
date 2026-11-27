@@ -22,13 +22,15 @@ diskstore.env = {
 }
 
 -- Mount paths of every drive with a disk in it, sorted (a stable order to fill).
+-- BlockOS install and package disks (index.lua at the top) are never used: they are
+-- taken out again after installing.
 local function disk_paths()
   local paths = {}
   local api, disk_api = diskstore.env.peripheral, diskstore.env.disk
   for _, name in ipairs(api.getNames()) do
     if api.hasType(name, "drive") and disk_api.hasData(name) then
       local path = disk_api.getMountPath(name)
-      if path then
+      if path and not fs.exists(fs.combine(path, "index.lua")) then
         paths[#paths + 1] = "/" .. path
       end
     end
@@ -51,6 +53,12 @@ local function free_at(path)
     existing = fs.getDir(existing)
   end
   return fs.getFreeSpace(existing == "" and "/" or existing)
+end
+
+--- Is there a floppy disk in an attached drive that a store could use?
+-- @treturn boolean
+function diskstore.has_disk()
+  return #disk_paths() > 0
 end
 
 --- Open a store.

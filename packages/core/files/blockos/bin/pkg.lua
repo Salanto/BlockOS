@@ -206,6 +206,41 @@ local function hint_role_setup(packages)
   end
 end
 
+-- Wait until a requirement is met: a disk event re-checks; s installs anyway, q cancels.
+local function wait_for(requirement)
+  local requirements = import("requirements")
+  ui.print("Waiting... (s: install anyway, q: cancel)", "dim")
+  while not requirements.is_met(requirement.name) do
+    local event, value = os.pullEvent()
+    if event == "char" and value == "q" then
+      return false
+    elseif event == "char" and value == "s" then
+      ui.print("Installing anyway; it waits until this is fixed.", "warn")
+      return true
+    end
+  end
+  ui.print("Found.", "ok")
+  return true
+end
+
+-- What new packages need before they are set up (manifest `requires`).
+-- @treturn boolean false when the person cancelled
+local function check_requirements(packages)
+  local requirements = import("requirements")
+  local installed = pkg.installed()
+  for _, bundle in ipairs(packages) do
+    if not installed[bundle.manifest.name] then
+      for _, requirement in ipairs(requirements.missing(bundle.manifest)) do
+        ui.print(requirement.message, requirement.wait and "warn" or "dim")
+        if requirement.wait and not wait_for(requirement) then
+          return false
+        end
+      end
+    end
+  end
+  return true
+end
+
 local function install(source, names, force)
   local index, err = source.index()
   if not index then
@@ -220,6 +255,10 @@ local function install(source, names, force)
   local fetched, packages = pkg.fetch(source, show_progress, selected)
   if not fetched then
     ui.print(packages, "error")
+    return
+  end
+  if not check_requirements(packages) then
+    ui.print("Cancelled.", "warn")
     return
   end
   hint_role_setup(packages)

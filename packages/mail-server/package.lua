@@ -6,4 +6,6 @@ return {
   description = "Mail server: keeps the domain's mailboxes on disk drives",
   depends = { ["mail-protocol"] = ">=0.1.0-0", domain = ">=0.1.0-0" },
   optional = true,
+  -- pkg install waits for a floppy and says a domain is needed (see requirements.lua).
+  requires = { "disk", "domain" },
 }

@@ -32,6 +32,40 @@ return function(t)
     end
   end
 
+  t.it("a disk store never uses a BlockOS install or package disk", function()
+    local import = t.fresh_import()
+    local diskstore = fake_drives(import, function() return 100000 end)
+    local file = fs.open("/sandbox-disk1/index.lua", "w")
+    file.write("{}")
+    file.close()
+    local store = diskstore.open("blockos-mail")
+    t.eq(#store.places(), 1, "only the plain floppy")
+    t.eq(store.places()[1], "/sandbox-disk2/blockos-mail")
+    t.ok(diskstore.has_disk())
+    fs.delete("/sandbox-disk2")
+    t.ok(not diskstore.has_disk(), "the install disk alone does not count")
+    cleanup()
+  end)
+
+  t.it("requirements: a missing disk waits, a missing domain only warns", function()
+    local import = t.fresh_import()
+    local requirements = import("requirements")
+    local has_disk, is_joined = false, false
+    requirements.env.has_disk = function() return has_disk end
+    requirements.env.is_joined = function() return is_joined end
+    local manifest = { name = "mail-server", requires = { "disk", "domain", "unknown" } }
+    local missing = requirements.missing(manifest)
+    t.eq(#missing, 2, "unknown names are ignored")
+    t.eq(missing[1].name, "disk")
+    t.ok(missing[1].wait and missing[1].message:find("^mail%-server "))
+    t.eq(missing[2].name, "domain")
+    t.ok(not missing[2].wait)
+    has_disk, is_joined = true, true
+    t.eq(#requirements.missing(manifest), 0)
+    t.ok(requirements.is_met("disk") and requirements.is_met("unknown"))
+    t.eq(#requirements.missing({ name = "plain" }), 0, "no requires, nothing missing")
+  end)
+
   t.it("a disk store keeps entries on floppies and spills to the next disk", function()
     local import = t.fresh_import()
     local full = {}
