@@ -199,8 +199,7 @@ return function(t)
       "launchProcess(true, {",
       '    ["shell"] = shell,',
       '}, "/rom/programs/shell.lua")',
-    }, "
-")
+    }, "\n")
     local changed = session.patch_multishell(tweaked)
     t.ok(changed and changed:find('shell.lua", ...)', 1, true), tostring(changed))
   end)
