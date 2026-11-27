@@ -114,7 +114,12 @@ local function new_request_id()
   return string.format("%d-%d-%d", os.getComputerID(), request_counter, math.random(0, 999999))
 end
 
+-- Programs act as the logged-in user; services never do (they serve the computer,
+-- whoever sits at it), so a service's calls carry only the computer token.
 local function current_user_token()
+  if import("scheduler").current() then
+    return nil
+  end
   return blockos and blockos.user and blockos.user.token
 end
 
@@ -383,7 +388,13 @@ function rpc.require_user(request_ctx, groups)
   if type(request_ctx.token) ~= "string" then
     return nil, rpc.LOGIN_REQUIRED
   end
-  local user = user_validator(request_ctx.token)
+  -- Checked with the controller once per request, however many checks it runs
+  -- (no caching beyond the request: logouts and group changes still apply at once).
+  local user = request_ctx.checked_user
+  if user == nil then
+    user = user_validator(request_ctx.token) or false
+    request_ctx.checked_user = user
+  end
   if not user then
     return nil, rpc.LOGIN_REQUIRED
   end

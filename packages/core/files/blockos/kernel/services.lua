@@ -303,7 +303,7 @@ function services.start(name)
   local context = {
     name = name,
     log = log.logger(name),
-    config = config,
+    config = config.system_view(),
     provide = function(api_name, api) services.provide(api_name, api, name) end,
     withdraw = services.withdraw,
   }

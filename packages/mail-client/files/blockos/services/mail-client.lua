@@ -65,7 +65,8 @@ local function run(ctx)
     end
     show(mail_client.notice(event.data.unread))
     os.queueEvent(mail_protocol.NEW_MAIL_EVENT, event.data.from, event.data.unread)
-    local sound = mail_client.sound(ctx.config.get("blockos.mail.sound"))
+    -- The user's own sound (a roaming setting), not this computer's.
+    local sound = mail_client.sound(import("config").get("blockos.mail.sound"))
     if sound then
       import("sound").play(sound, { 18, 14 }) -- "ding dong"
     end

@@ -20,9 +20,15 @@ local function membership_path()
   return paths.top("etc/blockos/domain")
 end
 
+-- Kept in memory: this module is the only writer of the file (false: not joined).
+local membership_cache = nil
+
 --- @treturn table|nil { name, controller_id, computer_token } when joined.
 function domain.membership()
-  return fsx.read_table(membership_path())
+  if membership_cache == nil then
+    membership_cache = fsx.read_table(membership_path()) or false
+  end
+  return membership_cache or nil
 end
 
 --- @treturn boolean
@@ -38,6 +44,7 @@ end
 
 local function save_membership(membership)
   fsx.write_table(membership_path(), membership)
+  membership_cache = membership
 end
 
 rpc.set_computer_token_provider(function()
@@ -211,6 +218,7 @@ function domain.leave(admin_name, admin_password, force)
     return nil, err
   end
   fsx.delete(membership_path())
+  membership_cache = false
   return true
 end
 

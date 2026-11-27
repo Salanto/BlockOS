@@ -115,7 +115,8 @@ function remote_shell.server(program)
     if blockos then
       blockos.user = session.user
     end
-    local ok, filter = coroutine.resume(session.routine, ...)
+    -- The session acts as the admin who opened it, not as the manage service.
+    local ok, filter = import("scheduler").outside(coroutine.resume, session.routine, ...)
     if blockos then
       blockos.user = previous_user
     end

@@ -69,6 +69,13 @@ function config.get_system(key, fallback)
   return value
 end
 
+--- The config as services see it: get returns this computer's value, never the
+-- logged-in user's roaming one (services serve the computer, whoever sits at it).
+-- @treturn table { get, set, define, ... }
+function config.system_view()
+  return setmetatable({ get = config.get_system }, { __index = config })
+end
+
 --- Read a setting (for programs the user runs: a roaming value from their profile
 -- wins while they are logged in).
 -- @tparam string key
