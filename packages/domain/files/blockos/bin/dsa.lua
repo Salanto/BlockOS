@@ -241,7 +241,8 @@ end
 -- Remote admin: ask the computer itself (protocol blockos.manage, domain admins only).
 local function manage_call(host, op, call_args)
   local rpc = import("rpc")
-  return rpc.call(host.id, "blockos.manage", op, call_args, { relogin = true, retries = 0 })
+  return rpc.call(host.id, import("manage").PROTOCOL, op, call_args,
+    { relogin = true, retries = 0 })
 end
 
 local function wait_key(text)

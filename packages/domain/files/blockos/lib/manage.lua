@@ -10,7 +10,10 @@ local manage = {}
 
 manage.PROTOCOL = "blockos.manage"
 manage.ADMINS = "domain-admins"
-manage.UPDATE_NOW_EVENT = "blockos_update_now"
+--- Local events: check roles and updates now (computer-config listens), and reboot
+-- once the answer has left (the manage service listens).
+manage.UPDATE_NOW_EVENT = import("computer_config").UPDATE_NOW_EVENT
+manage.REBOOT_EVENT = "blockos_manage_reboot"
 manage.MAX_LOG_LINES = 40
 
 --- Argument schemas (see wire.validate).
@@ -100,7 +103,7 @@ function manage.handlers(shells)
 
   --- Answer first, then reboot a moment later (the reply must leave before we go).
   handlers.reboot = admin(function()
-    manage.env.queue("blockos_manage_reboot")
+    manage.env.queue(manage.REBOOT_EVENT)
     return { rebooting = true }
   end)
 

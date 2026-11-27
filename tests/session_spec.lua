@@ -213,6 +213,8 @@ return function(t)
     t.eq(domain.mail_sound("sound:minecraft:entity.villager.yes").value,
       "minecraft:entity.villager.yes")
     t.eq(domain.mail_sound("off"), nil)
+    t.ok(domain.mail_event({ to = "bob", from = "alice", unread = 1 }))
+    t.ok(not domain.mail_event({ to = "bob" }), "checked against the schema before sending")
     local sound = import("sound")
     local notes = {}
     sound.env.peripheral = t.fake_peripherals({

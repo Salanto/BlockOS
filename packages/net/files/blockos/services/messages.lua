@@ -38,7 +38,7 @@ local function run()
         box.unread = box.unread + 1
         blockos.notices.msg = box.unread .. " new message(s): type 'msg'"
         chime()
-        os.queueEvent("blockos_notice", "msg", event.data)
+        os.queueEvent(import("session").NOTICE_EVENT, "msg", event.data)
       end
     end
   end

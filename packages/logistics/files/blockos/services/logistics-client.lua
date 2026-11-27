@@ -74,7 +74,7 @@ local function run(ctx)
     local key = alert.server .. "/" .. alert.item
     low_items[key] = alert.is_low and { alert = alert, id = sender } or nil
     update_notice()
-    os.queueEvent("blockos_notice", "logistics", alert)
+    os.queueEvent(import("session").NOTICE_EVENT, "logistics", alert)
   end
 
   -- Returns the alert if the message is one.

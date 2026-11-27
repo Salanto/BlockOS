@@ -11,10 +11,34 @@ local config = import("config")
 local fsx = import("fsx")
 local paths = import("paths")
 local rpc = import("rpc")
+local wire = import("wire")
 
 local domain = {}
 
+--- New mail, announced by the controller to each computer the recipient is logged
+-- in at (protocol MAIL_PROTOCOL, wire event MAIL_TOPIC with MAIL_SCHEMA). The
+-- receiving computer queues the local event MAIL_EVENT (from, unread) for scripts.
 domain.MAIL_PROTOCOL = "blockos.mail"
+domain.MAIL_TOPIC = "new_mail"
+domain.MAIL_EVENT = "blockos_mail"
+domain.MAIL_SCHEMA = {
+  to = { type = "string", max = 32 },
+  from = { type = "string", max = 32 },
+  unread = { type = "number", min = 0 },
+}
+
+--- Build a new-mail event, checked against MAIL_SCHEMA before it goes out.
+-- @tparam table data { to, from, unread }
+-- @treturn[1] table A wire event.
+-- @treturn[2] nil
+-- @treturn[2] string error message
+function domain.mail_event(data)
+  local ok, err = wire.validate(data, domain.MAIL_SCHEMA)
+  if not ok then
+    return nil, err
+  end
+  return wire.event(domain.MAIL_TOPIC, data)
+end
 
 config.define("blockos.mail.sound", {
   description = "Sound for new mail: note:<instrument>, sound:<event>, file:<.dfpwm> or off.",

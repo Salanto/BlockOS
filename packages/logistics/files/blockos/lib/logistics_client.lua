@@ -9,6 +9,7 @@
 
 local config = import("config")
 local rpc = import("rpc")
+local wire = import("wire")
 
 local logistics_client = {}
 
@@ -33,6 +34,19 @@ logistics_client.REPORT_SCHEMA = {
   pos = { type = "table", optional = true },
   crafting = { type = "table", optional = true }, -- { recipes = {item...}, jobs = {...} }
 }
+
+--- Build a node's report event, checked against REPORT_SCHEMA before it goes out.
+-- @tparam table report
+-- @treturn[1] table A wire event.
+-- @treturn[2] nil
+-- @treturn[2] string error message
+function logistics_client.report_event(report)
+  local ok, err = wire.validate(report, logistics_client.REPORT_SCHEMA)
+  if not ok then
+    return nil, err
+  end
+  return wire.event(logistics_client.REPORT_TOPIC, report)
+end
 
 --- Operations that move items or wait for every node: a long timeout (a crossing
 -- between nodes is a chain of calls). Retrying is safe: rpc runs a request once.

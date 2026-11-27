@@ -243,7 +243,11 @@ hand:
 Each protocol declares its payload once as a schema (`{ hostname = { type = "string", max = 32 } }`).
 Receivers call `wire.parse(message, kind, schema)`, and rpc handlers are wrapped in
 `rpc.with_args(schema, fn)`. Unknown fields are ignored, and messages with a newer major version
-are dropped. **New protocols must use wire and declare schemas.**
+are dropped. **New protocols must use wire and declare schemas.** Declare each protocol
+name, event topic, schema and local event name once, in the module both sides load (e.g.
+`domain.MAIL_*`, `logistics_client.REPORT_*`, `manage.PROTOCOL`), and build outgoing events
+with a function that checks them against the schema (`domain.mail_event`,
+`logistics_client.report_event`); never retype a protocol string.
 
 **rpc** (`net/lib/rpc.lua`): handlers return a result, or `nil, err`. Rednet has no
 request/response, so rpc only adds reply matching, timeouts/retries and a server loop that

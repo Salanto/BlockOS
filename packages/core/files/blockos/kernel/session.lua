@@ -21,6 +21,9 @@ local session = {}
 
 --- Queue this event to end the current session.
 session.LOGOUT_EVENT = "blockos_logout"
+--- Queued (with a source and its data) when a service adds a notice, e.g. a stock
+-- alert or a message, so a program on screen can react.
+session.NOTICE_EVENT = "blockos_notice"
 
 local SHELL_PROGRAM = "/rom/programs/shell.lua"
 local MULTISHELL_PROGRAM = "/rom/programs/advanced/multishell.lua"

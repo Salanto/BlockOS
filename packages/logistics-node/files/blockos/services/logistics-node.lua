@@ -68,7 +68,6 @@ end
 local function run(ctx)
   local fsx = import("fsx")
   local rpc = import("rpc")
-  local wire = import("wire")
   local logistics = import("logistics")
   local logistics_client = import("logistics_client")
   local logistics_handlers = import("logistics_handlers")
@@ -262,8 +261,12 @@ local function run(ctx)
     if blockos.logistics_controller then
       blockos.logistics_controller.update(report.node, report, node.proxy())
     elseif controller_id then
-      rednet.send(controller_id, wire.event(logistics_client.REPORT_TOPIC, report),
-        logistics_client.NODE_PROTOCOL)
+      local event, err = logistics_client.report_event(report)
+      if event then
+        rednet.send(controller_id, event, logistics_client.NODE_PROTOCOL)
+      else
+        log.warn("report not sent: %s", tostring(err))
+      end
     elseif hub then
       hub.update(report.node, report, node.proxy())
     end

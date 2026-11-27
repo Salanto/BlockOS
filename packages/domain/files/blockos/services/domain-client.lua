@@ -5,7 +5,6 @@
 -- The report is one direct message to the controller at boot, after a rename,
 -- and every few minutes; no broadcasts.
 
-local HEARTBEAT_EVENT = "blockos_net_rename"
 
 local function run(ctx)
   local auth = import("auth")
@@ -100,12 +99,11 @@ local function run(ctx)
   -- The notice updates, scripts can react to the "blockos_mail" event, and the user's
   -- mail sound plays (a roaming setting: everyone picks their own).
   local wire = import("wire")
-  local MAIL_SCHEMA = { to = "string", from = "string", unread = "number" }
   local function on_mail(sender, message)
     local membership = domain.membership()
-    local event = wire.parse(message, "event", MAIL_SCHEMA)
+    local event = wire.parse(message, "event", domain.MAIL_SCHEMA)
     local user = blockos.user
-    if not (event and event.topic == "new_mail" and membership
+    if not (event and event.topic == domain.MAIL_TOPIC and membership
       and sender == membership.controller_id) then
       return
     end
@@ -115,7 +113,7 @@ local function run(ctx)
     if blockos.notices then
       blockos.notices.mail = unread_notice(event.data.unread)
     end
-    os.queueEvent("blockos_mail", event.data.from, event.data.unread)
+    os.queueEvent(domain.MAIL_EVENT, event.data.from, event.data.unread)
     local sound = domain.mail_sound(ctx.config.get("blockos.mail.sound"))
     if sound then
       import("sound").play(sound, { 18, 14 }) -- "ding dong"
@@ -132,7 +130,7 @@ local function run(ctx)
       report()
       check_mail()
       timer = os.startTimer(interval)
-    elseif event == HEARTBEAT_EVENT then
+    elseif event == import("net").RENAME_EVENT then
       sleep(3) -- let the net service register the new name first
       report()
     end

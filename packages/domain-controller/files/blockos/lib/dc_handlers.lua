@@ -32,8 +32,8 @@
 -- @module dc_handlers
 
 local directory = import("directory")
+local domain = import("domain") -- shared protocol declarations (mail)
 local rpc = import("rpc")
-local wire = import("wire")
 
 -- Argument schemas of the operations (see wire.validate).
 local NAME = { type = "string", max = 32 }
@@ -95,10 +95,6 @@ dc_handlers.DISK_FULL = "the domain controller's disk is full; changes are refus
 --   save_sessions() optional: persist user sessions
 -- @tparam[opt] table clock { now = seconds function, today = day function }
 -- @treturn table { [op] = function(request_ctx, args) }
---- New mail is announced to the computers the recipient is logged in at (protocol
--- "blockos.mail", event "new_mail" { to, from, unread }).
-dc_handlers.MAIL_PROTOCOL = "blockos.mail"
-
 --- How events leave the controller (tests replace it).
 dc_handlers.env = {
   send = function(id, message, protocol) rednet.send(id, message, protocol) end,
@@ -498,10 +494,10 @@ function dc_handlers.new(dir, storage, clock)
     end)
     -- "You've got mail": straight to wherever each recipient is logged in.
     for _, name in ipairs(result and recipients or {}) do
-      local event = wire.event("new_mail", { to = name, from = from,
+      local event = domain.mail_event({ to = name, from = from,
         unread = dir:unread_mail(name) })
-      for _, id in ipairs(dir:computers_of(name, now())) do
-        dc_handlers.env.send(id, event, dc_handlers.MAIL_PROTOCOL)
+      for _, id in ipairs(event and dir:computers_of(name, now()) or {}) do
+        dc_handlers.env.send(id, event, domain.MAIL_PROTOCOL)
       end
     end
     return result, err
