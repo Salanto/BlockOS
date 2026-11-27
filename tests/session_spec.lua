@@ -194,5 +194,12 @@ return function(t)
     t.ok(patched and patched:find('shell.lua", ...)', 1, true))
     t.ok(load(patched, "=multishell"), "still valid Lua")
     t.eq(session.patch_multishell("print('something else')"), nil)
+    -- CC:Tweaked 1.115's own multishell (CraftOS-PC's rom differs).
+    local tweaked = 'launchProcess(true, {
+    ["shell"] = shell,
+}, "/rom/programs/shell.lua")
+'
+    local changed = session.patch_multishell(tweaked)
+    t.ok(changed and changed:find('shell.lua", ...)', 1, true), tostring(changed))
   end)
 end

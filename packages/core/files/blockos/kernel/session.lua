@@ -68,6 +68,10 @@ end
 -- @tparam string source multishell.lua
 -- @treturn string|nil The changed source, or nil if the rom's file looks different.
 function session.patch_multishell(source)
+  -- Some roms (CraftOS-PC's) already hand their arguments to the first shell.
+  if source:find("[\"']/?rom/programs/shell%.lua[\"']%s*,%s*%.%.%.%s*%)") then
+    return source
+  end
   local patched, count = source:gsub(
     "(launchProcess%(%s*true%s*,.-[\"']/?rom/programs/shell%.lua[\"'])%s*%)", "%1, ...)", 1)
   if count ~= 1 then
