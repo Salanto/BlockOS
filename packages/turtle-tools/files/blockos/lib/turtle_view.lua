@@ -157,8 +157,9 @@ function turtle_view.rows(look, width, height, layer, is_colour)
   -- Without a heading only the turtle's own block is placed (the front is unknown).
   local function block_at(ahead, side, dy)
     if has_scan then
-      local x = side * right.x + ahead * forward.x
-      local z = side * right.z + ahead * forward.z
+      -- "+ 0" turns -0 (from 0 * -1) into 0, which would otherwise print as "-0".
+      local x = side * right.x + ahead * forward.x + 0
+      local z = side * right.z + ahead * forward.z + 0
       return blocks[x .. "," .. dy .. "," .. z]
     end
     if side == 0 and ahead == 1 and dy == 0 and heading ~= nil then
