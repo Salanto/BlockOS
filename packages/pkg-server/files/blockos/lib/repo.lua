@@ -22,11 +22,13 @@ local REPO_DIR = "blockos-repo"
 local ADMINS = rpc.DOMAIN_ADMINS
 
 local root_override = nil
+local scan_cache, scan_at = nil, nil -- the last scan of the drives (see repo.scan)
 
 --- Use these directories instead of the mounted drives (tests).
 -- @tparam {string...}|nil roots
 function repo.set_roots(roots)
   root_override = roots
+  scan_cache = nil
 end
 
 --- Directories packages are stored under, in the order they are filled: this
@@ -51,9 +53,28 @@ local function repo_dir(root)
   return fs.combine(root, REPO_DIR)
 end
 
+--- How long a scan of the drives is reused (packages change only through store, which
+-- forgets it; the wait covers floppies swapped by hand).
+repo.SCAN_SECONDS = 30
+
+local function copy_scan(found)
+  local copy = {}
+  for name, meta in pairs(found) do
+    local entry = {}
+    for key, value in pairs(meta) do
+      entry[key] = value
+    end
+    copy[name] = entry
+  end
+  return copy
+end
+
 --- All stored packages.
 -- @treturn table { [name] = { root, version, size, sum, depends, optional, exclusive } }
 function repo.scan()
+  if scan_cache and os.clock() - scan_at < repo.SCAN_SECONDS then
+    return copy_scan(scan_cache)
+  end
   local found = {}
   for _, root in ipairs(repo.roots()) do
     local dir = repo_dir(root)
@@ -68,7 +89,8 @@ function repo.scan()
       end
     end
   end
-  return found
+  scan_cache, scan_at = found, os.clock()
+  return copy_scan(found)
 end
 
 local function remove_everywhere(name)
@@ -115,6 +137,7 @@ function repo.store(raw)
     sum = pkg.checksum(raw),
   }
   local meta_text = textutils.serialise(meta)
+  scan_cache = nil -- the next scan sees the new package
   remove_everywhere(manifest.name)
   local root = first_root_with_room(#raw + #meta_text + 1024)
   if not root then
@@ -144,9 +167,14 @@ local function rules_path()
   return paths.top("etc/blockos/pkg-server")
 end
 
---- @treturn table { [name] = { groups = {...} } }
+local rules_cache = nil
+
+--- @treturn table { [name] = { groups = {...} } } (read once, kept until changed here)
 function repo.rules()
-  return fsx.read_table(rules_path()) or {}
+  if not rules_cache then
+    rules_cache = fsx.read_table(rules_path()) or {}
+  end
+  return rules_cache
 end
 
 --- Restrict a package to groups, or make it public again (groups = nil).
@@ -160,6 +188,7 @@ function repo.set_rule(name, groups)
     rules[name] = nil
   end
   fsx.write_table(rules_path(), rules)
+  rules_cache = rules
 end
 
 local function in_any_group(user_groups, wanted)
@@ -178,6 +207,12 @@ end
 ------------------------------------------------------------------------------
 
 --- @treturn table { [op] = function(request_ctx, args) }
+--- Argument schemas (see wire.validate).
+repo.ARGS = {
+  fetch = { name = { type = "string", max = 32 } },
+  publish = { raw = "string" },
+}
+
 function repo.handlers()
   local handlers = {}
 
@@ -197,11 +232,8 @@ function repo.handlers()
     return { version = core and core.version or "?", packages = packages }
   end
 
-  function handlers.fetch(ctx, args)
-    local name = type(args) == "table" and args.name
-    if type(name) ~= "string" then
-      return nil, "which package?"
-    end
+  handlers.fetch = rpc.with_args(repo.ARGS.fetch, function(ctx, args)
+    local name = args.name
     local rule = repo.rules()[name]
     if rule then
       local user, err = rpc.require_user(ctx, rule.groups)
@@ -214,23 +246,19 @@ function repo.handlers()
       return nil, "no package named " .. name .. " on this server"
     end
     return raw
-  end
+  end)
 
-  function handlers.publish(ctx, args)
+  handlers.publish = rpc.with_args(repo.ARGS.publish, function(ctx, args)
     local user, err = rpc.require_user(ctx, { ADMINS })
     if not user then
       return nil, err
     end
-    local raw = type(args) == "table" and args.raw
-    if type(raw) ~= "string" then
-      return nil, "no package given"
-    end
-    local meta, store_error = repo.store(raw)
+    local meta, store_error = repo.store(args.raw)
     if not meta then
       return nil, store_error
     end
     return { name = meta.name, version = meta.version }
-  end
+  end)
 
   return handlers
 end
