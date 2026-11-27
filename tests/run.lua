@@ -308,6 +308,7 @@ local function run_specs()
     end
   end
   table.sort(spec_files)
+  table.insert(spec_files, 1, "integration_spec.lua") -- EXPERIMENT: first and in place
 
   for _, file in ipairs(spec_files) do
     local started = now()
