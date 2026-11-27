@@ -21,6 +21,9 @@ local session = {}
 
 --- Queue this event to end the current session.
 session.LOGOUT_EVENT = "blockos_logout"
+--- Queued once a session has ended and nobody is logged in (services waiting for an
+-- empty computer, e.g. to apply updates, listen for it).
+session.LOGGED_OUT_EVENT = "blockos_logged_out"
 --- Queued (with a source and its data) when a service adds a notice, e.g. a stock
 -- alert or a message, so a program on screen can react.
 session.NOTICE_EVENT = "blockos_notice"
@@ -266,6 +269,7 @@ function session.run_user(user, user_shell)
   if blockos then
     blockos.user = nil
   end
+  os.queueEvent(session.LOGGED_OUT_EVENT, user.name)
   ui.clear()
   log.info("session", "%s logged out", user.name)
 end
